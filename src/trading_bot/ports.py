@@ -1,0 +1,61 @@
+from __future__ import annotations
+
+from collections.abc import Iterable, Mapping
+from datetime import date
+from typing import Protocol
+
+from trading_bot.models import (
+    AccountState,
+    BotLog,
+    CandidateSnapshot,
+    DailyScore,
+    DailyTarget,
+    MarketContext,
+    RankedStock,
+    ScoreRecord,
+    TradeRecord,
+)
+
+
+class ScreeningMarketData(Protocol):
+    def market_context(self) -> MarketContext: ...
+
+    def ranked_gainers(self) -> Iterable[RankedStock]: ...
+
+    def ranked_turnover(self) -> Iterable[RankedStock]: ...
+
+    def candidate_snapshots(self, tickers: Iterable[str]) -> Mapping[str, CandidateSnapshot]: ...
+
+
+class ScreeningContextSource(Protocol):
+    def market_context(self) -> MarketContext: ...
+
+
+class CandidateHistorySource(Protocol):
+    def average_daily_volume(self, ticker: str, sessions: int) -> float: ...
+
+
+class BreakoutSource(Protocol):
+    def breakout_input(self, ticker: str) -> tuple[float, float, float, float]: ...
+
+
+class ScoringProvider(Protocol):
+    def score(self, candidate: CandidateSnapshot) -> ScoreRecord: ...
+
+
+class AccountReader(Protocol):
+    def current_account(self) -> AccountState: ...
+
+
+class DailyRepository(Protocol):
+    def save_daily_targets(self, targets: Iterable[DailyTarget]) -> None: ...
+
+    def save_daily_scores(self, scores: Iterable[DailyScore]) -> None: ...
+
+    def save_log(self, log: BotLog) -> None: ...
+
+    def save_trades(self, trades: Iterable[TradeRecord]) -> None: ...
+
+
+class TradingClock(Protocol):
+    def today(self) -> date: ...
