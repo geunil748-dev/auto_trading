@@ -1,4 +1,8 @@
-# Trading Bot Phase 2
+# Algo_Trading
+
+주식 자동 매도/매수 모의투자 시스템입니다.
+
+## Trading Bot Phase 2
 
 This repository starts the mock-trading foundation described in the planning
 document. It keeps trading rules separate from KIS, Yahoo Finance, and MSSQL
