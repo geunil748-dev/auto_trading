@@ -39,13 +39,20 @@ const fallbackState = {
 
 let currentState = fallbackState;
 let activeAccount = "mock";
+let activePage = "dashboard";
 
 const tokenStorageKey = "monitorBearerToken";
 const refreshButton = document.querySelector("#refreshState");
 const tabButtons = document.querySelectorAll(".tab-button");
+const navButtons = document.querySelectorAll(".nav-item");
+const sideNav = document.querySelector("#sideNav");
+const sideScrim = document.querySelector("#sideScrim");
+const toggleSideNavButton = document.querySelector("#toggleSideNav");
 const tokenInput = document.querySelector("#monitorToken");
 const saveTokenButton = document.querySelector("#saveMonitorToken");
 const authStatus = document.querySelector("#authStatus");
+
+document.body.dataset.page = activePage;
 
 if (tokenInput) {
   tokenInput.value = localStorage.getItem(tokenStorageKey) || "";
@@ -72,6 +79,16 @@ tabButtons.forEach((button) => {
     render(currentState);
   });
 });
+navButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    activePage = button.dataset.page || "dashboard";
+    renderPage();
+  });
+});
+toggleSideNavButton?.addEventListener("click", () => {
+  setSideNavOpen(sideNav?.classList.contains("is-collapsed"));
+});
+sideScrim?.addEventListener("click", () => setSideNavOpen(false));
 loadState();
 
 async function loadState() {
@@ -150,6 +167,12 @@ function setAuthStatus(message) {
   }
 }
 
+function setSideNavOpen(open) {
+  sideNav?.classList.toggle("is-collapsed", !open);
+  document.body.classList.toggle("side-collapsed", !open);
+  toggleSideNavButton?.setAttribute("aria-label", open ? "왼쪽 메뉴 닫기" : "왼쪽 메뉴 열기");
+}
+
 function normalizeState(state) {
   if (state.accounts) {
     return state;
@@ -167,6 +190,14 @@ function render(state) {
   renderRuntime(state.runtime || fallbackState.runtime);
   renderSummary(accountState);
   renderTables(accountState);
+  renderPage();
+}
+
+function renderPage() {
+  document.body.dataset.page = activePage;
+  navButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.page === activePage);
+  });
 }
 
 function renderRuntime(runtime) {
@@ -181,7 +212,6 @@ function renderSummary(accountState) {
   document.querySelector("#cashUsd").textContent = account.cashUsd || "-";
   document.querySelector("#equityUsd").textContent = account.equityUsd || "-";
   document.querySelector("#cashKrw").textContent = account.cashKrw || "-";
-  document.querySelector("#equityKrw").textContent = account.equityKrw || "-";
   document.querySelector("#investedUsd").textContent = account.investedUsd || "-";
   document.querySelector("#openPositions").textContent = account.openPositions || "-";
   document.querySelector("#dailyProfitRate").textContent = account.dailyProfitRate || "-";

@@ -58,8 +58,8 @@ def test_live_monitor_state_shapes_orders_fills_and_holdings() -> None:
         }
     ]
     assert state["targets"] == [["AAA", "$10.50", "-", "-", "-", "주문 접수"]]
-    assert state["account"]["cashUsd"] == "$97000.00"
-    assert state["account"]["equityUsd"] == "$99000.00"
+    assert state["account"]["cashUsd"] == "$97,000.00"
+    assert state["account"]["equityUsd"] == "$99,000.00"
     assert state["orders"][0]["ticker"] == "AAA"
     assert state["fills"][0]["total"] == "$21.00"
     assert state["logs"] == [["230818", "주문", "AAA 매수 2주 시도"]]

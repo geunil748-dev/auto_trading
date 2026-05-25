@@ -5,24 +5,34 @@ ROOT = Path(__file__).resolve().parents[1]
 TEXT_PATHS = [
     ROOT / "src",
     ROOT / "monitor",
+    ROOT / "mobile" / "stock_monitor_app" / "lib",
+    ROOT / "tests",
+    ROOT / "tools",
     ROOT / "README.md",
     ROOT / "db",
 ]
-MOJIBAKE_MARKERS = (
-    "\ufffd",
-    "?",
-    "?먯",
-    "?쒖",
-    "?섏",
-    "紐",
-    "醫",
-    "蹂",
-    "珥",
-    "二쇰",
-    "泥닿",
-    "濡쒓",
-    "ì",
-    "ëª",
+MOJIBAKE_MARKERS = tuple(
+    "".join(chr(codepoint) for codepoint in item)
+    for item in (
+        (0xFFFD,),
+        (0x3F, 0x3F),
+        (0x3F, 0x7642, 0x3F),
+        (0x7B8C, 0x3F),
+        (0x96C5, 0xB69F, 0xB216),
+        (0x7B8C, 0xFF4B, 0xB5AF),
+        (0x56A5, 0x226A, 0xBB84),
+        (0xCC59, 0xD637),
+        (0xCC58, 0xC9E7),
+        (0xF9CF,),
+        (0x91AB,),
+        (0x8E42,),
+        (0x73E5,),
+        (0x4E8C, 0xC1F0),
+        (0xF9E3, 0xB2FF),
+        (0x6FE1, 0xC493),
+        (0x00EC, 0x009E),
+        (0x00EB, 0x00AA),
+    )
 )
 
 
@@ -46,6 +56,6 @@ def _text_files() -> list[Path]:
         files.extend(
             path
             for path in root.rglob("*")
-            if path.suffix in {".py", ".js", ".html", ".css", ".md", ".sql"}
+            if path.suffix in {".py", ".js", ".html", ".css", ".md", ".sql", ".ps1"}
         )
     return files

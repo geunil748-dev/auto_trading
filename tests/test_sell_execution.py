@@ -29,4 +29,6 @@ def test_sell_intent_executor_records_exit_reason() -> None:
     assert trades == [
         TradeRecord(date(2026, 5, 22), "AAA", "SELL", 9.7, None, 2, exit_reason="TRAILING_STOP")
     ]
-    assert repository.logs == [BotLog("INFO", "execution", "Submitted 1 sell orders.")]
+    assert repository.logs == [
+        BotLog("INFO", "execution", "매도 주문 1건: AAA 2주 @ $9.70 (사유 TRAILING_STOP)")
+    ]

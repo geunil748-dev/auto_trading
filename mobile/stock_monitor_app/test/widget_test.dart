@@ -8,6 +8,7 @@ void main() {
     await tester.pumpWidget(const MonitorApp());
 
     expect(find.byType(MaterialApp), findsOneWidget);
-    expect(find.byType(TextField), findsWidgets);
+    expect(find.text('PC 모니터에 자동 연결 중'), findsOneWidget);
+    expect(find.byType(TextField), findsNothing);
   });
 }

@@ -96,7 +96,7 @@ def _attempt(row: dict[str, object]) -> list[str]:
 
 
 def _usd(value: float) -> str:
-    return f"${value:.2f}"
+    return f"${value:,.2f}"
 
 
 def _float(row: dict[str, object], field: str) -> float:

@@ -1,3 +1,5 @@
+import pytest
+
 from trading_bot.adapters.kis_account import KisAccountReader
 from trading_bot.config import KisSettings
 from trading_bot.models import PositionState
@@ -35,6 +37,31 @@ def test_kis_account_reader_combines_balance_and_buyable_amount() -> None:
     assert account.invested_usd == 1500
     assert account.open_positions == 1
     assert account.daily_profit_rate == -0.0125
+
+
+def test_kis_account_reader_treats_small_kis_profit_rate_as_percent() -> None:
+    class Kis:
+        def balance(self, *args: object, **kwargs: object) -> dict[str, object]:
+            return {
+                "output1": [
+                    {
+                        "ovrs_stck_evlu_amt": "1978.25",
+                        "frcr_pchs_amt1": "1992.86",
+                        "ovrs_cblc_qty": "2",
+                    }
+                ],
+                "output2": {"tot_pftrt": "-0.73311723"},
+            }
+
+        def buyable_amount(self, *args: object, **kwargs: object) -> dict[str, object]:
+            return {"output": {"ord_psbl_frcr_amt": "97,987.21"}}
+
+    account = KisAccountReader(
+        Kis(),
+        KisSettings("app", "secret", "12345678", "01", "https://kis.test"),
+    ).current_account()
+
+    assert account.daily_profit_rate == pytest.approx(-0.0073311723)
 
 
 def test_kis_account_reader_maps_positions_from_balance_rows() -> None:

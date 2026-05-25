@@ -20,6 +20,7 @@ class TradingSettings:
     max_account_exposure: float = 0.80
     max_position_exposure: float = 0.20
     max_position_loss: float = -0.05
+    take_profit_rate: float = 0.05
     max_daily_account_loss: float = -0.03
     max_fx_change: float = 0.02
     max_opening_gap: float = 0.20
@@ -67,6 +68,7 @@ def load_settings() -> TradingSettings:
             1,
         ),
         min_pyramiding_profit_rate=_float_env("MIN_PYRAMIDING_PROFIT_RATE", 0.03),
+        take_profit_rate=_float_env("TAKE_PROFIT_RATE", 0.05),
         real_trading_enabled=_bool_env("REAL_TRADING_ENABLED", False),
         real_max_order_krw=_int_env("REAL_MAX_ORDER_KRW", 100000),
         real_max_daily_order_krw=_int_env("REAL_MAX_DAILY_ORDER_KRW", 300000),

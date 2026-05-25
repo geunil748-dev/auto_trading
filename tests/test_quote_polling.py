@@ -6,8 +6,8 @@ from trading_bot.quote_polling import PollingExitMonitor
 def test_polling_exit_monitor_refreshes_highs_and_plans_exits() -> None:
     prices = {"AAA": 12.2, "BBB": 11.5}
     positions = [
-        PositionState("AAA", 10, 2, 12, 12),
-        PositionState("BBB", 10, 1, 11.5, 12),
+        PositionState("AAA", 12, 2, 12, 12),
+        PositionState("BBB", 11.2, 1, 11.5, 12),
     ]
 
     refreshed, exits = PollingExitMonitor(prices.__getitem__, TradingSettings()).poll(

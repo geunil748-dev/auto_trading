@@ -4,165 +4,173 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>자동매매 모니터</title>
-    <link rel="stylesheet" href="./styles.css?v=6" />
-    <link rel="stylesheet" href="./panels.css?v=7" />
+    <link rel="stylesheet" href="./styles.css?v=18" />
+    <link rel="stylesheet" href="./panels.css?v=12" />
   </head>
-  <body>
-    <main class="monitor-shell">
-      <header class="command-bar">
-        <div>
-          <p class="eyebrow">계좌별 자동매매 모니터</p>
-          <div class="title-line">
-            <h1>자동매매 모니터</h1>
-            <span class="status-badge" id="accountStatus">-</span>
-          </div>
+  <body class="side-collapsed">
+    <div class="app-frame">
+      <aside class="side-nav is-collapsed" id="sideNav" aria-label="화면 메뉴">
+        <div class="side-head">
+          <button id="toggleSideNav" type="button" aria-label="왼쪽 메뉴 열기">≡</button>
+          <strong>자동매매</strong>
         </div>
-        <div class="runtime" aria-label="봇 실행 상태">
-          <span class="pulse"></span>
-          <div>
-            <strong id="operatingMode">모의투자</strong>
-            <span id="realOrderStatus">실투자 주문은 잠겨 있습니다</span>
-          </div>
+        <div class="side-action">
+          <button id="toggleRealOrders" type="button">실투자 주문 허용</button>
         </div>
-      </header>
+        <button class="nav-item active" type="button" data-page="dashboard" data-icon="홈">
+          <span>대시보드</span>
+        </button>
+        <button class="nav-item" type="button" data-page="activity" data-icon="주">
+          <span>주문/체결</span>
+        </button>
+      </aside>
+      <button class="side-scrim" id="sideScrim" type="button" aria-label="왼쪽 메뉴 닫기"></button>
 
-      <nav class="account-tabs" aria-label="계좌 선택">
-        <button class="tab-button active" type="button" data-account="mock">모의투자</button>
-        <button class="tab-button" type="button" data-account="real">실투자</button>
-      </nav>
-
-      <section class="security-bar" aria-label="모니터 인증">
-        <label for="monitorToken">모니터 토큰</label>
-        <input id="monitorToken" type="password" autocomplete="off" placeholder=".env 토큰 입력" />
-        <button id="saveMonitorToken" type="button">저장</button>
-        <span id="authStatus"></span>
-      </section>
-
-      <section class="mode-control" aria-label="실투자 주문 제어">
-        <div>
-          <span>현재 운용 모드</span>
-          <strong id="modeControlLabel">모의투자</strong>
-          <small id="modeControlHint">환경 잠금과 수동 버튼이 모두 열려야 실투자 주문 대기 상태가 됩니다.</small>
-        </div>
-        <button id="toggleRealOrders" type="button">실투자 주문 허용</button>
-      </section>
-
-      <section class="account-summary" aria-label="계좌 요약">
-        <dl>
-          <dt>달러 현금</dt>
-          <dd id="cashUsd">-</dd>
-        </dl>
-        <dl>
-          <dt>달러 평가금액</dt>
-          <dd id="equityUsd">-</dd>
-        </dl>
-        <dl data-real-only>
-          <dt>원화 예수금</dt>
-          <dd id="cashKrw">-</dd>
-        </dl>
-        <dl data-real-only>
-          <dt>원화 평가금액</dt>
-          <dd id="equityKrw">-</dd>
-        </dl>
-        <dl>
-          <dt>투자 금액</dt>
-          <dd id="investedUsd">-</dd>
-        </dl>
-        <dl>
-          <dt>보유 종목</dt>
-          <dd id="openPositions">-</dd>
-        </dl>
-        <dl>
-          <dt>수익률</dt>
-          <dd id="dailyProfitRate">-</dd>
-        </dl>
-      </section>
-
-      <p class="account-error" id="accountError" hidden></p>
-
-      <section class="work-grid" aria-label="매매 현황">
-        <article class="panel candidates">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">API 수집</p>
-              <h2>리스트업 종목</h2>
-            </div>
-            <button id="refreshState" type="button">새로고침</button>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>종목</th>
-                  <th>가격</th>
-                  <th>거래량</th>
-                  <th>갭</th>
-                  <th>점수</th>
-                  <th>상태</th>
-                </tr>
-              </thead>
-              <tbody id="targetRows"></tbody>
-            </table>
-          </div>
-        </article>
-
-        <article class="panel holdings">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">보유 현황</p>
-              <h2>보유 종목</h2>
+      <main class="monitor-shell">
+        <header class="command-bar">
+          <div class="title-block">
+            <p class="eyebrow">계좌별 자동매매 모니터</p>
+            <div class="title-line">
+              <h1>자동매매 모니터</h1>
+              <span class="status-badge" id="accountStatus">-</span>
             </div>
           </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>종목명</th>
-                  <th>종목</th>
-                  <th>보유주가</th>
-                  <th>평단가</th>
-                  <th>장 시작가</th>
-                  <th>장 마감가</th>
-                  <th>총가격</th>
-                </tr>
-              </thead>
-              <tbody id="holdingRows"></tbody>
-            </table>
-          </div>
-        </article>
 
-        <article class="panel logs">
-          <div class="panel-head">
+          <nav class="account-tabs" aria-label="계좌 선택">
+            <button class="tab-button active" type="button" data-account="mock">모의투자</button>
+            <button class="tab-button" type="button" data-account="real">실투자</button>
+          </nav>
+
+          <div class="runtime" aria-label="봇 실행 상태">
+            <span class="pulse"></span>
             <div>
-              <p class="eyebrow">주문 시도</p>
-              <h2>체결 시도 로그</h2>
+              <span class="runtime-label">현재 운용 모드</span>
+              <strong id="operatingMode">모의투자</strong>
+              <span id="realOrderStatus">실투자 주문은 잠겨 있습니다</span>
             </div>
           </div>
-          <div class="log-stream" id="logRows"></div>
-        </article>
+        </header>
 
-        <article class="panel orders">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">주문 접수</p>
-              <h2>주문 내용</h2>
-            </div>
-          </div>
-          <div class="trade-list" id="orderRows"></div>
-        </article>
+        <section class="security-bar" aria-label="모니터 인증">
+          <label for="monitorToken">모니터 토큰</label>
+          <input id="monitorToken" type="password" autocomplete="off" placeholder=".env 토큰 입력" />
+          <button id="saveMonitorToken" type="button">저장</button>
+          <span id="authStatus"></span>
+        </section>
 
-        <article class="panel fills">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">체결 결과</p>
-              <h2>체결 내용</h2>
+        <section class="account-summary" aria-label="계좌 요약">
+          <dl>
+            <dt>달러 현금</dt>
+            <dd id="cashUsd">-</dd>
+          </dl>
+          <dl>
+            <dt>달러 평가금액</dt>
+            <dd id="equityUsd">-</dd>
+          </dl>
+          <dl data-real-only>
+            <dt>원화 예수금</dt>
+            <dd id="cashKrw">-</dd>
+          </dl>
+          <dl>
+            <dt>투자 금액</dt>
+            <dd id="investedUsd">-</dd>
+          </dl>
+          <dl>
+            <dt>보유 종목</dt>
+            <dd id="openPositions">-</dd>
+          </dl>
+          <dl>
+            <dt>수익률</dt>
+            <dd id="dailyProfitRate">-</dd>
+          </dl>
+        </section>
+
+        <p class="account-error" id="accountError" hidden></p>
+
+        <section class="work-grid" aria-label="매매 현황">
+          <article class="panel candidates">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">API 수집</p>
+                <h2>리스트업 종목</h2>
+              </div>
+              <button id="refreshState" type="button">새로고침</button>
             </div>
-          </div>
-          <div class="trade-list" id="fillRows"></div>
-        </article>
-      </section>
-    </main>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>종목</th>
+                    <th>가격</th>
+                    <th>거래량</th>
+                    <th>갭</th>
+                    <th>점수</th>
+                    <th>상태</th>
+                  </tr>
+                </thead>
+                <tbody id="targetRows"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="panel holdings">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">보유 현황</p>
+                <h2>보유 종목</h2>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>종목명</th>
+                    <th>종목</th>
+                    <th>보유주가</th>
+                    <th>평단가</th>
+                    <th>장 시작가</th>
+                    <th>장 마감가</th>
+                    <th>총가격</th>
+                  </tr>
+                </thead>
+                <tbody id="holdingRows"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="panel logs">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">주문 시도</p>
+                <h2>체결 시도 로그</h2>
+              </div>
+            </div>
+            <div class="log-stream" id="logRows"></div>
+          </article>
+
+          <article class="panel orders">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">주문 접수</p>
+                <h2>주문 내용</h2>
+              </div>
+            </div>
+            <div class="trade-list" id="orderRows"></div>
+          </article>
+
+          <article class="panel fills">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">체결 결과</p>
+                <h2>체결 내용</h2>
+              </div>
+            </div>
+            <div class="trade-list" id="fillRows"></div>
+          </article>
+        </section>
+      </main>
+    </div>
     <script src="./runtime-controls.js?v=2"></script>
-    <script src="./app.js?v=14"></script>
+    <script src="./app.js?v=16"></script>
   </body>
 </html>

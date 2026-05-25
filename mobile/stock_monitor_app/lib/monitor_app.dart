@@ -9,7 +9,12 @@ import 'monitor_widgets.dart';
 
 const defaultMonitorApiUrl = String.fromEnvironment(
   'MONITOR_API_URL',
-  defaultValue: 'http://10.0.2.2:4174/api/state',
+  defaultValue: 'http://192.168.0.7:4174/api/state',
+);
+
+const monitorBearerToken = String.fromEnvironment(
+  'MONITOR_BEARER_TOKEN',
+  defaultValue: '',
 );
 
 class MonitorApp extends StatelessWidget {
@@ -42,11 +47,6 @@ class MonitorHome extends StatefulWidget {
 }
 
 class _MonitorHomeState extends State<MonitorHome> {
-  final TextEditingController _server = TextEditingController(
-    text: defaultMonitorApiUrl,
-  );
-  final TextEditingController _token = TextEditingController();
-
   Timer? _timer;
   bool _loading = false;
   String _active = 'mock';
@@ -63,8 +63,6 @@ class _MonitorHomeState extends State<MonitorHome> {
   @override
   void dispose() {
     _timer?.cancel();
-    _server.dispose();
-    _token.dispose();
     super.dispose();
   }
 
@@ -76,12 +74,14 @@ class _MonitorHomeState extends State<MonitorHome> {
     });
 
     try {
-      final uri = Uri.parse(_server.text.trim());
+      final uri = Uri.parse(defaultMonitorApiUrl);
       final client = HttpClient();
       final request = await client.getUrl(uri);
-      final token = _token.text.trim();
-      if (token.isNotEmpty) {
-        request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+      if (monitorBearerToken.isNotEmpty) {
+        request.headers.set(
+          HttpHeaders.authorizationHeader,
+          'Bearer $monitorBearerToken',
+        );
       }
       final response = await request.close();
       final text = await response.transform(utf8.decoder).join();
@@ -120,18 +120,7 @@ class _MonitorHomeState extends State<MonitorHome> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
           children: [
-            ServerBar(controller: _server, onRefresh: _load, loading: _loading),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _token,
-              decoration: const InputDecoration(
-                labelText: '모니터 토큰',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              obscureText: true,
-              onSubmitted: (_) => _load(),
-            ),
+            ConnectionBar(onRefresh: _load, loading: _loading),
             const SizedBox(height: 12),
             SegmentedButton<String>(
               segments: const [
@@ -139,7 +128,8 @@ class _MonitorHomeState extends State<MonitorHome> {
                 ButtonSegment(value: 'real', label: Text('실투자')),
               ],
               selected: {_active},
-              onSelectionChanged: (value) => setState(() => _active = value.first),
+              onSelectionChanged: (value) =>
+                  setState(() => _active = value.first),
             ),
             if (_error.isNotEmpty) ErrorBox(message: _error),
             const SizedBox(height: 12),

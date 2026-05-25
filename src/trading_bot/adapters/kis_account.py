@@ -147,14 +147,14 @@ def _first_float(row: dict[str, Any], *fields: str) -> float:
 def _profit_rate(summary: dict[str, Any], invested: float, purchase: float) -> float:
     total_rate = _first_float(summary, "tot_pftrt")
     if total_rate:
-        return total_rate / 100 if abs(total_rate) > 1 else total_rate
+        return total_rate / 100
     if purchase <= 0:
         return 0.0
     return (invested - purchase) / purchase
 
 
 def _usd(value: float) -> str:
-    return f"${value:.2f}"
+    return f"${value:,.2f}"
 
 
 def _optional_usd(value: float) -> str:

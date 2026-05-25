@@ -23,8 +23,9 @@ class SellIntentExecutor:
         self.mock = mock
 
     def execute(self, intents: Iterable[SellIntent]) -> list[TradeRecord]:
+        submitted = list(intents)
         trades: list[TradeRecord] = []
-        for intent in intents:
+        for intent in submitted:
             self.submit_order(intent)
             trades.append(
                 TradeRecord(
@@ -39,7 +40,18 @@ class SellIntentExecutor:
                 )
             )
         self.repository.save_trades(trades)
-        self.repository.save_log(
-            BotLog("INFO", "execution", f"Submitted {len(trades)} sell orders.")
-        )
+        self.repository.save_log(BotLog("INFO", "execution", _sell_log(submitted)))
         return trades
+
+
+def _sell_log(intents: list[SellIntent]) -> str:
+    if not intents:
+        return "매도 주문 0건: 매도 조건을 만족한 보유 종목이 없습니다."
+    details = [
+        (
+            f"{item.ticker} {item.quantity}주 @ ${item.limit_price_usd:,.2f} "
+            f"(사유 {item.exit_reason})"
+        )
+        for item in intents
+    ]
+    return f"매도 주문 {len(intents)}건: " + "; ".join(details)

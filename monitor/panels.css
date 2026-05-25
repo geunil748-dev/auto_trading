@@ -5,6 +5,29 @@
   margin-top: 18px;
 }
 
+body[data-page="dashboard"] .logs,
+body[data-page="dashboard"] .orders,
+body[data-page="dashboard"] .fills {
+  display: none;
+}
+
+body[data-page="activity"] .account-summary,
+body[data-page="activity"] .account-error,
+body[data-page="activity"] .candidates,
+body[data-page="activity"] .holdings {
+  display: none;
+}
+
+body[data-page="activity"] .work-grid {
+  grid-template-columns: minmax(320px, 1fr);
+}
+
+body[data-page="activity"] .logs,
+body[data-page="activity"] .orders,
+body[data-page="activity"] .fills {
+  min-height: 190px;
+}
+
 .title-line {
   display: flex;
   flex-wrap: wrap;
@@ -32,27 +55,33 @@
 }
 
 .account-tabs {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(92px, 1fr));
+  gap: 4px;
+  min-width: 216px;
+  margin-bottom: 0;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #10171d;
 }
 
 .tab-button {
-  min-width: 120px;
-  border-color: var(--line);
-  background: var(--surface);
+  min-width: 0;
+  border-color: transparent;
+  background: transparent;
   color: var(--muted);
 }
 
 .tab-button.active {
-  border-color: rgb(88 199 213 / 60%);
-  background: rgb(88 199 213 / 13%);
+  border-color: rgb(88 199 213 / 52%);
+  background: rgb(88 199 213 / 16%);
   color: var(--text);
 }
 
 .account-summary {
   display: grid;
-  grid-template-columns: repeat(6, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 12px;
 }
 
@@ -88,6 +117,7 @@
 }
 
 .panel {
+  min-width: 0;
   min-height: 250px;
   padding: 22px;
   border: 1px solid var(--line);
@@ -103,6 +133,7 @@
 
 .table-wrap {
   overflow-x: auto;
+  scrollbar-gutter: stable;
 }
 
 table {
@@ -128,6 +159,36 @@ th {
 td strong,
 .position-head strong {
   font-size: 1rem;
+}
+
+.holdings table {
+  min-width: 780px;
+  table-layout: auto;
+}
+
+.holdings th,
+.holdings td {
+  padding-inline: 12px;
+}
+
+.holdings th:nth-child(1),
+.holdings td:nth-child(1) {
+  min-width: 150px;
+}
+
+.holdings th:nth-child(2),
+.holdings td:nth-child(2) {
+  min-width: 78px;
+}
+
+.holdings th:nth-child(3),
+.holdings td:nth-child(3) {
+  min-width: 82px;
+}
+
+.holdings th:nth-child(n + 4),
+.holdings td:nth-child(n + 4) {
+  min-width: 92px;
 }
 
 .score {
@@ -291,5 +352,6 @@ td strong,
 
   .account-tabs {
     display: grid;
+    min-width: 0;
   }
 }

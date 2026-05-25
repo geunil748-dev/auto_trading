@@ -30,4 +30,10 @@ def test_buy_intent_executor_submits_and_records_mock_orders() -> None:
     assert submitted == [BuyIntent("AAA", 2, 10.5, 21, 0.05)]
     assert trades == [TradeRecord(date(2026, 5, 22), "AAA", "BUY", 10.5, None, 2)]
     assert repository.trades == trades
-    assert repository.logs == [BotLog("INFO", "execution", "Submitted 1 buy orders.")]
+    assert repository.logs == [
+        BotLog(
+            "INFO",
+            "execution",
+            "매수 주문 1건: AAA 2주 @ $10.50 (주문금액 $21.00, 배분 5.0%)",
+        )
+    ]

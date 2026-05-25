@@ -2,15 +2,13 @@ import 'package:flutter/material.dart';
 
 import 'monitor_utils.dart';
 
-class ServerBar extends StatelessWidget {
-  const ServerBar({
-    required this.controller,
+class ConnectionBar extends StatelessWidget {
+  const ConnectionBar({
     required this.onRefresh,
     required this.loading,
     super.key,
   });
 
-  final TextEditingController controller;
   final VoidCallback onRefresh;
   final bool loading;
 
@@ -19,14 +17,16 @@ class ServerBar extends StatelessWidget {
     return Row(
       children: [
         Expanded(
-          child: TextField(
-            controller: controller,
-            decoration: const InputDecoration(
-              labelText: '모니터 API 주소',
-              border: OutlineInputBorder(),
-              isDense: true,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border.all(color: const Color(0xFF263544)),
+              borderRadius: BorderRadius.circular(8),
+              color: const Color(0xFF13202A),
             ),
-            keyboardType: TextInputType.url,
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+              child: Text('PC 모니터에 자동 연결 중'),
+            ),
           ),
         ),
         const SizedBox(width: 8),
@@ -53,10 +53,11 @@ class StatusChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Chip(
       label: Text(connected ? '연결됨' : '미연결'),
-      side: BorderSide(color: connected ? Colors.greenAccent : Colors.redAccent),
+      side:
+          BorderSide(color: connected ? Colors.greenAccent : Colors.redAccent),
       backgroundColor: connected
-          ? Colors.greenAccent.withOpacity(0.12)
-          : Colors.redAccent.withOpacity(0.12),
+          ? Colors.greenAccent.withValues(alpha: 0.12)
+          : Colors.redAccent.withValues(alpha: 0.12),
     );
   }
 }
@@ -73,7 +74,6 @@ class SummaryGrid extends StatelessWidget {
       ('달러 현금', textValue(summary['cashUsd'])),
       ('달러 평가금액', textValue(summary['equityUsd'])),
       if (active == 'real') ('원화 예수금', textValue(summary['cashKrw'])),
-      if (active == 'real') ('원화 평가금액', textValue(summary['equityKrw'])),
       ('투자 금액', textValue(summary['investedUsd'])),
       ('보유 종목', textValue(summary['openPositions'])),
       ('수익률', textValue(summary['dailyProfitRate'])),
@@ -167,7 +167,8 @@ class HoldingsList extends StatelessWidget {
         final item = mapValue(row);
         return ListTile(
           contentPadding: EdgeInsets.zero,
-          title: Text('${textValue(item['name'])} (${textValue(item['ticker'])})'),
+          title:
+              Text('${textValue(item['name'])} (${textValue(item['ticker'])})'),
           subtitle: Text(
             '평단 ${textValue(item['averagePrice'])} / 총가격 ${textValue(item['totalPrice'])}',
           ),
@@ -233,7 +234,7 @@ class ErrorBox extends StatelessWidget {
         decoration: BoxDecoration(
           border: Border.all(color: Colors.redAccent),
           borderRadius: BorderRadius.circular(8),
-          color: Colors.redAccent.withOpacity(0.1),
+          color: Colors.redAccent.withValues(alpha: 0.1),
         ),
         child: Padding(
           padding: const EdgeInsets.all(12),

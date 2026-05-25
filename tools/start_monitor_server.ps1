@@ -1,7 +1,7 @@
 $workspace = Split-Path -Parent $PSScriptRoot
 $python = "C:\Users\admin\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
 $logDir = Join-Path $workspace "logs"
-$logPath = Join-Path $logDir "startup-scheduler.log"
+$logPath = Join-Path $logDir "startup-monitor.log"
 
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
@@ -20,14 +20,14 @@ while ($true) {
         Set-Location -LiteralPath $workspace
         $env:PYTHONPATH = Join-Path $workspace "src"
 
-        Write-StartupLog "scheduler starting"
-        & $python -m trading_bot run-scheduler --monitor-state "monitor/state.json" 2>&1 |
+        Write-StartupLog "monitor server starting"
+        & $python -m trading_bot serve-monitor --host 0.0.0.0 --port 4174 2>&1 |
             ForEach-Object { Write-StartupLog $_.ToString() }
 
-        Write-StartupLog "scheduler exited: $LASTEXITCODE"
+        Write-StartupLog "monitor server exited: $LASTEXITCODE"
     }
     catch {
-        Write-StartupLog "scheduler start error: $($_.Exception.Message)"
+        Write-StartupLog "monitor server start error: $($_.Exception.Message)"
     }
 
     Start-Sleep -Seconds 15

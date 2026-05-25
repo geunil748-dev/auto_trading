@@ -27,6 +27,7 @@ from trading_bot.models import PositionState
 from trading_bot.monitor_state import state_from_dry_run
 from trading_bot.order_cancellation import cancel_unfilled_orders
 from trading_bot.schedule import DailyTasks
+from trading_bot.scheduled_messages import log_row, recheck_message, watch_message
 
 
 def live_mock_tasks(
@@ -90,7 +91,16 @@ def live_mock_tasks(
         executable = [item for item in exits if item.ticker not in latest.pending_exits]
         trades = build_mock_sell_executor(kis_settings, repository).execute(executable)
         latest.pending_exits.update(item.ticker for item in executable)
-        _write_live_state(monitor_state, kis_settings)
+        _write_live_state(
+            monitor_state,
+            kis_settings,
+            extra_logs=[
+                log_row(
+                    "1분 감시",
+                    watch_message(refreshed, exits, executable, latest.pending_exits),
+                )
+            ],
+        )
         return f"Intraday watch submitted {len(trades)} mock sell orders."
 
     def intraday_recheck() -> str:
@@ -123,6 +133,19 @@ def live_mock_tasks(
             monitor_state,
             kis_settings,
             screening_state=state_from_dry_run(latest.result),
+            extra_logs=[
+                log_row(
+                    "15분 재평가",
+                    recheck_message(
+                        latest.result.buy_intents,
+                        intents,
+                        positions,
+                        unfilled,
+                        latest.intraday_entry_rounds,
+                        settings,
+                    ),
+                )
+            ],
         )
         return (
             f"Intraday recheck selected {len(latest.result.scoring.selected)} scores "
@@ -188,6 +211,7 @@ def _write_live_state(
     monitor_state: Path,
     kis_settings: KisSettings,
     screening_state: dict[str, object] | None = None,
+    extra_logs: list[list[str]] | None = None,
 ) -> dict[str, object]:
     kis = KisOverseasClient(KisJsonClient(kis_settings))
     accounts = KisAccountReader(kis, kis_settings)
@@ -196,6 +220,8 @@ def _write_live_state(
         live_state["targets"] = screening_state["targets"]
         live_state["gates"] = screening_state["gates"] + live_state["gates"]
         live_state["logs"] = screening_state["logs"] + live_state["logs"]
+    if extra_logs:
+        live_state["logs"] = extra_logs + live_state["logs"]
     monitor_state.write_text(
         json.dumps(live_state, indent=2, ensure_ascii=False),
         encoding="utf-8",

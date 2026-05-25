@@ -151,11 +151,12 @@ def test_entry_planner_requires_breakout_and_reserves_exposure() -> None:
     assert [item.order_value_usd for item in intents] == [2000, 1000]
 
 
-def test_exit_planner_prioritizes_eod_hard_stop_and_trailing_stop() -> None:
+def test_exit_planner_prioritizes_eod_hard_stop_take_profit_and_trailing_stop() -> None:
     positions = [
         PositionState("LOSS", 10, 2, 9.4, 11),
-        PositionState("TRAIL", 10, 3, 11.6, 12),
-        PositionState("HOLD", 10, 1, 11.9, 12),
+        PositionState("PROFIT", 10, 2, 10.5, 10.5),
+        PositionState("TRAIL", 10, 3, 10.27, 10.6),
+        PositionState("HOLD", 10, 1, 10.4, 10.6),
     ]
 
     regular = plan_position_exits(positions, SETTINGS)
@@ -163,6 +164,7 @@ def test_exit_planner_prioritizes_eod_hard_stop_and_trailing_stop() -> None:
 
     assert [(item.ticker, item.exit_reason) for item in regular] == [
         ("LOSS", "STOP_LOSS"),
+        ("PROFIT", "TAKE_PROFIT"),
         ("TRAIL", "TRAILING_STOP"),
     ]
-    assert [item.exit_reason for item in eod] == ["EOD", "EOD", "EOD"]
+    assert [item.exit_reason for item in eod] == ["EOD", "EOD", "EOD", "EOD"]

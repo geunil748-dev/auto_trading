@@ -66,7 +66,7 @@ def _log_message(result: DryRunResult) -> str:
 
 
 def _usd(value: float) -> str:
-    return f"${value:.2f}"
+    return f"${value:,.2f}"
 
 
 def _percent(value: float) -> str:

@@ -165,7 +165,7 @@ def test_intraday_watch_submits_one_exit_and_remembers_pending_sells(
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks._write_live_state",
-        lambda monitor_state, kis_settings: None,
+        lambda monitor_state, kis_settings, **kwargs: None,
     )
     tasks = live_mock_tasks(
         TradingSettings(),
@@ -200,7 +200,7 @@ def test_intraday_recheck_screens_and_limits_additional_buys(monkeypatch, tmp_pa
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks._write_live_state",
-        lambda monitor_state, kis_settings, screening_state=None: None,
+        lambda monitor_state, kis_settings, screening_state=None, **kwargs: None,
     )
     tasks = live_mock_tasks(
         TradingSettings(max_intraday_entry_rounds=1),
@@ -233,7 +233,7 @@ def test_intraday_recheck_blocks_add_on_when_order_is_unfilled(
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks._write_live_state",
-        lambda monitor_state, kis_settings, screening_state=None: None,
+        lambda monitor_state, kis_settings, screening_state=None, **kwargs: None,
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks._unfilled_order_tickers",

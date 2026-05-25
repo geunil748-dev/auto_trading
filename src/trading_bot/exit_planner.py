@@ -38,6 +38,12 @@ def _exit_reason(
         return "EOD"
     if hard_stop_triggered(position, settings):
         return "STOP_LOSS"
+    if take_profit_triggered(position, settings):
+        return "TAKE_PROFIT"
     if trailing_stop_triggered(position, settings):
         return "TRAILING_STOP"
     return None
+
+
+def take_profit_triggered(position: PositionState, settings: TradingSettings) -> bool:
+    return position.profit_rate >= settings.take_profit_rate
