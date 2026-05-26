@@ -65,8 +65,30 @@ class MarketData:
         }
 
 
+class EmptyMarketData:
+    def __init__(self) -> None:
+        self.snapshot_requests: list[set[str]] = []
+
+    def market_context(self) -> MarketContext:
+        return MarketContext(101, 100, 0.01)
+
+    def ranked_gainers(self) -> tuple[RankedStock, ...]:
+        return ()
+
+    def ranked_turnover(self) -> tuple[RankedStock, ...]:
+        return ()
+
+    def candidate_snapshots(self, tickers: set[str]) -> dict[str, CandidateSnapshot]:
+        self.snapshot_requests.append(tickers)
+        return {}
+
+
 class Scoring:
+    def __init__(self) -> None:
+        self.called = 0
+
     def score(self, candidate: CandidateSnapshot) -> ScoreRecord:
+        self.called += 1
         return ScoreRecord(candidate.ticker, news_score=95, chart_score=80)
 
 
@@ -140,4 +162,32 @@ def test_pipeline_logs_and_skips_market_calls_when_global_gate_blocks_entry() ->
     assert repository.logs[-2:] == [
         BotLog("WARNING", "pipeline", "Entry blocked: MARKET_BELOW_MA20"),
         BotLog("INFO", "pipeline", "Screened 2 targets and selected 0."),
+    ]
+
+
+def test_pipeline_handles_zero_listed_candidates_without_error() -> None:
+    market_data = EmptyMarketData()
+    repository = Repository()
+    scoring = Scoring()
+
+    run = ScreeningScoringPipeline(
+        market_data,
+        scoring,
+        AccountReader(account()),
+        repository,
+        FixedClock(),
+        TradingSettings(),
+    ).run()
+
+    assert run.blocked_reason is None
+    assert run.targets == ()
+    assert run.scores == ()
+    assert run.selected == ()
+    assert repository.targets == []
+    assert repository.scores == []
+    assert scoring.called == 0
+    assert all(request == set() for request in market_data.snapshot_requests)
+    assert repository.logs[-2:] == [
+        BotLog("INFO", "screening", "Filter rejects: none."),
+        BotLog("INFO", "pipeline", "Screened 0 targets and selected 0."),
     ]

@@ -90,6 +90,7 @@ def _order(row: dict[str, object], trade_date: date) -> dict[str, str]:
         "quantity": str(row.get("ft_ord_qty", "0")),
         "price": _usd(_float(row, "ft_ord_unpr3")),
         "unfilled": str(row.get("nccs_qty", "0")),
+        "orderNo": _first_text(row, "odno", "ODNO", "orgn_odno"),
     }
 
 
@@ -118,6 +119,7 @@ def _fill(row: dict[str, object], trade_date: date) -> dict[str, str]:
         "quantity": str(row.get("ft_ccld_qty", "0")),
         "price": _usd(_float(row, "ft_ccld_unpr3")),
         "total": _usd(_float(row, "ft_ccld_amt3")),
+        "orderNo": _first_text(row, "odno", "ODNO", "orgn_odno"),
     }
 
 

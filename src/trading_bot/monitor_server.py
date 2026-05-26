@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from trading_bot.config import load_settings
 from trading_bot.dashboard_state import account_dashboard_state
@@ -54,10 +55,15 @@ class _DashboardStateReader:
         if isinstance(mock, dict):
             if not mock.get("targets"):
                 mock["targets"] = sql_state.get("targets", [])
+            if not mock.get("fills"):
+                mock["fills"] = sql_state.get("fills", [])
             mock["trades"] = sql_state.get("trades", [])
             mock["logs"] = list(mock.get("logs", [])) + list(sql_state.get("logs", []))
         state["sql"] = sql_state
         return state
+
+    def read_history(self, trade_date: date) -> dict[str, object]:
+        return self.sql_reader.read_history(trade_date)
 
 
 def _handler(reader: Any, monitor_dir: Path):
@@ -71,6 +77,9 @@ def _handler(reader: Any, monitor_dir: Path):
             path = urlparse(self.path).path
             if path == "/api/state":
                 self._write_state()
+                return
+            if path == "/api/history":
+                self._write_history()
                 return
             if path == "/":
                 self.path = "/index.html"
@@ -97,9 +106,14 @@ def _handler(reader: Any, monitor_dir: Path):
         def _write_state(self) -> None:
             if not self._authorize_api():
                 return
-            state = reader.read()
+            state = _read_monitor_state(reader)
             state["runtime"] = _runtime_state(local_bypass=self._allow_local_bypass())
             self._write_json(state)
+
+        def _write_history(self) -> None:
+            if not self._authorize_api():
+                return
+            self._write_json(_read_history_state(reader, _query_date(self.path)))
 
         def _write_real_trading_control(self) -> None:
             if not self._authorize_api():
@@ -147,6 +161,33 @@ def _handler(reader: Any, monitor_dir: Path):
             self.wfile.write(payload)
 
     return MonitorHandler
+
+
+def _read_monitor_state(reader: Any) -> dict[str, object]:
+    return reader.read()
+
+
+def _read_history_state(reader: Any, trade_date: date) -> dict[str, object]:
+    if hasattr(reader, "read_history"):
+        return reader.read_history(trade_date)
+    return {
+        "date": trade_date.isoformat(),
+        "targets": [],
+        "orders": [],
+        "fills": [],
+        "logs": [],
+        "trades": [],
+    }
+
+
+def _query_date(path: str) -> date:
+    raw = parse_qs(urlparse(path).query).get("date", [""])[0].strip()
+    if raw:
+        try:
+            return date.fromisoformat(raw)
+        except ValueError:
+            pass
+    return date.today()
 
 
 def _runtime_state(control: Any | None = None, local_bypass: bool = False) -> dict[str, object]:

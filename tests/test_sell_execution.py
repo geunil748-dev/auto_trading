@@ -34,6 +34,24 @@ def test_sell_intent_executor_records_exit_reason() -> None:
     ]
 
 
+def test_sell_intent_executor_handles_empty_intents() -> None:
+    submitted: list[SellIntent] = []
+    repository = Repository()
+
+    trades = SellIntentExecutor(
+        submit_order=lambda intent: submitted.append(intent) or {"ok": True},
+        repository=repository,
+        today=lambda: date(2026, 5, 22),
+    ).execute([])
+
+    assert submitted == []
+    assert trades == []
+    assert repository.trades == []
+    assert repository.logs == [
+        BotLog("INFO", "execution", "매도 주문 0건: 매도 조건을 만족한 보유 종목이 없습니다.")
+    ]
+
+
 def test_sell_intent_executor_records_failures_and_continues() -> None:
     repository = Repository()
 

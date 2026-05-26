@@ -241,13 +241,33 @@ input::placeholder {
   background: var(--surface);
 }
 
+.history-bar {
+  display: none;
+  grid-template-columns: auto minmax(160px, 220px) auto 1fr;
+  gap: 10px;
+  align-items: center;
+  margin: -2px 0 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgb(21 29 37 / 72%);
+}
+
+body[data-page="activity"] .history-bar,
+body[data-page="candidateHistory"] .history-bar {
+  display: grid;
+}
+
 .security-bar label,
-.security-bar span {
+.security-bar span,
+.history-bar label,
+.history-bar span {
   color: var(--muted);
   font-size: 0.82rem;
 }
 
-.security-bar input {
+.security-bar input,
+.history-bar input {
   width: 100%;
   padding: 0 11px;
 }
@@ -372,6 +392,10 @@ h2 {
   }
 
   .security-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .history-bar {
     grid-template-columns: 1fr;
   }
 

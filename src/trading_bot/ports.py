@@ -10,6 +10,7 @@ from trading_bot.models import (
     CandidateSnapshot,
     DailyScore,
     DailyTarget,
+    FillRecord,
     MarketContext,
     RankedStock,
     ScoreRecord,
@@ -55,6 +56,8 @@ class DailyRepository(Protocol):
     def save_log(self, log: BotLog) -> None: ...
 
     def save_trades(self, trades: Iterable[TradeRecord]) -> None: ...
+
+    def save_fills(self, fills: Iterable[FillRecord]) -> None: ...
 
 
 class TradingClock(Protocol):

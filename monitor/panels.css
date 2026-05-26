@@ -12,6 +12,10 @@ body[data-page="dashboard"] .candidate-history {
   display: none;
 }
 
+body[data-page="dashboard"] .work-grid {
+  grid-template-columns: minmax(320px, 1fr);
+}
+
 body[data-page="activity"] .account-summary,
 body[data-page="activity"] .account-error,
 body[data-page="activity"] .candidates,
@@ -174,6 +178,20 @@ td {
 th {
   color: var(--muted);
   font-size: 0.76rem;
+}
+
+.candidates th:nth-child(1),
+.candidates td:nth-child(1),
+.candidate-history th:nth-child(1),
+.candidate-history td:nth-child(1) {
+  padding-right: 18px;
+}
+
+.candidates th:nth-child(2),
+.candidates td:nth-child(2),
+.candidate-history th:nth-child(2),
+.candidate-history td:nth-child(2) {
+  padding-left: 18px;
 }
 
 td strong,

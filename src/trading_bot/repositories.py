@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from contextlib import closing
+from datetime import date
 from typing import Any, Protocol
 
-from trading_bot.models import BotLog, DailyScore, DailyTarget, TradeRecord
+from trading_bot.models import BotLog, DailyScore, DailyTarget, FillRecord, TradeRecord
 
 
 class Cursor(Protocol):
@@ -107,6 +108,81 @@ class SqlServerDailyRepository:
             rows,
         )
 
+    def save_fills(self, fills: Iterable[FillRecord]) -> None:
+        rows = [
+            (
+                item.trade_date,
+                item.fill_time,
+                item.ticker,
+                item.ticker_name,
+                item.side,
+                item.quantity,
+                item.fill_price_usd,
+                item.fill_amount_usd,
+                item.order_no,
+                item.is_mock,
+            )
+            for item in fills
+        ]
+        if not rows:
+            return
+        self._ensure_fill_history_table()
+        for row in rows:
+            self._execute(
+                """
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM fill_history
+                    WHERE fill_date = ?
+                      AND ISNULL(fill_time, '') = ?
+                      AND ticker = ?
+                      AND ISNULL(side, '') = ?
+                      AND quantity = ?
+                      AND fill_price = ?
+                      AND is_mock = ?
+                )
+                BEGIN
+                    INSERT INTO fill_history
+                        (fill_date, fill_time, ticker, ticker_name, side, quantity,
+                         fill_price, fill_amount, order_no, is_mock)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                END
+                """,
+                (
+                    row[0],
+                    row[1],
+                    row[2],
+                    row[4],
+                    row[5],
+                    row[6],
+                    row[9],
+                    *row,
+                ),
+            )
+
+    def _ensure_fill_history_table(self) -> None:
+        self._execute_statement(
+            """
+            IF OBJECT_ID(N'dbo.fill_history', N'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.fill_history (
+                    id INT IDENTITY PRIMARY KEY,
+                    fill_date DATE NOT NULL,
+                    fill_time VARCHAR(8),
+                    ticker VARCHAR(10) NOT NULL,
+                    ticker_name NVARCHAR(100),
+                    side NVARCHAR(20),
+                    quantity INT,
+                    fill_price DECIMAL(10, 2),
+                    fill_amount DECIMAL(12, 2),
+                    order_no VARCHAR(30),
+                    is_mock BIT DEFAULT 1,
+                    created_at DATETIME DEFAULT GETDATE()
+                );
+            END
+            """,
+        )
+
     def _executemany(self, sql: str, rows: list[tuple[Any, ...]]) -> None:
         if not rows:
             return
@@ -189,19 +265,105 @@ class SqlServerMonitorRepository:
             """
             SELECT TOP (?) ticker, order_type, order_price, quantity, exit_reason
             FROM trade_history
+            WHERE trade_date = CAST(GETDATE() AS DATE)
             ORDER BY created_at DESC
             """,
             (limit,),
         )
+
+    def latest_fills(self, limit: int = 20) -> list[tuple[Any, ...]]:
+        try:
+            return self._query(
+                """
+                SELECT TOP (?) fill_date, fill_time, ticker, ticker_name, side,
+                       quantity, fill_price, fill_amount
+                FROM fill_history
+                ORDER BY created_at DESC
+                """,
+                (limit,),
+            )
+        except Exception:
+            return []
 
     def latest_logs(self, limit: int = 20) -> list[tuple[Any, ...]]:
         return self._query(
             """
             SELECT TOP (?) created_at, log_level, message
             FROM bot_log
+            WHERE CAST(created_at AS DATE) = CAST(GETDATE() AS DATE)
             ORDER BY created_at DESC
             """,
             (limit,),
+        )
+
+    def history_targets(self, trade_date: date, limit: int = 200) -> list[tuple[Any, ...]]:
+        try:
+            return self._query(
+                """
+                SELECT TOP (?) ticker, ticker_name, volume_ratio, price_change
+                FROM daily_target
+                WHERE trade_date = ?
+                ORDER BY created_at DESC
+                """,
+                (limit, trade_date),
+            )
+        except Exception:
+            return self._query(
+                """
+                SELECT TOP (?) ticker, volume_ratio, price_change
+                FROM daily_target
+                WHERE trade_date = ?
+                ORDER BY created_at DESC
+                """,
+                (limit, trade_date),
+            )
+
+    def history_scores(self, trade_date: date, limit: int = 200) -> list[tuple[Any, ...]]:
+        return self._query(
+            """
+            SELECT TOP (?) ticker, news_score, chart_score, total_score, is_selected
+            FROM scoring
+            WHERE trade_date = ?
+            ORDER BY total_score DESC, created_at DESC
+            """,
+            (limit, trade_date),
+        )
+
+    def history_trades(self, trade_date: date, limit: int = 200) -> list[tuple[Any, ...]]:
+        return self._query(
+            """
+            SELECT TOP (?) ticker, order_type, order_price, quantity, exit_reason
+            FROM trade_history
+            WHERE trade_date = ?
+            ORDER BY created_at DESC
+            """,
+            (limit, trade_date),
+        )
+
+    def history_fills(self, trade_date: date, limit: int = 200) -> list[tuple[Any, ...]]:
+        try:
+            return self._query(
+                """
+                SELECT TOP (?) fill_date, fill_time, ticker, ticker_name, side,
+                       quantity, fill_price, fill_amount
+                FROM fill_history
+                WHERE fill_date = ?
+                ORDER BY created_at DESC
+                """,
+                (limit, trade_date),
+            )
+        except Exception:
+            return []
+
+    def history_logs(self, trade_date: date, limit: int = 200) -> list[tuple[Any, ...]]:
+        return self._query(
+            """
+            SELECT TOP (?) created_at, log_level, message
+            FROM bot_log
+            WHERE CAST(created_at AS DATE) = ?
+            ORDER BY created_at DESC
+            """,
+            (limit, trade_date),
         )
 
     def _query(self, sql: str, row: tuple[Any, ...]) -> list[tuple[Any, ...]]:

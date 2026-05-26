@@ -51,6 +51,24 @@ BEGIN
     );
 END;
 
+IF OBJECT_ID(N'dbo.fill_history', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.fill_history (
+        id INT IDENTITY PRIMARY KEY,
+        fill_date DATE NOT NULL,
+        fill_time VARCHAR(8),
+        ticker VARCHAR(10) NOT NULL,
+        ticker_name NVARCHAR(100),
+        side NVARCHAR(20),
+        quantity INT,
+        fill_price DECIMAL(10, 2),
+        fill_amount DECIMAL(12, 2),
+        order_no VARCHAR(30),
+        is_mock BIT DEFAULT 1,
+        created_at DATETIME DEFAULT GETDATE()
+    );
+END;
+
 IF OBJECT_ID(N'dbo.bot_log', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.bot_log (

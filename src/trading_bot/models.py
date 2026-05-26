@@ -131,3 +131,17 @@ class TradeRecord:
     exit_reason: str | None = None
     max_price_after_buy: float | None = None
     is_mock: bool = True
+
+
+@dataclass(frozen=True)
+class FillRecord:
+    trade_date: date
+    ticker: str
+    side: str
+    quantity: int
+    fill_price_usd: float
+    fill_amount_usd: float
+    fill_time: str = ""
+    ticker_name: str = ""
+    order_no: str = ""
+    is_mock: bool = True

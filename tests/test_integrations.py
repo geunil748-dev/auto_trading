@@ -17,6 +17,7 @@ from trading_bot.models import (
     CandidateSnapshot,
     DailyScore,
     DailyTarget,
+    FillRecord,
     ScoreRecord,
     Sentiment,
     TradeRecord,
@@ -142,6 +143,54 @@ def test_sql_monitor_repository_reads_rows() -> None:
     assert rows == [("AAA", 180, 4.2)]
     assert cursor.calls[0][1] == (5,)
     assert connection.closed
+
+
+def test_sql_repository_writes_fill_rows_without_duplicates() -> None:
+    cursors: list[Cursor] = []
+
+    def connect() -> Connection:
+        cursor = Cursor()
+        cursors.append(cursor)
+        return Connection(cursor)
+
+    repository = SqlServerDailyRepository(connect)
+    repository.save_fills(
+        [
+            FillRecord(
+                date(2026, 5, 22),
+                "AAA",
+                "매수",
+                2,
+                12.5,
+                25.0,
+                "22:41:10",
+                "Alpha",
+                "1001",
+            )
+        ]
+    )
+
+    assert "CREATE TABLE dbo.fill_history" in cursors[0].calls[0][0]
+    assert "IF NOT EXISTS" in cursors[1].calls[0][0]
+    assert cursors[1].calls[0][1] == (
+        date(2026, 5, 22),
+        "22:41:10",
+        "AAA",
+        "매수",
+        2,
+        12.5,
+        True,
+        date(2026, 5, 22),
+        "22:41:10",
+        "AAA",
+        "Alpha",
+        "매수",
+        2,
+        12.5,
+        25.0,
+        "1001",
+        True,
+    )
 
 
 def test_kis_overseas_client_uses_official_ranking_and_quote_shapes() -> None:

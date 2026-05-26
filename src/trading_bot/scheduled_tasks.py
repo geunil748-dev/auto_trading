@@ -16,6 +16,8 @@ from trading_bot.composition import (
 )
 from trading_bot.config import KisSettings, TradingSettings
 from trading_bot.daily_report import write_daily_report
+from trading_bot.database import pyodbc_connect_factory
+from trading_bot.fill_persistence import fill_records_from_monitor_rows
 from trading_bot.intraday_entries import limited_intraday_buy_intents
 from trading_bot.live_monitor_state import live_kis_monitor_state
 from trading_bot.market_calendar import (
@@ -26,6 +28,7 @@ from trading_bot.market_calendar import (
 from trading_bot.models import PositionState
 from trading_bot.monitor_state import state_from_dry_run
 from trading_bot.order_cancellation import cancel_unfilled_orders
+from trading_bot.repositories import SqlServerDailyRepository
 from trading_bot.schedule import DailyTasks
 from trading_bot.scheduled_messages import log_row, recheck_message, watch_message
 
@@ -224,11 +227,31 @@ def _write_live_state(
         live_state["logs"] = screening_state["logs"] + live_state["logs"]
     if extra_logs:
         live_state["logs"] = extra_logs + live_state["logs"]
+    persist_error = _persist_live_fills(live_state)
+    if persist_error:
+        live_state["logs"] = [log_row("DB", persist_error)] + live_state["logs"]
     monitor_state.write_text(
         json.dumps(live_state, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
     return live_state
+
+
+def _persist_live_fills(live_state: dict[str, object]) -> str:
+    fills = live_state.get("fills", [])
+    if not isinstance(fills, list):
+        return ""
+    records = fill_records_from_monitor_rows(fills)
+    if not records:
+        return ""
+    try:
+        repository = SqlServerDailyRepository(pyodbc_connect_factory())
+        repository.save_fills(records)
+    except ValueError:
+        return ""
+    except Exception as exc:
+        return f"체결 DB 저장 실패: {exc}"
+    return ""
 
 
 def _write_closed_state(monitor_state: Path) -> None:

@@ -38,6 +38,7 @@ const fallbackState = {
 };
 
 let currentState = fallbackState;
+let historyState = { targets: [], orders: [], fills: [], logs: [], trades: [] };
 let activeAccount = "mock";
 let activePage = "dashboard";
 
@@ -51,8 +52,15 @@ const toggleSideNavButton = document.querySelector("#toggleSideNav");
 const tokenInput = document.querySelector("#monitorToken");
 const saveTokenButton = document.querySelector("#saveMonitorToken");
 const authStatus = document.querySelector("#authStatus");
+const historyDateInput = document.querySelector("#historyDate");
+const refreshHistoryButton = document.querySelector("#refreshHistory");
+const historyStatus = document.querySelector("#historyStatus");
 
 document.body.dataset.page = activePage;
+
+if (historyDateInput) {
+  historyDateInput.value = todayText();
+}
 
 if (tokenInput) {
   tokenInput.value = localStorage.getItem(tokenStorageKey) || "";
@@ -71,6 +79,7 @@ tokenInput?.addEventListener("keydown", (event) => {
   }
 });
 refreshButton.addEventListener("click", loadState);
+refreshHistoryButton?.addEventListener("click", loadHistory);
 window.runtimeControls?.bind(toggleRealOrderUnlock);
 tabButtons.forEach((button) => {
   button.addEventListener("click", () => {
@@ -83,6 +92,9 @@ navButtons.forEach((button) => {
   button.addEventListener("click", () => {
     activePage = button.dataset.page || "dashboard";
     renderPage();
+    if (activePage === "activity" || activePage === "candidateHistory") {
+      loadHistory();
+    }
   });
 });
 toggleSideNavButton?.addEventListener("click", () => {
@@ -90,6 +102,7 @@ toggleSideNavButton?.addEventListener("click", () => {
 });
 sideScrim?.addEventListener("click", () => setSideNavOpen(false));
 loadState();
+loadHistory();
 
 async function loadState() {
   refreshButton.disabled = true;
@@ -105,8 +118,28 @@ async function loadState() {
   render(currentState);
 }
 
+async function loadHistory() {
+  if (!refreshHistoryButton) {
+    return;
+  }
+  refreshHistoryButton.disabled = true;
+  setHistoryStatus("DB 조회 중...");
+  try {
+    historyState = normalizeHistoryState(await fetchHistory());
+    setHistoryStatus(`${historyState.date || selectedHistoryDate()} 기준`);
+  } catch {
+    historyState = { targets: [], orders: [], fills: [], logs: [], trades: [] };
+    setHistoryStatus("DB 기록을 불러오지 못했습니다.");
+  } finally {
+    refreshHistoryButton.disabled = false;
+  }
+  render(currentState);
+}
+
 async function fetchState() {
-  for (const url of [`/api/state?ts=${Date.now()}`, `./state.json?ts=${Date.now()}`]) {
+  const apiQuery = `/api/state?ts=${Date.now()}`;
+  const urls = [apiQuery, `./state.json?ts=${Date.now()}`];
+  for (const url of urls) {
     const response = await fetch(url, fetchOptions(url));
     if (response.ok) {
       return response.json();
@@ -116,6 +149,16 @@ async function fetchState() {
     }
   }
   throw new Error("monitor state request failed");
+}
+
+async function fetchHistory() {
+  const historyDate = selectedHistoryDate();
+  const url = `/api/history?ts=${Date.now()}&date=${encodeURIComponent(historyDate)}`;
+  const response = await fetch(url, fetchOptions(url));
+  if (!response.ok) {
+    throw new Error("history request failed");
+  }
+  return response.json();
 }
 
 async function toggleRealOrderUnlock() {
@@ -167,6 +210,22 @@ function setAuthStatus(message) {
   }
 }
 
+function setHistoryStatus(message) {
+  if (historyStatus) {
+    historyStatus.textContent = message;
+  }
+}
+
+function selectedHistoryDate() {
+  return (historyDateInput?.value || todayText()).trim();
+}
+
+function todayText() {
+  const now = new Date();
+  const offset = now.getTimezoneOffset() * 60000;
+  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
+}
+
 function setSideNavOpen(open) {
   sideNav?.classList.toggle("is-collapsed", !open);
   document.body.classList.toggle("side-collapsed", !open);
@@ -182,6 +241,17 @@ function normalizeState(state) {
       mock: { ...emptyAccount, ...state, label: "모의투자", connected: true },
       real: { ...emptyAccount, label: "실투자" },
     },
+  };
+}
+
+function normalizeHistoryState(state) {
+  return {
+    date: state.date || selectedHistoryDate(),
+    targets: state.targets || [],
+    orders: state.orders || [],
+    fills: state.fills || [],
+    logs: state.logs || [],
+    trades: state.trades || [],
   };
 }
 
@@ -231,10 +301,10 @@ function renderTables(accountState, sqlState) {
   const names = tickerNames(accountState);
   document.querySelector("#targetRows").innerHTML =
     targets.length === 0
-      ? `<tr><td class="empty-copy" colspan="7">수집된 종목이 없습니다</td></tr>`
+      ? `<tr><td class="empty-copy" colspan="7">오늘 조건에 맞는 종목 없음</td></tr>`
       : targets.map((row) => renderTargetRow(row, names)).join("");
 
-  const candidateHistory = (sqlState.targets || []).length > 0 ? sqlState.targets : targets;
+  const candidateHistory = historyState.targets || [];
   document.querySelector("#candidateHistoryRows").innerHTML =
     candidateHistory.length === 0
       ? `<tr><td class="empty-copy" colspan="7">저장된 후보 리스트가 없습니다</td></tr>`
@@ -246,17 +316,24 @@ function renderTables(accountState, sqlState) {
       ? `<tr><td class="empty-copy" colspan="7">보유 종목이 없습니다</td></tr>`
       : holdings.map(renderHoldingRow).join("");
 
-  document.querySelector("#logRows").innerHTML = (accountState.logs || [])
+  const activityLogs = activePage === "activity" ? historyState.logs || [] : accountState.logs || [];
+  document.querySelector("#logRows").innerHTML = activityLogs
     .map(renderLogRow)
     .join("");
 
-  const orders = accountState.orders || trades;
+  const accountOrders = accountState.orders || [];
+  const orders =
+    activePage === "activity"
+      ? historyState.trades || []
+      : accountOrders.length > 0
+        ? accountOrders
+        : trades;
   document.querySelector("#orderRows").innerHTML =
     orders.length === 0
       ? `<p class="empty-copy">주문 내역이 없습니다</p>`
       : orders.map(renderOrderRow).join("");
 
-  const fills = accountState.fills || [];
+  const fills = activePage === "activity" ? historyState.fills || [] : accountState.fills || [];
   document.querySelector("#fillRows").innerHTML =
     fills.length === 0
       ? `<p class="empty-copy">체결 내역이 없습니다</p>`
@@ -269,8 +346,8 @@ function renderTargetRow(row, names = {}) {
   const displayName = name && name !== "-" ? name : names[ticker] || "-";
   return `
     <tr>
-      <td><strong>${ticker}</strong></td>
-      <td>${displayName}</td>
+      <td><strong>${displayName}</strong></td>
+      <td>${ticker}</td>
       <td>${price}</td>
       <td>${volume}</td>
       <td>${gap}</td>

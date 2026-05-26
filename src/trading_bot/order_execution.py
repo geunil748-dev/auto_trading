@@ -24,9 +24,22 @@ class BuyIntentExecutor:
 
     def execute(self, intents: Iterable[BuyIntent]) -> list[TradeRecord]:
         submitted = list(intents)
+        successful: list[BuyIntent] = []
         trades: list[TradeRecord] = []
         for intent in submitted:
-            self.submit_order(intent)
+            try:
+                self.submit_order(intent)
+            except Exception as error:
+                self.repository.save_log(
+                    BotLog(
+                        "ERROR",
+                        "execution",
+                        f"매수 주문 실패: {intent.ticker} {intent.quantity}주 "
+                        f"@ ${intent.limit_price_usd:,.2f} ({error})",
+                    )
+                )
+                continue
+            successful.append(intent)
             trades.append(
                 TradeRecord(
                     trade_date=self.today(),
@@ -39,7 +52,7 @@ class BuyIntentExecutor:
                 )
             )
         self.repository.save_trades(trades)
-        self.repository.save_log(BotLog("INFO", "execution", _buy_log(submitted)))
+        self.repository.save_log(BotLog("INFO", "execution", _buy_log(successful)))
         return trades
 
 
