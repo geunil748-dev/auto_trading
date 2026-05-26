@@ -189,7 +189,7 @@ function render(state) {
   const accountState = state.accounts?.[activeAccount] || emptyAccount;
   renderRuntime(state.runtime || fallbackState.runtime);
   renderSummary(accountState);
-  renderTables(accountState);
+  renderTables(accountState, state.sql || {});
   renderPage();
 }
 
@@ -225,13 +225,20 @@ function renderSummary(accountState) {
   error.textContent = accountState.error || "";
 }
 
-function renderTables(accountState) {
+function renderTables(accountState, sqlState) {
   const trades = accountState.trades || [];
   const targets = accountState.targets || [];
+  const names = tickerNames(accountState);
   document.querySelector("#targetRows").innerHTML =
     targets.length === 0
-      ? `<tr><td class="empty-copy" colspan="6">수집된 종목이 없습니다</td></tr>`
-      : targets.map(renderTargetRow).join("");
+      ? `<tr><td class="empty-copy" colspan="7">수집된 종목이 없습니다</td></tr>`
+      : targets.map((row) => renderTargetRow(row, names)).join("");
+
+  const candidateHistory = (sqlState.targets || []).length > 0 ? sqlState.targets : targets;
+  document.querySelector("#candidateHistoryRows").innerHTML =
+    candidateHistory.length === 0
+      ? `<tr><td class="empty-copy" colspan="7">저장된 후보 리스트가 없습니다</td></tr>`
+      : candidateHistory.map((row) => renderTargetRow(row, names)).join("");
 
   const holdings = accountState.holdings || [];
   document.querySelector("#holdingRows").innerHTML =
@@ -256,16 +263,34 @@ function renderTables(accountState) {
       : fills.map(renderFillRow).join("");
 }
 
-function renderTargetRow([ticker, price, volume, gap, score, currentState]) {
+function renderTargetRow(row, names = {}) {
+  const [ticker, name, price, volume, gap, score, currentState] =
+    row.length >= 7 ? row : [row[0], names[row[0]] || "-", ...row.slice(1)];
+  const displayName = name && name !== "-" ? name : names[ticker] || "-";
   return `
     <tr>
       <td><strong>${ticker}</strong></td>
+      <td>${displayName}</td>
       <td>${price}</td>
       <td>${volume}</td>
       <td>${gap}</td>
       <td class="score">${score}</td>
       <td><span class="trade-state">${currentState}</span></td>
     </tr>`;
+}
+
+function tickerNames(accountState) {
+  const names = {};
+  for (const row of [
+    ...(accountState.holdings || []),
+    ...(accountState.orders || []),
+    ...(accountState.fills || []),
+  ]) {
+    if (row.ticker && row.name) {
+      names[row.ticker] = row.name;
+    }
+  }
+  return names;
 }
 
 function renderHoldingRow(holding) {
@@ -302,6 +327,7 @@ function renderOrderRow(order) {
 }
 
 function renderFillRow(fill) {
+  const filledAt = fill.filledAt || [fill.date, fill.time].filter(Boolean).join(" ");
   return `
     <section class="trade-row fill-row">
       <strong>${fill.ticker}</strong>
@@ -309,5 +335,6 @@ function renderFillRow(fill) {
       <b>${fill.price}</b>
       <small>${fill.quantity}주</small>
       <em>${fill.total}</em>
+      <time>${filledAt || "-"}</time>
     </section>`;
 }

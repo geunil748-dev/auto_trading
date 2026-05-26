@@ -112,12 +112,12 @@ def test_pipeline_screens_scores_and_persists_selected_candidates() -> None:
     ).run()
 
     assert run.blocked_reason is None
-    assert market_data.snapshot_requests == [{"AAA", "BBB"}]
-    assert [item.candidate.ticker for item in repository.targets] == ["AAA"]
-    assert [item.score.ticker for item in repository.scores] == ["AAA"]
-    assert [item.ticker for item in run.selected] == ["AAA"]
-    assert repository.logs[-1].message == "Screened 1 targets and selected 1."
-    assert repository.logs[-2].message == "Filter rejects: LOW_OPENING_VOLUME=1."
+    assert market_data.snapshot_requests[0] == {"AAA", "BBB"}
+    assert [item.candidate.ticker for item in repository.targets] == ["AAA", "BBB"]
+    assert [item.score.ticker for item in repository.scores] == ["AAA", "BBB"]
+    assert [item.ticker for item in run.selected] == ["AAA", "BBB"]
+    assert repository.logs[-1].message == "Screened 2 targets and selected 2."
+    assert repository.logs[-2].message == "Filter rejects: LOW_OPENING_VOLUME=1, MISSING_SNAPSHOT=2."
 
 
 def test_pipeline_logs_and_skips_market_calls_when_global_gate_blocks_entry() -> None:
@@ -134,6 +134,10 @@ def test_pipeline_logs_and_skips_market_calls_when_global_gate_blocks_entry() ->
     ).run()
 
     assert run.blocked_reason == "MARKET_BELOW_MA20"
-    assert repository.targets == []
-    assert market_data.snapshot_requests == []
-    assert repository.logs == [BotLog("WARNING", "pipeline", "Entry blocked: MARKET_BELOW_MA20")]
+    assert [item.candidate.ticker for item in repository.targets] == ["AAA", "BBB"]
+    assert repository.scores == []
+    assert market_data.snapshot_requests[0] == {"AAA", "BBB"}
+    assert repository.logs[-2:] == [
+        BotLog("WARNING", "pipeline", "Entry blocked: MARKET_BELOW_MA20"),
+        BotLog("INFO", "pipeline", "Screened 2 targets and selected 0."),
+    ]

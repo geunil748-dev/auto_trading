@@ -15,6 +15,7 @@ class Sentiment(Enum):
 class RankedStock:
     ticker: str
     rank: int
+    name: str = ""
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,7 @@ class CandidateSnapshot:
     opening_volume_ratio: float
     turnover_rank: int
     gain_rank: int
+    name: str = ""
 
     @property
     def opening_gap(self) -> float:

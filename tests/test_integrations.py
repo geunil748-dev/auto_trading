@@ -1,5 +1,7 @@
 from datetime import date, datetime, timedelta, timezone
 
+import pytest
+
 from trading_bot.adapters.kis_overseas import KisOverseasClient
 from trading_bot.adapters.kis_orders import (
     KisMockBuySubmitter,
@@ -123,7 +125,7 @@ def test_sql_repository_writes_daily_rows_and_logs() -> None:
         [TradeRecord(date(2026, 5, 22), "AAA", "BUY", 12, None, 2)]
     )
 
-    assert cursors[0].calls[0][1] == [(date(2026, 5, 22), "AAA", 180.0, 4.0)]
+    assert cursors[0].calls[0][1] == [(date(2026, 5, 22), "AAA", "", 180.0, 4.0)]
     assert cursors[1].calls[0][1] == [(date(2026, 5, 22), "AAA", 95, 80, 87.5, True)]
     assert cursors[2].calls[0][1] == ("INFO", "test", "stored")
     assert cursors[3].calls[0][1] == [
@@ -185,6 +187,7 @@ def test_kis_overseas_client_uses_mock_balance_and_limit_order_shapes() -> None:
     client = KisOverseasClient(Http(), "NAS")
     client.balance("12345678", "01")
     result = client.limit_order("12345678", "01", "AAA", 2, 10.5, "buy")
+    sell_result = client.limit_order("12345678", "01", "AAA", 2, 10.1, "sell")
     cancel = client.cancel_order("12345678", "01", "AAA", "999", 1)
     client.buyable_amount("12345678", "01", "QQQ")
 
@@ -192,14 +195,22 @@ def test_kis_overseas_client_uses_mock_balance_and_limit_order_shapes() -> None:
     assert calls[0][2]["OVRS_EXCG_CD"] == "NASD"
     assert calls[1][1] == "VTTT1002U"
     assert calls[1][2]["OVRS_ORD_UNPR"] == "10.50"
+    assert calls[1][2]["ORD_UNPR"] == "10.50"
+    assert calls[1][2]["ORD_GRNT_DVSN_CD"] == "0"
     assert result == {"output": {"ODNO": "1"}}
-    assert calls[2][1] == "VTTT1004U"
-    assert calls[2][2]["ORGN_ODNO"] == "999"
-    assert calls[2][2]["RVSE_CNCL_DVSN_CD"] == "02"
-    assert calls[2][2]["OVRS_ORD_UNPR"] == "0"
+    assert calls[2][1] == "VTTT1001U"
+    assert calls[2][2]["OVRS_ORD_UNPR"] == "10.10"
+    assert calls[2][2]["ORD_UNPR"] == "10.10"
+    assert calls[2][2]["SLL_TYPE"] == "00"
+    assert calls[2][2]["ORD_GRNT_DVSN_CD"] == "0"
+    assert sell_result == {"output": {"ODNO": "1"}}
+    assert calls[3][1] == "VTTT1004U"
+    assert calls[3][2]["ORGN_ODNO"] == "999"
+    assert calls[3][2]["RVSE_CNCL_DVSN_CD"] == "02"
+    assert calls[3][2]["OVRS_ORD_UNPR"] == "0"
     assert cancel == {"output": {"ODNO": "1"}}
-    assert calls[3][1] == "VTTS3007R"
-    assert calls[3][2]["ITEM_CD"] == "QQQ"
+    assert calls[4][1] == "VTTS3007R"
+    assert calls[4][2]["ITEM_CD"] == "QQQ"
 
 
 def test_yahoo_news_source_caps_recent_titles() -> None:
@@ -270,3 +281,17 @@ def test_kis_mock_buy_submitter_uses_settings_for_limit_order() -> None:
 
     assert cancel_result == {"ok": True}
     assert calls[2][:5] == ("12345678", "01", "AAA", "999", 1)
+
+
+def test_kis_mock_submitter_raises_on_business_error_response() -> None:
+    class Kis:
+        def limit_order(self, *args: object, **kwargs: object) -> dict[str, object]:
+            return {"rt_cd": "1", "msg1": "모의투자에서는 해당업무가 제공되지 않습니다."}
+
+    submitter = KisMockSellSubmitter(
+        Kis(),
+        KisSettings("app", "secret", "12345678", "01", "https://kis.test"),
+    )
+
+    with pytest.raises(RuntimeError, match="모의투자에서는 해당업무"):
+        submitter.submit(SellIntent("AAA", 2, 10.1, "EOD"))

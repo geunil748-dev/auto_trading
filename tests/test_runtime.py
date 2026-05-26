@@ -17,7 +17,7 @@ class Pipeline:
     def run(self) -> ScoringRun:
         target = DailyTarget(
             date(2026, 5, 22),
-            CandidateSnapshot("AAA", 12, 11, 10, 0.04, 1.8, 1, 2),
+            CandidateSnapshot("AAA", 12, 11, 10, 0.04, 1.8, 1, 2, "Alpha"),
         )
         score = ScoreRecord("AAA", 95, 85)
         return ScoringRun(
@@ -44,5 +44,6 @@ def test_dry_run_runtime_plans_buy_intents_and_monitor_state() -> None:
     state = state_from_dry_run(result)
 
     assert [(item.ticker, item.quantity) for item in result.buy_intents] == [("AAA", 153)]
-    assert state["targets"] == [["AAA", "$12.00", "180%", "+10.0%", "90", "매수 예정"]]
-    assert state["gates"][-1] == ["매수 예정", "1"]
+    assert state["targets"][0][:6] == ["AAA", "Alpha", "$12.00", "180%", "+10.0%", "90"]
+    assert state["targets"][0][6]
+    assert state["gates"][-1][1] == "1"

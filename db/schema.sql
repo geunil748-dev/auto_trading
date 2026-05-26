@@ -4,10 +4,16 @@ BEGIN
         id INT IDENTITY PRIMARY KEY,
         trade_date DATE NOT NULL,
         ticker VARCHAR(10) NOT NULL,
+        ticker_name NVARCHAR(100),
         volume_ratio DECIMAL(6, 2),
         price_change DECIMAL(6, 2),
         created_at DATETIME DEFAULT GETDATE()
     );
+END;
+
+IF COL_LENGTH('dbo.daily_target', 'ticker_name') IS NULL
+BEGIN
+    ALTER TABLE dbo.daily_target ADD ticker_name NVARCHAR(100) NULL;
 END;
 
 IF OBJECT_ID(N'dbo.scoring', N'U') IS NULL

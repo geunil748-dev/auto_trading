@@ -7,14 +7,16 @@
 
 body[data-page="dashboard"] .logs,
 body[data-page="dashboard"] .orders,
-body[data-page="dashboard"] .fills {
+body[data-page="dashboard"] .fills,
+body[data-page="dashboard"] .candidate-history {
   display: none;
 }
 
 body[data-page="activity"] .account-summary,
 body[data-page="activity"] .account-error,
 body[data-page="activity"] .candidates,
-body[data-page="activity"] .holdings {
+body[data-page="activity"] .holdings,
+body[data-page="activity"] .candidate-history {
   display: none;
 }
 
@@ -26,6 +28,24 @@ body[data-page="activity"] .logs,
 body[data-page="activity"] .orders,
 body[data-page="activity"] .fills {
   min-height: 190px;
+}
+
+body[data-page="candidateHistory"] .account-summary,
+body[data-page="candidateHistory"] .account-error,
+body[data-page="candidateHistory"] .candidates,
+body[data-page="candidateHistory"] .holdings,
+body[data-page="candidateHistory"] .logs,
+body[data-page="candidateHistory"] .orders,
+body[data-page="candidateHistory"] .fills {
+  display: none;
+}
+
+body[data-page="candidateHistory"] .work-grid {
+  grid-template-columns: minmax(320px, 1fr);
+}
+
+body[data-page="candidateHistory"] .candidate-history {
+  min-height: 250px;
 }
 
 .title-line {
@@ -254,9 +274,20 @@ td strong,
   padding: 11px 12px;
 }
 
+.fill-row {
+  grid-template-columns: minmax(74px, 1fr) 56px 84px 72px minmax(72px, 1fr) 136px;
+}
+
 .trade-row span,
-.trade-row small {
+.trade-row small,
+.trade-row time {
   color: var(--muted);
+}
+
+.trade-row time {
+  font-size: 12px;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .trade-row em {

@@ -7,6 +7,7 @@ def state_from_dry_run(result: DryRunResult) -> dict[str, object]:
     targets = [
         [
             item.candidate.ticker,
+            item.candidate.name or "-",
             _usd(item.candidate.price_usd),
             _percent(item.candidate.opening_volume_ratio),
             _signed_percent(item.candidate.opening_gap),

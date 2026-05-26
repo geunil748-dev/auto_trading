@@ -26,6 +26,7 @@ class TradingSettings:
     max_opening_gap: float = 0.20
     min_opening_price_change: float = 0.03
     min_volume_ratio: float = 1.50
+    min_total_score: float = 70.0
     trailing_stop_drop: float = 0.03
     breakout_k: float = 0.50
     max_intraday_entry_rounds: int = 2
@@ -47,6 +48,18 @@ class KisSettings:
 
 
 @dataclass(frozen=True)
+class KisWebSocketSettings:
+    enabled: bool
+    app_key: str
+    app_secret: str
+    approval_key: str
+    ws_url: str
+    account_no: str
+    account_product: str
+    reconnect_seconds: int = 5
+
+
+@dataclass(frozen=True)
 class NotificationSettings:
     discord_webhook_url: str = ""
     telegram_bot_token: str = ""
@@ -59,9 +72,16 @@ def load_settings() -> TradingSettings:
 
     return TradingSettings(
         mock_trading=_bool_env("MOCK_TRADING", True),
+        min_price_usd=_float_env("MIN_PRICE_USD", 5.0),
+        max_price_usd=_float_env("MAX_PRICE_USD", 50.0),
         max_open_positions=_int_env("MAX_OPEN_POSITIONS", 5),
+        max_selected_candidates=_int_env("MAX_SELECTED_CANDIDATES", 5),
         max_account_exposure=_float_env("MAX_ACCOUNT_EXPOSURE", 0.80),
         max_position_exposure=_float_env("MAX_POSITION_EXPOSURE", 0.20),
+        max_opening_gap=_float_env("MAX_OPENING_GAP", 0.20),
+        min_opening_price_change=_float_env("MIN_OPENING_PRICE_CHANGE", 0.03),
+        min_volume_ratio=_float_env("MIN_VOLUME_RATIO", 1.50),
+        min_total_score=_float_env("MIN_TOTAL_SCORE", 70.0),
         max_intraday_entry_rounds=_int_env("MAX_INTRADAY_ENTRY_ROUNDS", 2),
         max_intraday_buy_intents_per_round=_int_env(
             "MAX_INTRADAY_BUY_INTENTS_PER_ROUND",
@@ -116,6 +136,28 @@ def load_real_kis_settings() -> KisSettings:
             "KIS_REAL_BASE_URL",
             "https://openapi.koreainvestment.com:9443",
         ).rstrip("/"),
+    )
+
+
+def load_kis_websocket_settings(real: bool = False) -> KisWebSocketSettings:
+    if load_dotenv is not None:
+        load_dotenv()
+
+    prefix = "KIS_REAL_WS" if real else "KIS_WS"
+    kis_prefix = "KIS_REAL" if real else "KIS"
+
+    return KisWebSocketSettings(
+        enabled=_bool_env(f"{prefix}_ENABLED", False),
+        app_key=os.getenv(f"{prefix}_APP_KEY") or os.getenv(f"{kis_prefix}_APP_KEY", ""),
+        app_secret=os.getenv(f"{prefix}_APP_SECRET")
+        or os.getenv(f"{kis_prefix}_APP_SECRET", ""),
+        approval_key=os.getenv(f"{prefix}_APPROVAL_KEY", ""),
+        ws_url=os.getenv(f"{prefix}_URL", "").rstrip("/"),
+        account_no=os.getenv(f"{prefix}_ACCOUNT_NO")
+        or os.getenv(f"{kis_prefix}_ACCOUNT_NO", ""),
+        account_product=os.getenv(f"{prefix}_ACCOUNT_PRODUCT")
+        or os.getenv(f"{kis_prefix}_ACCOUNT_PRODUCT", "01"),
+        reconnect_seconds=_int_env(f"{prefix}_RECONNECT_SECONDS", 5),
     )
 
 

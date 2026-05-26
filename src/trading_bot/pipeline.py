@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from trading_bot.config import TradingSettings
-from trading_bot.models import BotLog, DailyScore, DailyTarget, ScoreRecord
+from trading_bot.models import BotLog, DailyScore, DailyTarget, RankedStock, ScoreRecord
 from trading_bot.ports import (
     AccountReader,
     DailyRepository,
@@ -14,7 +14,7 @@ from trading_bot.ports import (
 )
 from trading_bot.risk import global_entry_gate
 from trading_bot.scoring import select_candidates
-from trading_bot.screening import ranking_intersection, screening_rejection_counts
+from trading_bot.screening import adaptive_ranking_intersection, screening_rejection_counts
 
 
 @dataclass(frozen=True)
@@ -57,22 +57,57 @@ class ScreeningScoringPipeline:
             account,
             self.settings,
         )
-        if not entry_gate.allowed:
-            self.repository.save_log(
-                BotLog("WARNING", "pipeline", f"Entry blocked: {entry_gate.reason}")
-            )
-            return ScoringRun(trade_date, entry_gate.reason, (), ())
-
         gainers = tuple(self.market_data.ranked_gainers())
         turnover = tuple(self.market_data.ranked_turnover())
         requested_tickers = {item.ticker for item in gainers} & {
             item.ticker for item in turnover
         }
         snapshots = self.market_data.candidate_snapshots(requested_tickers)
+        candidates = adaptive_ranking_intersection(gainers, turnover, snapshots, self.settings)
+        if len(candidates) < self.settings.min_selected_candidates:
+            for rank_limit in (5, 10, 15):
+                expanded_tickers = _expanded_tickers(gainers, turnover, rank_limit)
+                snapshots = {
+                    **snapshots,
+                    **self.market_data.candidate_snapshots(
+                        expanded_tickers - snapshots.keys()
+                    ),
+                }
+                expanded_gainers = _with_missing_ranks(gainers, expanded_tickers)
+                expanded_turnover = _with_missing_ranks(turnover, expanded_tickers)
+                requested_tickers = expanded_tickers
+                candidates = adaptive_ranking_intersection(
+                    expanded_gainers,
+                    expanded_turnover,
+                    snapshots,
+                    self.settings,
+                )
+                self.repository.save_log(
+                    BotLog(
+                        "INFO",
+                        "screening",
+                        "Expanded screening universe "
+                        f"to top {rank_limit} ({len(expanded_tickers)} tickers).",
+                    )
+                )
+                if len(candidates) >= self.settings.min_selected_candidates:
+                    break
         self._save_screening_diagnostics(requested_tickers, snapshots)
-        candidates = ranking_intersection(gainers, turnover, snapshots, self.settings)
         targets = tuple(DailyTarget(trade_date, item) for item in candidates)
         self.repository.save_daily_targets(targets)
+
+        if not entry_gate.allowed:
+            self.repository.save_log(
+                BotLog("WARNING", "pipeline", f"Entry blocked: {entry_gate.reason}")
+            )
+            self.repository.save_log(
+                BotLog(
+                    "INFO",
+                    "pipeline",
+                    f"Screened {len(targets)} targets and selected 0.",
+                )
+            )
+            return ScoringRun(trade_date, entry_gate.reason, targets, ())
 
         scored = [self.scoring.score(item) for item in candidates]
         selected_tickers = {
@@ -101,3 +136,17 @@ class ScreeningScoringPipeline:
         self.repository.save_log(
             BotLog("INFO", "screening", f"Filter rejects: {summary or 'none'}.")
         )
+
+
+def _expanded_tickers(gainers, turnover, rank_limit: int) -> set[str]:
+    return {
+        item.ticker
+        for item in tuple(gainers) + tuple(turnover)
+        if item.rank <= rank_limit
+    }
+
+
+def _with_missing_ranks(rows, tickers: set[str]):
+    existing = {item.ticker: item for item in rows}
+    fallback_rank = max((item.rank for item in rows), default=0) + 50
+    return tuple(existing.get(ticker) or RankedStock(ticker, fallback_rank) for ticker in tickers)

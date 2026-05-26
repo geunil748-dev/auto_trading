@@ -5,7 +5,7 @@ from collections.abc import Iterable, Mapping
 from trading_bot.config import TradingSettings
 from trading_bot.models import AccountState, BuyIntent, ScoreRecord
 from trading_bot.risk import position_entry_gate
-from trading_bot.scoring import position_fraction_for_news_score
+from trading_bot.scoring import position_fraction_for_score
 from trading_bot.strategy import breakout_triggered
 
 
@@ -30,7 +30,7 @@ def plan_buy_intents(
             continue
 
         fraction = min(
-            position_fraction_for_news_score(score.news_score),
+            position_fraction_for_score(score.total_score, settings),
             settings.max_position_exposure,
         )
         order_value = min(cash, account.equity_usd * fraction)

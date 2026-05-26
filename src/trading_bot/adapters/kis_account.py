@@ -100,7 +100,7 @@ class KisAccountReader:
         try:
             quote = self.kis.quote(ticker)
             daily = self.kis.daily_prices(ticker)
-        except (AttributeError, ValueError):
+        except Exception:
             return {"openPrice": "-", "closePrice": "-"}
         row = daily[0] if daily else {}
         open_price = _first_float(row, "open", "OPEN", "ovrs_nmix_oprc")

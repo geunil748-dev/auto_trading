@@ -32,15 +32,17 @@ class SqlServerDailyRepository:
             (
                 item.trade_date,
                 item.candidate.ticker,
+                item.candidate.name,
                 item.candidate.opening_volume_ratio * 100,
                 item.candidate.opening_price_change * 100,
             )
             for item in targets
         ]
-        self._executemany(
+        self._executemany_with_daily_target_name(
             """
-            INSERT INTO daily_target (trade_date, ticker, volume_ratio, price_change)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO daily_target
+                (trade_date, ticker, ticker_name, volume_ratio, price_change)
+            VALUES (?, ?, ?, ?, ?)
             """,
             rows,
         )
@@ -112,9 +114,36 @@ class SqlServerDailyRepository:
             connection.cursor().executemany(sql, rows)
             connection.commit()
 
+    def _executemany_with_daily_target_name(
+        self,
+        sql: str,
+        rows: list[tuple[Any, ...]],
+    ) -> None:
+        if not rows:
+            return
+        try:
+            self._executemany(sql, rows)
+        except Exception:
+            self._execute_statement(
+                """
+                IF COL_LENGTH('dbo.daily_target', 'ticker_name') IS NULL
+                    ALTER TABLE dbo.daily_target ADD ticker_name NVARCHAR(100) NULL
+                """,
+            )
+            self._executemany(sql, rows)
+
     def _execute(self, sql: str, row: tuple[Any, ...]) -> None:
         with closing(self.connect()) as connection:
             connection.cursor().execute(sql, row)
+            connection.commit()
+
+    def _execute_statement(self, sql: str) -> None:
+        with closing(self.connect()) as connection:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(sql, ())
+            except TypeError:
+                cursor.execute(sql)  # type: ignore[call-arg]
             connection.commit()
 
 
@@ -123,15 +152,26 @@ class SqlServerMonitorRepository:
         self.connect = connect
 
     def latest_targets(self, limit: int = 20) -> list[tuple[Any, ...]]:
-        return self._query(
-            """
-            SELECT TOP (?) ticker, volume_ratio, price_change
-            FROM daily_target
-            WHERE trade_date = CAST(GETDATE() AS DATE)
-            ORDER BY created_at DESC
-            """,
-            (limit,),
-        )
+        try:
+            return self._query(
+                """
+                SELECT TOP (?) ticker, ticker_name, volume_ratio, price_change
+                FROM daily_target
+                WHERE trade_date = CAST(GETDATE() AS DATE)
+                ORDER BY created_at DESC
+                """,
+                (limit,),
+            )
+        except Exception:
+            return self._query(
+                """
+                SELECT TOP (?) ticker, volume_ratio, price_change
+                FROM daily_target
+                WHERE trade_date = CAST(GETDATE() AS DATE)
+                ORDER BY created_at DESC
+                """,
+                (limit,),
+            )
 
     def latest_scores(self, limit: int = 20) -> list[tuple[Any, ...]]:
         return self._query(

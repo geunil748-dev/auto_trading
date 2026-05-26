@@ -18,10 +18,14 @@ from trading_bot.risk import (
 )
 from trading_bot.scoring import (
     news_score,
-    position_fraction_for_news_score,
+    position_fraction_for_score,
     select_candidates,
 )
-from trading_bot.screening import ranking_intersection
+from trading_bot.screening import (
+    adaptive_ranking_intersection,
+    ranking_intersection,
+    screening_priority_score,
+)
 from trading_bot.strategy import breakout_triggered, volatility_breakout_price
 
 
@@ -92,22 +96,92 @@ def test_screening_keeps_rank_intersection_with_opening_filters() -> None:
     assert [item.ticker for item in selected] == ["AAA"]
 
 
+def test_screening_prioritizes_bonus_score_and_limits_list() -> None:
+    snapshots = {
+        "STEADY": candidate(
+            "STEADY",
+            change=0.06,
+            volume_ratio=3.5,
+            turnover_rank=8,
+            gain_rank=8,
+        ),
+        "CHASE": candidate(
+            "CHASE",
+            open_price=13.0,
+            change=0.28,
+            volume_ratio=3.5,
+            turnover_rank=1,
+            gain_rank=1,
+        ),
+        "MID": candidate(
+            "MID",
+            change=0.11,
+            volume_ratio=2.2,
+            turnover_rank=5,
+            gain_rank=6,
+        ),
+    }
+
+    selected = ranking_intersection(
+        [RankedStock("CHASE", 1), RankedStock("MID", 5), RankedStock("STEADY", 8)],
+        [RankedStock("CHASE", 1), RankedStock("MID", 6), RankedStock("STEADY", 8)],
+        snapshots,
+        TradingSettings(max_selected_candidates=2),
+    )
+
+    assert [item.ticker for item in selected] == ["STEADY", "MID"]
+    assert screening_priority_score(snapshots["STEADY"]) > screening_priority_score(
+        snapshots["CHASE"]
+    )
+
+
+def test_adaptive_screening_relaxes_filters_until_enough_candidates() -> None:
+    snapshots = {
+        "LOW": candidate("LOW", price=4.0, change=0.04, volume_ratio=1.8),
+        "CHANGE": candidate("CHANGE", change=0.02, volume_ratio=1.8),
+        "VOLUME": candidate("VOLUME", change=0.04, volume_ratio=1.0),
+        "GAP": candidate("GAP", open_price=12.6, change=0.04, volume_ratio=1.8),
+    }
+
+    selected = adaptive_ranking_intersection(
+        [
+            RankedStock("LOW", 1),
+            RankedStock("CHANGE", 2),
+            RankedStock("VOLUME", 3),
+            RankedStock("GAP", 4),
+        ],
+        [
+            RankedStock("LOW", 1),
+            RankedStock("CHANGE", 2),
+            RankedStock("VOLUME", 3),
+            RankedStock("GAP", 4),
+        ],
+        snapshots,
+        SETTINGS,
+    )
+
+    assert len(selected) == 3
+    assert {item.ticker for item in selected} == {"CHANGE", "VOLUME", "GAP"}
+
+
 def test_scoring_uses_positive_news_ratio_and_score_sizing() -> None:
     score = news_score([Sentiment.POSITIVE, Sentiment.NEUTRAL, Sentiment.POSITIVE])
+    settings = TradingSettings(min_total_score=40)
 
     assert round(score, 2) == 66.67
-    assert position_fraction_for_news_score(84.9) == 0.05
-    assert position_fraction_for_news_score(95) == 0.20
+    assert position_fraction_for_score(39.9, settings) == 0.0
+    assert position_fraction_for_score(40, settings) == 0.05
+    assert position_fraction_for_score(84.9, settings) == 0.10
 
 
-def test_candidate_selection_requires_buyable_news_score() -> None:
+def test_candidate_selection_requires_minimum_total_score() -> None:
     selected = select_candidates(
         [
-            ScoreRecord("LOW", 60, 99),
-            ScoreRecord("MID", 75, 70),
+            ScoreRecord("LOW", 20, 40),
+            ScoreRecord("MID", 40, 50),
             ScoreRecord("TOP", 95, 85),
         ],
-        SETTINGS,
+        TradingSettings(min_total_score=40),
     )
 
     assert [item.ticker for item in selected] == ["TOP", "MID"]

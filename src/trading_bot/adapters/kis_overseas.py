@@ -125,8 +125,10 @@ class KisOverseasClient:
             "PDNO": ticker,
             "ORD_QTY": str(quantity),
             "OVRS_ORD_UNPR": f"{limit_price_usd:.2f}",
+            "ORD_UNPR": f"{limit_price_usd:.2f}",
             "CTAC_TLNO": "",
             "MGCO_APTM_ODNO": "",
+            "ORD_GRNT_DVSN_CD": "0",
             "SLL_TYPE": "00" if side == "sell" else "",
             "ORD_SVR_DVSN_CD": "0",
             "ORD_DVSN": "00",
@@ -220,7 +222,7 @@ def _rank_rows(rows: Iterable[dict[str, Any]], limit: int) -> list[RankedStock]:
     for row in rows:
         ticker = _ticker_from_row(row)
         if ticker:
-            ranked.append(RankedStock(ticker, len(ranked) + 1))
+            ranked.append(RankedStock(ticker, len(ranked) + 1, _name_from_row(row)))
         if len(ranked) == limit:
             break
     return ranked
@@ -234,8 +236,32 @@ def _ticker_from_row(row: dict[str, Any]) -> str:
     return ""
 
 
+def _name_from_row(row: dict[str, Any]) -> str:
+    for field in (
+        "name",
+        "NAME",
+        "prdt_name",
+        "PRDT_NAME",
+        "ovrs_item_name",
+        "OVRS_ITEM_NAME",
+        "hts_kor_isnm",
+        "HTS_KOR_ISNM",
+        "knam",
+        "KNAM",
+        "enam",
+        "ENAM",
+    ):
+        value = row.get(field)
+        if value:
+            return str(value).strip()
+    return ""
+
+
 def _us_order_tr_id(side: str, mock: bool) -> str:
-    base = {"buy": "TTTT1002U", "sell": "TTTT1006U"}.get(side)
-    if base is None:
+    if mock:
+        tr_id = {"buy": "VTTT1002U", "sell": "VTTT1001U"}.get(side)
+    else:
+        tr_id = {"buy": "TTTT1002U", "sell": "TTTT1001U"}.get(side)
+    if tr_id is None:
         raise ValueError("side must be buy or sell")
-    return f"V{base[1:]}" if mock else base
+    return tr_id

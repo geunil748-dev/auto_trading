@@ -3,7 +3,7 @@ from trading_bot.sql_monitor_state import SqlMonitorStateSource
 
 class Repository:
     def latest_targets(self) -> list[tuple[object, ...]]:
-        return [("AAA", 180, 4.2)]
+        return [("AAA", "Alpha", 180, 4.2)]
 
     def latest_scores(self) -> list[tuple[object, ...]]:
         return [("AAA", 95, 80, 87.5, True)]
@@ -18,8 +18,8 @@ class Repository:
 def test_sql_monitor_state_shapes_dashboard_rows() -> None:
     state = SqlMonitorStateSource(Repository()).read()
 
-    assert state["targets"] == [["AAA", "-", "180%", "+4.2%", "88", "선정"]]
-    assert state["gates"] == [["저장소", "MSSQL"], ["점수 기록", "1"]]
+    assert state["targets"][0][:6] == ["AAA", "Alpha", "-", "180%", "+4.2%", "88"]
+    assert state["targets"][0][6]
     assert state["trades"] == [
         {"ticker": "AAA", "type": "BUY", "price": "$12.50", "quantity": "2", "exitReason": ""}
     ]

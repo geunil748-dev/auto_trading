@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from datetime import datetime, time
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from trading_bot.adapters.kis_overseas import KisOverseasClient
 from trading_bot.models import CandidateSnapshot, MarketContext, RankedStock
@@ -20,6 +22,7 @@ class KisScreeningMarketData:
         self.history = history
         self._gain_ranks: dict[str, int] = {}
         self._volume_ranks: dict[str, int] = {}
+        self._names: dict[str, str] = {}
 
     def market_context(self) -> MarketContext:
         return self.context.market_context()
@@ -27,12 +30,14 @@ class KisScreeningMarketData:
     def ranked_gainers(self) -> list[RankedStock]:
         rows = self.kis.ranked_gainers()
         self._gain_ranks = {item.ticker: item.rank for item in rows}
+        self._names.update({item.ticker: item.name for item in rows if item.name})
         return rows
 
     def ranked_turnover(self) -> list[RankedStock]:
         # 현재 사용 가능한 해외 랭킹 API는 거래량 기준이므로 거래대금 대용으로 사용한다.
         rows = self.kis.ranked_trade_volume()
         self._volume_ranks = {item.ticker: item.rank for item in rows}
+        self._names.update({item.ticker: item.name for item in rows if item.name})
         return rows
 
     def candidate_snapshots(
@@ -57,11 +62,12 @@ class KisScreeningMarketData:
                     open_price_usd=_opening_price(self.kis, ticker, quote),
                     previous_close_usd=_required_float(quote, "base", "BASE", "pcls", "PCLS"),
                     opening_price_change=_price_change_rate(quote),
-                    opening_volume_ratio=_ratio(opening_volume, average_volume),
+                    opening_volume_ratio=_opening_volume_ratio(opening_volume, average_volume),
                     turnover_rank=self._volume_ranks[ticker],
                     gain_rank=self._gain_ranks[ticker],
+                    name=_candidate_name(ticker, quote, self._names),
                 )
-            except ValueError:
+            except Exception:
                 continue
         return snapshots
 
@@ -89,6 +95,25 @@ def _price_change_rate(quote: dict[str, Any]) -> float:
     return _ratio(last - base, base)
 
 
+def _candidate_name(
+    ticker: str,
+    quote: dict[str, Any],
+    names: Mapping[str, str],
+) -> str:
+    explicit = _first_text(
+        quote,
+        "name",
+        "NAME",
+        "prdt_name",
+        "PRDT_NAME",
+        "ovrs_item_name",
+        "OVRS_ITEM_NAME",
+        "hts_kor_isnm",
+        "HTS_KOR_ISNM",
+    )
+    return explicit or names.get(ticker, "")
+
+
 def _opening_price(
     kis: KisOverseasClient,
     ticker: str,
@@ -103,6 +128,23 @@ def _opening_price(
     if not daily:
         raise ValueError(f"{ticker} has no daily price history")
     return _required_float(daily[0], "open", "OPEN")
+
+
+def _opening_volume_ratio(opening_volume: float, average_volume: float) -> float:
+    elapsed_fraction = max(_regular_session_elapsed_fraction(), 30 / 390)
+    return _ratio(opening_volume, average_volume * elapsed_fraction)
+
+
+def _regular_session_elapsed_fraction() -> float:
+    now = datetime.now(ZoneInfo("America/New_York"))
+    start = datetime.combine(now.date(), time(9, 30), tzinfo=now.tzinfo)
+    end = datetime.combine(now.date(), time(16, 0), tzinfo=now.tzinfo)
+    if now <= start:
+        return 30 / 390
+    if now >= end:
+        return 1.0
+    elapsed = (now - start).total_seconds() / 60
+    return min(1.0, elapsed / 390)
 
 
 def _ratio(numerator: float, denominator: float) -> float:
@@ -124,3 +166,11 @@ def _optional_float(row: dict[str, Any], *fields: str) -> float | None:
         if value not in (None, ""):
             return float(str(value).replace(",", ""))
     return None
+
+
+def _first_text(row: dict[str, Any], *fields: str) -> str:
+    for field in fields:
+        value = row.get(field)
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""

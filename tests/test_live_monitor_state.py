@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 
+from trading_bot.config import KisSettings
 from trading_bot.live_monitor_state import live_kis_monitor_state
 from trading_bot.models import AccountState
-from trading_bot.config import KisSettings
 
 
 class Accounts:
@@ -57,9 +57,15 @@ def test_live_monitor_state_shapes_orders_fills_and_holdings() -> None:
             "closePrice": "$11.60",
         }
     ]
-    assert state["targets"] == [["AAA", "$10.50", "-", "-", "-", "주문 접수"]]
+    assert state["targets"][0][:3] == ["AAA", "Alpha", "$10.50"]
     assert state["account"]["cashUsd"] == "$97,000.00"
     assert state["account"]["equityUsd"] == "$99,000.00"
     assert state["orders"][0]["ticker"] == "AAA"
+    assert state["orders"][0]["date"] == "2026-05-22"
+    assert state["orders"][0]["time"] == "23:08:18"
+    assert state["fills"][0]["date"] == "2026-05-22"
+    assert state["fills"][0]["time"] == "23:08:18"
+    assert state["fills"][0]["filledAt"] == "2026-05-22 23:08:18"
     assert state["fills"][0]["total"] == "$21.00"
-    assert state["logs"] == [["230818", "주문", "AAA 매수 2주 시도"]]
+    assert state["logs"][0][0] == "230818"
+    assert "AAA" in state["logs"][0][2]

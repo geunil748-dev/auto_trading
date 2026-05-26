@@ -28,14 +28,19 @@ class SqlMonitorStateSource:
 
 
 def _target(row: tuple[Any, ...], score: tuple[Any, ...] | None) -> list[str]:
-    ticker, volume_ratio, price_change = row
-    score_value = "-" if score is None else str(round(float(score[3])))
+    if len(row) >= 4:
+        ticker, ticker_name, volume_ratio, price_change = row[:4]
+    else:
+        ticker, volume_ratio, price_change = row
+        ticker_name = "-"
+    score_value = "-" if score is None else str(round(_number(score[3])))
     state = "점수대기" if score is None else ("선정" if score[4] else "제외")
     return [
         str(ticker),
+        str(ticker_name or "-"),
         "-",
-        f"{float(volume_ratio):.0f}%",
-        f"{float(price_change):+.1f}%",
+        f"{_number(volume_ratio):.0f}%",
+        f"{_number(price_change):+.1f}%",
         score_value,
         state,
     ]
@@ -52,7 +57,16 @@ def _trade(row: tuple[Any, ...]) -> dict[str, str]:
     return {
         "ticker": str(ticker),
         "type": str(order_type),
-        "price": f"${float(order_price):.2f}",
+        "price": f"${_number(order_price):.2f}",
         "quantity": str(quantity),
         "exitReason": "" if exit_reason is None else str(exit_reason),
     }
+
+
+def _number(value: Any) -> float:
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except TypeError:
+        return float(str(value))
