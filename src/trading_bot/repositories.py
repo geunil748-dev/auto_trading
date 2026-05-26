@@ -86,6 +86,7 @@ class SqlServerDailyRepository:
                 item.order_type,
                 item.order_price_usd,
                 item.exec_price_usd,
+                item.entry_price_usd,
                 item.max_price_after_buy,
                 item.quantity,
                 item.usd_krw_rate,
@@ -97,13 +98,14 @@ class SqlServerDailyRepository:
             )
             for item in trades
         ]
+        self._ensure_trade_history_columns()
         self._executemany(
             """
             INSERT INTO trade_history
                 (trade_date, ticker, order_type, order_price, exec_price,
-                 max_price_after_buy, quantity, usd_krw_rate, profit_usd,
+                 entry_price, max_price_after_buy, quantity, usd_krw_rate, profit_usd,
                  profit_krw, profit_rate, exit_reason, is_mock)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
@@ -119,6 +121,8 @@ class SqlServerDailyRepository:
                 item.quantity,
                 item.fill_price_usd,
                 item.fill_amount_usd,
+                item.profit_usd,
+                item.profit_rate,
                 item.order_no,
                 item.is_mock,
             )
@@ -130,7 +134,7 @@ class SqlServerDailyRepository:
         for row in rows:
             self._execute(
                 """
-                IF NOT EXISTS (
+                IF EXISTS (
                     SELECT 1
                     FROM fill_history
                     WHERE fill_date = ?
@@ -142,10 +146,22 @@ class SqlServerDailyRepository:
                       AND is_mock = ?
                 )
                 BEGIN
+                    UPDATE fill_history
+                    SET profit_usd = ?, profit_rate = ?
+                    WHERE fill_date = ?
+                      AND ISNULL(fill_time, '') = ?
+                      AND ticker = ?
+                      AND ISNULL(side, '') = ?
+                      AND quantity = ?
+                      AND fill_price = ?
+                      AND is_mock = ?
+                END
+                ELSE
+                BEGIN
                     INSERT INTO fill_history
                         (fill_date, fill_time, ticker, ticker_name, side, quantity,
-                         fill_price, fill_amount, order_no, is_mock)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         fill_price, fill_amount, profit_usd, profit_rate, order_no, is_mock)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 END
                 """,
                 (
@@ -155,10 +171,47 @@ class SqlServerDailyRepository:
                     row[4],
                     row[5],
                     row[6],
+                    row[11],
+                    row[8],
                     row[9],
+                    row[0],
+                    row[1],
+                    row[2],
+                    row[4],
+                    row[5],
+                    row[6],
+                    row[11],
                     *row,
                 ),
             )
+
+    def sell_entry_prices(self, trade_date: date) -> dict[str, float]:
+        self._ensure_trade_history_columns()
+        rows = self._query(
+            """
+            SELECT ticker, entry_price
+            FROM trade_history
+            WHERE trade_date = ?
+              AND order_type = 'SELL'
+              AND entry_price IS NOT NULL
+            ORDER BY created_at DESC
+            """,
+            (trade_date,),
+        )
+        prices: dict[str, float] = {}
+        for ticker, entry_price in rows:
+            key = str(ticker).strip().upper()
+            if key and key not in prices:
+                prices[key] = _number(entry_price)
+        return prices
+
+    def _ensure_trade_history_columns(self) -> None:
+        self._execute_statement(
+            """
+            IF COL_LENGTH('dbo.trade_history', 'entry_price') IS NULL
+                ALTER TABLE dbo.trade_history ADD entry_price DECIMAL(10, 2) NULL
+            """,
+        )
 
     def _ensure_fill_history_table(self) -> None:
         self._execute_statement(
@@ -175,11 +228,19 @@ class SqlServerDailyRepository:
                     quantity INT,
                     fill_price DECIMAL(10, 2),
                     fill_amount DECIMAL(12, 2),
+                    profit_usd DECIMAL(10, 2),
+                    profit_rate DECIMAL(8, 4),
                     order_no VARCHAR(30),
                     is_mock BIT DEFAULT 1,
                     created_at DATETIME DEFAULT GETDATE()
                 );
             END
+
+            IF COL_LENGTH('dbo.fill_history', 'profit_usd') IS NULL
+                ALTER TABLE dbo.fill_history ADD profit_usd DECIMAL(10, 2) NULL
+
+            IF COL_LENGTH('dbo.fill_history', 'profit_rate') IS NULL
+                ALTER TABLE dbo.fill_history ADD profit_rate DECIMAL(8, 4) NULL
             """,
         )
 
@@ -263,7 +324,8 @@ class SqlServerMonitorRepository:
     def latest_trades(self, limit: int = 20) -> list[tuple[Any, ...]]:
         return self._query(
             """
-            SELECT TOP (?) ticker, order_type, order_price, quantity, exit_reason
+            SELECT TOP (?) ticker, order_type, order_price, quantity, exit_reason,
+                   profit_usd, profit_rate
             FROM trade_history
             WHERE trade_date = CAST(GETDATE() AS DATE)
             ORDER BY created_at DESC
@@ -271,12 +333,23 @@ class SqlServerMonitorRepository:
             (limit,),
         )
 
+    def today_realized_profit(self) -> float:
+        return self._sum_profit(
+            """
+            SELECT COALESCE(SUM(profit_usd), 0)
+            FROM fill_history
+            WHERE fill_date = CAST(GETDATE() AS DATE)
+              AND (side LIKE N'%매도%' OR UPPER(side) = 'SELL')
+            """,
+            (),
+        )
+
     def latest_fills(self, limit: int = 20) -> list[tuple[Any, ...]]:
         try:
             return self._query(
                 """
                 SELECT TOP (?) fill_date, fill_time, ticker, ticker_name, side,
-                       quantity, fill_price, fill_amount
+                       quantity, fill_price, fill_amount, profit_usd, profit_rate
                 FROM fill_history
                 ORDER BY created_at DESC
                 """,
@@ -332,7 +405,8 @@ class SqlServerMonitorRepository:
     def history_trades(self, trade_date: date, limit: int = 200) -> list[tuple[Any, ...]]:
         return self._query(
             """
-            SELECT TOP (?) ticker, order_type, order_price, quantity, exit_reason
+            SELECT TOP (?) ticker, order_type, order_price, quantity, exit_reason,
+                   profit_usd, profit_rate
             FROM trade_history
             WHERE trade_date = ?
             ORDER BY created_at DESC
@@ -340,12 +414,23 @@ class SqlServerMonitorRepository:
             (limit, trade_date),
         )
 
+    def history_realized_profit(self, trade_date: date) -> float:
+        return self._sum_profit(
+            """
+            SELECT COALESCE(SUM(profit_usd), 0)
+            FROM fill_history
+            WHERE fill_date = ?
+              AND (side LIKE N'%매도%' OR UPPER(side) = 'SELL')
+            """,
+            (trade_date,),
+        )
+
     def history_fills(self, trade_date: date, limit: int = 200) -> list[tuple[Any, ...]]:
         try:
             return self._query(
                 """
                 SELECT TOP (?) fill_date, fill_time, ticker, ticker_name, side,
-                       quantity, fill_price, fill_amount
+                       quantity, fill_price, fill_amount, profit_usd, profit_rate
                 FROM fill_history
                 WHERE fill_date = ?
                 ORDER BY created_at DESC
@@ -371,3 +456,27 @@ class SqlServerMonitorRepository:
             cursor = connection.cursor()
             cursor.execute(sql, row)
             return list(cursor.fetchall())
+
+    def _sum_profit(self, sql: str, row: tuple[Any, ...]) -> float:
+        with closing(self.connect()) as connection:
+            cursor = connection.cursor()
+            cursor.execute(sql, row)
+            rows = list(cursor.fetchall())
+        if not rows:
+            return 0.0
+        value = rows[0][0]
+        if value is None:
+            return 0.0
+        try:
+            return float(value)
+        except TypeError:
+            return float(str(value))
+
+
+def _number(value: Any) -> float:
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except TypeError:
+        return float(str(value))

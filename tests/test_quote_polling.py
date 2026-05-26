@@ -27,7 +27,7 @@ def test_polling_exit_monitor_marks_end_of_day_positions_for_exit() -> None:
     ).poll([PositionState("AAA", 10, 2, 11, 12)], end_of_day=True)
 
     assert refreshed == [PositionState("AAA", 10, 2, 11.2, 12)]
-    assert exits == [SellIntent("AAA", 2, 11.2, "EOD")]
+    assert exits == [SellIntent("AAA", 2, 11.2, "EOD", entry_price_usd=10)]
 
 
 def test_polling_exit_monitor_skips_one_failed_price_read() -> None:
@@ -45,4 +45,4 @@ def test_polling_exit_monitor_skips_one_failed_price_read() -> None:
 
     assert refreshed[0] == positions[0]
     assert refreshed[1] == PositionState("SELL", 10, 2, 9.4, 10)
-    assert exits == [SellIntent("SELL", 2, 9.4, "STOP_LOSS")]
+    assert exits == [SellIntent("SELL", 2, 9.4, "STOP_LOSS", entry_price_usd=10)]

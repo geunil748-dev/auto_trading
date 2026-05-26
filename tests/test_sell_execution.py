@@ -34,6 +34,19 @@ def test_sell_intent_executor_records_exit_reason() -> None:
     ]
 
 
+def test_sell_intent_executor_records_entry_price_for_later_fill_profit() -> None:
+    repository = Repository()
+    trades = SellIntentExecutor(
+        submit_order=lambda intent: {"ok": True},
+        repository=repository,
+        today=lambda: date(2026, 5, 22),
+    ).execute([SellIntent("AAA", 3, 12.0, "EOD", entry_price_usd=10.0)])
+
+    assert trades[0].entry_price_usd == 10.0
+    assert trades[0].profit_usd is None
+    assert trades[0].profit_rate is None
+
+
 def test_sell_intent_executor_handles_empty_intents() -> None:
     submitted: list[SellIntent] = []
     repository = Repository()

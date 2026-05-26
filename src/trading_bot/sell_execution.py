@@ -49,6 +49,7 @@ class SellIntentExecutor:
                     order_price_usd=intent.limit_price_usd,
                     exec_price_usd=None,
                     quantity=intent.quantity,
+                    entry_price_usd=intent.entry_price_usd,
                     exit_reason=intent.exit_reason,
                     is_mock=self.mock,
                 )

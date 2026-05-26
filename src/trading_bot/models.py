@@ -114,6 +114,7 @@ class SellIntent:
     quantity: int
     limit_price_usd: float
     exit_reason: str
+    entry_price_usd: float | None = None
 
 
 @dataclass(frozen=True)
@@ -124,6 +125,7 @@ class TradeRecord:
     order_price_usd: float
     exec_price_usd: float | None
     quantity: int
+    entry_price_usd: float | None = None
     usd_krw_rate: float | None = None
     profit_usd: float | None = None
     profit_krw: float | None = None
@@ -144,4 +146,6 @@ class FillRecord:
     fill_time: str = ""
     ticker_name: str = ""
     order_no: str = ""
+    profit_usd: float | None = None
+    profit_rate: float | None = None
     is_mock: bool = True

@@ -241,4 +241,5 @@ def test_exit_planner_prioritizes_eod_hard_stop_take_profit_and_trailing_stop() 
         ("PROFIT", "TAKE_PROFIT"),
         ("TRAIL", "TRAILING_STOP"),
     ]
+    assert regular[0].entry_price_usd == 10
     assert [item.exit_reason for item in eod] == ["EOD", "EOD", "EOD", "EOD"]

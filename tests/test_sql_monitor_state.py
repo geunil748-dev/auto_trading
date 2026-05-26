@@ -17,6 +17,9 @@ class Repository:
     def latest_fills(self) -> list[tuple[object, ...]]:
         return [("2026-05-22", "22:41:10", "AAA", "Alpha", "매수", 2, 12.5, 25.0)]
 
+    def today_realized_profit(self) -> float:
+        return 15.5
+
 
 def test_sql_monitor_state_shapes_dashboard_rows() -> None:
     state = SqlMonitorStateSource(Repository()).read()
@@ -24,7 +27,15 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
     assert state["targets"][0][:6] == ["AAA", "Alpha", "-", "180%", "+4.2%", "88"]
     assert state["targets"][0][6]
     assert state["trades"] == [
-        {"ticker": "AAA", "type": "BUY", "price": "$12.50", "quantity": "2", "exitReason": ""}
+        {
+            "ticker": "AAA",
+            "type": "BUY",
+            "price": "$12.50",
+            "quantity": "2",
+            "exitReason": "",
+            "profitUsd": "",
+            "profitRate": "",
+        }
     ]
     assert state["fills"] == [
         {
@@ -37,6 +48,9 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
             "quantity": "2",
             "price": "$12.50",
             "total": "$25.00",
+            "profitUsd": "",
+            "profitRate": "",
         }
     ]
     assert state["logs"] == [["22:40:00", "INFO", "stored"]]
+    assert state["summary"] == {"realizedProfitUsd": "+$15.50"}

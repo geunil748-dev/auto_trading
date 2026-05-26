@@ -39,6 +39,7 @@ BEGIN
         order_type VARCHAR(4) NOT NULL,
         order_price DECIMAL(10, 2),
         exec_price DECIMAL(10, 2),
+        entry_price DECIMAL(10, 2),
         max_price_after_buy DECIMAL(10, 2),
         quantity INT,
         usd_krw_rate DECIMAL(10, 2),
@@ -49,6 +50,11 @@ BEGIN
         is_mock BIT DEFAULT 1,
         created_at DATETIME DEFAULT GETDATE()
     );
+END;
+
+IF COL_LENGTH('dbo.trade_history', 'entry_price') IS NULL
+BEGIN
+    ALTER TABLE dbo.trade_history ADD entry_price DECIMAL(10, 2) NULL;
 END;
 
 IF OBJECT_ID(N'dbo.fill_history', N'U') IS NULL
@@ -63,10 +69,22 @@ BEGIN
         quantity INT,
         fill_price DECIMAL(10, 2),
         fill_amount DECIMAL(12, 2),
+        profit_usd DECIMAL(10, 2),
+        profit_rate DECIMAL(8, 4),
         order_no VARCHAR(30),
         is_mock BIT DEFAULT 1,
         created_at DATETIME DEFAULT GETDATE()
     );
+END;
+
+IF COL_LENGTH('dbo.fill_history', 'profit_usd') IS NULL
+BEGIN
+    ALTER TABLE dbo.fill_history ADD profit_usd DECIMAL(10, 2) NULL;
+END;
+
+IF COL_LENGTH('dbo.fill_history', 'profit_rate') IS NULL
+BEGIN
+    ALTER TABLE dbo.fill_history ADD profit_rate DECIMAL(8, 4) NULL;
 END;
 
 IF OBJECT_ID(N'dbo.bot_log', N'U') IS NULL

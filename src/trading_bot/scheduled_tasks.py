@@ -241,11 +241,12 @@ def _persist_live_fills(live_state: dict[str, object]) -> str:
     fills = live_state.get("fills", [])
     if not isinstance(fills, list):
         return ""
-    records = fill_records_from_monitor_rows(fills)
-    if not records:
-        return ""
     try:
         repository = SqlServerDailyRepository(pyodbc_connect_factory())
+        entry_prices = repository.sell_entry_prices(current_us_market_date())
+        records = fill_records_from_monitor_rows(fills, entry_prices)
+        if not records:
+            return ""
         repository.save_fills(records)
     except ValueError:
         return ""

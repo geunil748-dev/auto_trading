@@ -9,6 +9,7 @@ const emptyAccount = {
     equityKrw: "-",
     openPositions: "-",
     dailyProfitRate: "-",
+    realizedProfitUsd: "-",
   },
   targets: [],
   holdings: [],
@@ -285,6 +286,7 @@ function renderSummary(accountState) {
   document.querySelector("#investedUsd").textContent = account.investedUsd || "-";
   document.querySelector("#openPositions").textContent = account.openPositions || "-";
   document.querySelector("#dailyProfitRate").textContent = account.dailyProfitRate || "-";
+  document.querySelector("#realizedProfitUsd").textContent = account.realizedProfitUsd || "-";
 
   document.querySelectorAll("[data-real-only]").forEach((item) => {
     item.hidden = activeAccount !== "real";
@@ -393,25 +395,27 @@ function renderLogRow([time, level, message]) {
 }
 
 function renderOrderRow(order) {
+  const detail = [order.exitReason || "접수", order.profitUsd].filter(Boolean).join(" / ");
   return `
     <section class="trade-row">
       <strong>${order.ticker}</strong>
       <span>${order.side || order.type}</span>
       <b>${order.price}</b>
       <small>${order.quantity}주</small>
-      <em>${order.unfilled ? `미체결 ${order.unfilled}주` : order.exitReason || "접수"}</em>
+      <em>${order.unfilled ? `미체결 ${order.unfilled}주` : detail}</em>
     </section>`;
 }
 
 function renderFillRow(fill) {
   const filledAt = fill.filledAt || [fill.date, fill.time].filter(Boolean).join(" ");
+  const result = fill.profitUsd ? `${fill.total} / ${fill.profitUsd}` : fill.total;
   return `
     <section class="trade-row fill-row">
       <strong>${fill.ticker}</strong>
       <span>${fill.side}</span>
       <b>${fill.price}</b>
       <small>${fill.quantity}주</small>
-      <em>${fill.total}</em>
+      <em>${result}</em>
       <time>${filledAt || "-"}</time>
     </section>`;
 }

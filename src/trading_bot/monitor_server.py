@@ -58,6 +58,12 @@ class _DashboardStateReader:
             if not mock.get("fills"):
                 mock["fills"] = sql_state.get("fills", [])
             mock["trades"] = sql_state.get("trades", [])
+            if isinstance(mock.get("account"), dict):
+                mock["account"]["realizedProfitUsd"] = (
+                    sql_state.get("summary", {}).get("realizedProfitUsd", "$0.00")
+                    if isinstance(sql_state.get("summary"), dict)
+                    else "$0.00"
+                )
             mock["logs"] = list(mock.get("logs", [])) + list(sql_state.get("logs", []))
         state["sql"] = sql_state
         return state

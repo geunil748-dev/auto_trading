@@ -24,6 +24,7 @@ def plan_position_exits(
                 quantity=position.quantity,
                 limit_price_usd=position.last_price_usd,
                 exit_reason=reason,
+                entry_price_usd=position.entry_price_usd,
             )
         )
     return intents
