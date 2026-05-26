@@ -40,6 +40,7 @@ class SellIntentExecutor:
                 )
                 continue
             successful.append(intent)
+            # 체결 확인 전에는 주문 접수만 기록하고, 실제 보유 수량은 KIS 잔고 조회로 동기화한다.
             trades.append(
                 TradeRecord(
                     trade_date=self.today(),

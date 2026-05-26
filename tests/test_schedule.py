@@ -34,7 +34,7 @@ def test_daily_timeline_registers_planning_document_times_in_kst() -> None:
         ("mock_buy", "cron", 22, 45, "Asia/Seoul"),
         ("refresh_orders", "cron", 22, 50, "Asia/Seoul"),
         ("cancel_unfilled", "cron", 15, 55, "America/New_York"),
-        ("close_session", "cron", 16, 0, "America/New_York"),
+        ("close_session", "cron", 15, 58, "America/New_York"),
     ]
     assert scheduler.jobs[4][1:] == (
         "interval",

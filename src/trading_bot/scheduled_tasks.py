@@ -165,6 +165,8 @@ def live_mock_tasks(
         if not trading_day():
             _write_closed_state(monitor_state)
             return "Skipped session close because the US market is closed."
+        if not regular_session():
+            return "Skipped session close outside the regular US session."
         cancelled = _cancel_unfilled_orders(kis_settings)
         latest.cancelled_orders.extend(cancelled)
         accounts, monitor, repository = build_live_exit_poll(settings, kis_settings)

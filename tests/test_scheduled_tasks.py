@@ -105,11 +105,31 @@ def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> N
         KisSettings("key", "secret", "account", "01", "https://kis.example"),
         tmp_path / "state.json",
         trading_day=lambda: True,
+        regular_session=lambda: True,
     )
 
     assert "Submitted 1 end-of-day mock sell orders" in tasks.close_session()
     assert monitor.calls == [(["holding"], True)]
     assert executor.intents == [SellIntent("AAA", 2, 10.5, "EOD")]
+
+
+def test_close_session_skips_after_regular_session(monkeypatch, tmp_path) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._cancel_unfilled_orders",
+        lambda kis_settings: calls.append("cancel") or [],
+    )
+
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+        regular_session=lambda: False,
+    )
+
+    assert tasks.close_session() == "Skipped session close outside the regular US session."
+    assert calls == []
 
 
 def test_cancel_unfilled_submits_cancellations_and_refreshes_monitor(

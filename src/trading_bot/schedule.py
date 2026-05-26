@@ -37,7 +37,7 @@ def register_daily_timeline(
     _minute(scheduler, tasks.intraday_watch, "intraday_watch")
     _interval(scheduler, tasks.intraday_recheck, "intraday_recheck", 15)
     _daily(scheduler, tasks.cancel_unfilled, "cancel_unfilled", 15, 55, close_timezone)
-    _daily(scheduler, tasks.close_session, "close_session", 16, 0, close_timezone)
+    _daily(scheduler, tasks.close_session, "close_session", 15, 58, close_timezone)
 
 
 def _daily(

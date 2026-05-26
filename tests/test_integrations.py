@@ -213,6 +213,34 @@ def test_kis_overseas_client_uses_mock_balance_and_limit_order_shapes() -> None:
     assert calls[4][2]["ITEM_CD"] == "QQQ"
 
 
+def test_kis_overseas_client_normalizes_order_ticker_and_exchange() -> None:
+    calls: list[tuple[str, str, dict[str, object]]] = []
+
+    class Http:
+        def post(self, path: str, tr_id: str, body: dict[str, object]) -> dict[str, object]:
+            calls.append((path, tr_id, body))
+            return {"output": {"ODNO": "1"}}
+
+        def get(self, path: str, tr_id: str, params: dict[str, str]) -> dict[str, object]:
+            calls.append((path, tr_id, params))
+            return {"output": {}}
+
+    client = KisOverseasClient(Http(), "NAS")
+    client.limit_order("12345678", "01", " aapl ", 3, 185.5, "sell", " nasd ")
+    client.cancel_order("12345678", "01", " tsla ", "999", 1, " nyse ")
+    client.buyable_amount("12345678", "01", " qqq ", 10.0, " nasd ")
+
+    assert calls[0][2]["PDNO"] == "AAPL"
+    assert calls[0][2]["OVRS_EXCG_CD"] == "NASD"
+    assert calls[0][2]["ORD_QTY"] == "3"
+    assert calls[0][2]["ORD_UNPR"] == "185.50"
+    assert calls[1][2]["PDNO"] == "TSLA"
+    assert calls[1][2]["OVRS_EXCG_CD"] == "NYSE"
+    assert calls[1][2]["ORD_QTY"] == "1"
+    assert calls[2][2]["ITEM_CD"] == "QQQ"
+    assert calls[2][2]["OVRS_EXCG_CD"] == "NASD"
+
+
 def test_yahoo_news_source_caps_recent_titles() -> None:
     now = datetime(2026, 5, 22, 12, tzinfo=timezone.utc)
     recent = int((now - timedelta(hours=1)).timestamp())

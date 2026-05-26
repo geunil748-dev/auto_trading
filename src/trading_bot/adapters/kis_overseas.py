@@ -118,11 +118,13 @@ class KisOverseasClient:
         mock: bool = True,
     ) -> dict[str, Any]:
         tr_id = _us_order_tr_id(side, mock)
+        order_ticker = ticker.strip().upper()
+        order_exchange = exchange_code.strip().upper()
         body = {
             "CANO": account_no,
             "ACNT_PRDT_CD": account_product,
-            "OVRS_EXCG_CD": exchange_code,
-            "PDNO": ticker,
+            "OVRS_EXCG_CD": order_exchange,
+            "PDNO": order_ticker,
             "ORD_QTY": str(quantity),
             "OVRS_ORD_UNPR": f"{limit_price_usd:.2f}",
             "ORD_UNPR": f"{limit_price_usd:.2f}",
@@ -147,11 +149,13 @@ class KisOverseasClient:
         mock: bool = True,
     ) -> dict[str, Any]:
         tr_id = "VTTT1004U" if mock else "TTTT1004U"
+        order_ticker = ticker.strip().upper()
+        order_exchange = exchange_code.strip().upper()
         body = {
             "CANO": account_no,
             "ACNT_PRDT_CD": account_product,
-            "OVRS_EXCG_CD": exchange_code,
-            "PDNO": ticker,
+            "OVRS_EXCG_CD": order_exchange,
+            "PDNO": order_ticker,
             "ORGN_ODNO": original_order_no,
             "RVSE_CNCL_DVSN_CD": "02",
             "ORD_QTY": str(quantity),
@@ -171,15 +175,17 @@ class KisOverseasClient:
         mock: bool = True,
     ) -> dict[str, Any]:
         tr_id = "VTTS3007R" if mock else "TTTS3007R"
+        order_ticker = ticker.strip().upper()
+        order_exchange = exchange_code.strip().upper()
         return self.http.get(
             BUYABLE_AMOUNT_PATH,
             tr_id,
             {
                 "CANO": account_no,
                 "ACNT_PRDT_CD": account_product,
-                "OVRS_EXCG_CD": exchange_code,
+                "OVRS_EXCG_CD": order_exchange,
                 "OVRS_ORD_UNPR": f"{price_usd:.2f}",
-                "ITEM_CD": ticker,
+                "ITEM_CD": order_ticker,
             },
         )
 
