@@ -14,9 +14,9 @@ from trading_bot.config import (
     runtime_risk_settings_payload,
     save_runtime_risk_settings,
 )
-from trading_bot.dashboard_state import account_dashboard_state
 from trading_bot.database import mssql_dsn_from_env, pyodbc_connect_factory
 from trading_bot.manual_sell import submit_manual_mock_sell, submit_manual_mock_sell_all
+from trading_bot.manual_screening import ManualScreeningRunner
 from trading_bot.monitor_api import MonitorStateReader, authorize_bearer
 from trading_bot.real_trading_control import load_real_trading_control, save_manual_enabled
 from trading_bot.repositories import SqlServerMonitorRepository
@@ -35,7 +35,7 @@ def serve_monitor(
     monitor_dir: Path = Path("monitor"),
 ) -> None:
     reader = _state_reader(state_path)
-    handler = _handler(reader, monitor_dir)
+    handler = _handler(reader, monitor_dir, ManualScreeningRunner(state_path))
     ThreadingHTTPServer((host, port), handler).serve_forever()
 
 
@@ -44,22 +44,34 @@ def _state_reader(state_path: Path) -> Any:
         load_dotenv()
     if mssql_dsn_from_env():
         return _DashboardStateReader(
-            SqlMonitorStateSource(SqlServerMonitorRepository(pyodbc_connect_factory()))
+            SqlMonitorStateSource(SqlServerMonitorRepository(pyodbc_connect_factory())),
+            MonitorStateReader(state_path),
         )
     return MonitorStateReader(state_path)
 
 
 class _DashboardStateReader:
-    def __init__(self, sql_reader: SqlMonitorStateSource) -> None:
+    def __init__(
+        self,
+        sql_reader: SqlMonitorStateSource,
+        state_reader: MonitorStateReader,
+    ) -> None:
         self.sql_reader = sql_reader
+        self.state_reader = state_reader
 
     def read(self) -> dict[str, object]:
-        state = account_dashboard_state()
+        try:
+            cached_state = self.state_reader.read()
+        except Exception:
+            cached_state = {}
+        state = _accounts_from_cached_state(cached_state)
         sql_state = self.sql_reader.read()
         mock = state["accounts"]["mock"]
         if isinstance(mock, dict):
-            if not mock.get("targets"):
-                mock["targets"] = sql_state.get("targets", [])
+            # 실시간 주문 이력은 targets에도 들어올 수 있으므로,
+            # 리스트업 종목 화면은 DB에 저장된 수집 후보를 우선 사용한다.
+            mock["targets"] = sql_state.get("targets", [])
+            mock["holdings"] = sql_state.get("holdings", [])
             if not mock.get("fills"):
                 mock["fills"] = sql_state.get("fills", [])
             mock["trades"] = sql_state.get("trades", [])
@@ -77,7 +89,53 @@ class _DashboardStateReader:
         return self.sql_reader.read_history(trade_date)
 
 
-def _handler(reader: Any, monitor_dir: Path):
+def _accounts_from_cached_state(raw_state: dict[str, object]) -> dict[str, object]:
+    if isinstance(raw_state.get("accounts"), dict):
+        return raw_state
+    return {
+        "accounts": {
+            "mock": {
+                "label": "모의투자",
+                "connected": True,
+                "error": "",
+                "account": raw_state.get("account", _empty_account()),
+                "targets": raw_state.get("targets", []),
+                "holdings": raw_state.get("holdings", []),
+                "orders": raw_state.get("orders", []),
+                "fills": raw_state.get("fills", []),
+                "logs": raw_state.get("logs", []),
+                "trades": raw_state.get("trades", []),
+            },
+            "real": {
+                "label": "실투자",
+                "connected": False,
+                "error": "실투자 화면은 마지막 연결 상태만 표시합니다.",
+                "account": _empty_account(),
+                "targets": [],
+                "holdings": [],
+                "orders": [],
+                "fills": [],
+                "logs": [],
+                "trades": [],
+            },
+        }
+    }
+
+
+def _empty_account() -> dict[str, str]:
+    return {
+        "cashUsd": "-",
+        "equityUsd": "-",
+        "investedUsd": "-",
+        "cashKrw": "-",
+        "equityKrw": "-",
+        "openPositions": "-",
+        "dailyProfitRate": "-",
+        "realizedProfitUsd": "-",
+    }
+
+
+def _handler(reader: Any, monitor_dir: Path, manual_screening: ManualScreeningRunner):
     root = monitor_dir.resolve()
 
     class MonitorHandler(SimpleHTTPRequestHandler):
@@ -95,6 +153,9 @@ def _handler(reader: Any, monitor_dir: Path):
             if path == "/api/trading-settings":
                 self._write_trading_settings()
                 return
+            if path == "/api/manual-screening":
+                self._write_manual_screening_status()
+                return
             if path == "/":
                 self.path = "/index.html"
             super().do_GET()
@@ -109,6 +170,9 @@ def _handler(reader: Any, monitor_dir: Path):
                 return
             if path == "/api/manual-mock-sell-all":
                 self._write_manual_mock_sell_all()
+                return
+            if path == "/api/manual-screening":
+                self._start_manual_screening()
                 return
             if path == "/api/trading-settings":
                 self._save_trading_settings()
@@ -179,6 +243,16 @@ def _handler(reader: Any, monitor_dir: Path):
                 return
             self._write_json(result)
 
+        def _start_manual_screening(self) -> None:
+            if not self._authorize_api():
+                return
+            self._write_json(manual_screening.start())
+
+        def _write_manual_screening_status(self) -> None:
+            if not self._authorize_api():
+                return
+            self._write_json({"ok": True, "status": manual_screening.status()})
+
         def _save_trading_settings(self) -> None:
             if not self._authorize_api():
                 return
@@ -187,6 +261,12 @@ def _handler(reader: Any, monitor_dir: Path):
                 settings_payload = save_runtime_risk_settings(
                     float(body.get("stopLossPercent", 0)),
                     float(body.get("takeProfitPercent", 0)),
+                    _optional_float(body.get("minTotalScore")),
+                    _optional_float(body.get("minPriceUsd")),
+                    _optional_float(body.get("maxPriceUsd")),
+                    _optional_float(body.get("minOpeningPriceChangePercent")),
+                    _optional_float(body.get("minVolumeRatio")),
+                    _optional_float(body.get("maxOpeningGapPercent")),
                 )
             except Exception as exc:
                 self._write_json({"ok": False, "error": str(exc)}, status=400)
@@ -260,6 +340,12 @@ def _optional_int(value: Any) -> int | None:
     if value in (None, ""):
         return None
     return int(float(str(value).replace(",", "").replace("주", "")))
+
+
+def _optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    return float(str(value).replace(",", ""))
 
 
 def _runtime_state(control: Any | None = None, local_bypass: bool = False) -> dict[str, object]:

@@ -33,7 +33,13 @@ def _account_state(
         settings = loader()
         kis = KisOverseasClient(KisJsonClient(settings))
         accounts = KisAccountReader(kis, settings, mock=mock)
-        state = live_kis_monitor_state(kis, accounts, settings, include_orders=include_orders)
+        state = live_kis_monitor_state(
+            kis,
+            accounts,
+            settings,
+            include_orders=include_orders,
+            include_holdings=False,
+        )
         if not mock:
             state["account"].update(_real_krw_summary(settings))
     except Exception as error:

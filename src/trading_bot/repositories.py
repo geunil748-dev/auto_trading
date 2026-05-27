@@ -29,6 +29,7 @@ class SqlServerDailyRepository:
         self.connect = connect
 
     def save_daily_targets(self, targets: Iterable[DailyTarget]) -> None:
+        target_items = list(targets)
         rows = [
             (
                 item.trade_date,
@@ -37,13 +38,77 @@ class SqlServerDailyRepository:
                 item.candidate.opening_volume_ratio * 100,
                 item.candidate.opening_price_change * 100,
             )
-            for item in targets
+            for item in target_items
         ]
         self._executemany_with_daily_target_name(
             """
             INSERT INTO daily_target
                 (trade_date, ticker, ticker_name, volume_ratio, price_change)
             VALUES (?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        self.save_listed_targets(target_items)
+
+    def save_listed_targets(self, targets: Iterable[DailyTarget]) -> None:
+        rows = [
+            (
+                item.trade_date,
+                item.candidate.ticker,
+                item.candidate.name,
+                item.candidate.price_usd,
+                item.candidate.opening_volume_ratio * 100,
+                item.candidate.opening_price_change * 100,
+            )
+            for item in targets
+        ]
+        if not rows:
+            return
+        self._ensure_listed_target_snapshot_table()
+        self._executemany(
+            """
+            INSERT INTO listed_target_snapshot
+                (trade_date, ticker, ticker_name, price_usd, volume_ratio, price_change)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+
+    def save_holdings(
+        self,
+        holdings: Iterable[dict[str, str]],
+        trade_date: date,
+        is_mock: bool = True,
+    ) -> None:
+        rows = [
+            (
+                trade_date,
+                _text(item.get("ticker")),
+                _text(item.get("name")),
+                int(_number(item.get("quantity"))),
+                _number(item.get("averagePrice")),
+                _number(item.get("openPrice")),
+                _number(item.get("closePrice")),
+                _number(item.get("totalPrice")),
+                is_mock,
+            )
+            for item in holdings
+            if _text(item.get("ticker")) and _number(item.get("quantity")) > 0
+        ]
+        self._ensure_holding_snapshot_table()
+        self._execute(
+            """
+            DELETE FROM holding_snapshot
+            WHERE snapshot_date = ? AND is_mock = ?
+            """,
+            (trade_date, is_mock),
+        )
+        self._executemany(
+            """
+            INSERT INTO holding_snapshot
+                (snapshot_date, ticker, ticker_name, quantity, average_price,
+                 open_price, close_price, total_price, is_mock)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
@@ -261,18 +326,71 @@ class SqlServerDailyRepository:
         try:
             self._executemany(sql, rows)
         except Exception:
-            self._execute_statement(
-                """
-                IF COL_LENGTH('dbo.daily_target', 'ticker_name') IS NULL
-                    ALTER TABLE dbo.daily_target ADD ticker_name NVARCHAR(100) NULL
-                """,
-            )
+            self._ensure_daily_target_schema()
             self._executemany(sql, rows)
+
+    def _ensure_daily_target_schema(self) -> None:
+        self._execute_statement(
+            """
+            IF COL_LENGTH('dbo.daily_target', 'ticker_name') IS NULL
+                ALTER TABLE dbo.daily_target ADD ticker_name NVARCHAR(100) NULL
+
+            ALTER TABLE dbo.daily_target ALTER COLUMN volume_ratio DECIMAL(12, 2) NULL
+            ALTER TABLE dbo.daily_target ALTER COLUMN price_change DECIMAL(12, 2) NULL
+            """,
+        )
+
+    def _ensure_listed_target_snapshot_table(self) -> None:
+        self._execute_statement(
+            """
+            IF OBJECT_ID(N'dbo.listed_target_snapshot', N'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.listed_target_snapshot (
+                    id INT IDENTITY PRIMARY KEY,
+                    trade_date DATE NOT NULL,
+                    ticker VARCHAR(10) NOT NULL,
+                    ticker_name NVARCHAR(100),
+                    price_usd DECIMAL(12, 2),
+                    volume_ratio DECIMAL(12, 2),
+                    price_change DECIMAL(12, 2),
+                    created_at DATETIME DEFAULT GETDATE()
+                );
+            END
+            """,
+        )
+
+    def _ensure_holding_snapshot_table(self) -> None:
+        self._execute_statement(
+            """
+            IF OBJECT_ID(N'dbo.holding_snapshot', N'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.holding_snapshot (
+                    id INT IDENTITY PRIMARY KEY,
+                    snapshot_date DATE NOT NULL,
+                    ticker VARCHAR(10) NOT NULL,
+                    ticker_name NVARCHAR(100),
+                    quantity INT,
+                    average_price DECIMAL(12, 2),
+                    open_price DECIMAL(12, 2),
+                    close_price DECIMAL(12, 2),
+                    total_price DECIMAL(14, 2),
+                    is_mock BIT DEFAULT 1,
+                    created_at DATETIME DEFAULT GETDATE()
+                );
+            END
+            """,
+        )
 
     def _execute(self, sql: str, row: tuple[Any, ...]) -> None:
         with closing(self.connect()) as connection:
             connection.cursor().execute(sql, row)
             connection.commit()
+
+    def _query(self, sql: str, row: tuple[Any, ...]) -> list[tuple[Any, ...]]:
+        with closing(self.connect()) as connection:
+            cursor = connection.cursor()
+            cursor.execute(sql, row)
+            return list(cursor.fetchall())
 
     def _execute_statement(self, sql: str) -> None:
         with closing(self.connect()) as connection:
@@ -290,36 +408,180 @@ class SqlServerMonitorRepository:
 
     def latest_targets(self, limit: int = 20) -> list[tuple[Any, ...]]:
         try:
-            return self._query(
+            rows = self._query(
                 """
-                SELECT TOP (?) ticker, ticker_name, volume_ratio, price_change
-                FROM daily_target
-                WHERE trade_date = CAST(GETDATE() AS DATE)
+                SELECT TOP (?) ticker, ticker_name, price_usd, volume_ratio, price_change
+                FROM (
+                    SELECT ticker, ticker_name, price_usd, volume_ratio, price_change, created_at,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY ticker ORDER BY created_at DESC, id DESC
+                           ) AS rn
+                    FROM listed_target_snapshot
+                    WHERE trade_date = CAST(GETDATE() AS DATE)
+                      AND created_at >= DATEADD(
+                          second,
+                          -5,
+                          (
+                              SELECT MAX(created_at)
+                              FROM listed_target_snapshot
+                              WHERE trade_date = CAST(GETDATE() AS DATE)
+                          )
+                      )
+                ) latest
+                WHERE rn = 1
                 ORDER BY created_at DESC
                 """,
                 (limit,),
             )
         except Exception:
+            try:
+                rows = self._query(
+                    """
+                    SELECT TOP (?) ticker, ticker_name, volume_ratio, price_change
+                    FROM (
+                        SELECT ticker, ticker_name, volume_ratio, price_change, created_at,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY ticker ORDER BY created_at DESC, id DESC
+                               ) AS rn
+                        FROM daily_target
+                        WHERE trade_date = CAST(GETDATE() AS DATE)
+                          AND created_at >= DATEADD(
+                              second,
+                              -5,
+                              (
+                                  SELECT MAX(created_at)
+                                  FROM daily_target
+                                  WHERE trade_date = CAST(GETDATE() AS DATE)
+                              )
+                          )
+                    ) latest
+                    WHERE rn = 1
+                    ORDER BY created_at DESC
+                    """,
+                    (limit,),
+                )
+            except Exception:
+                rows = self._query(
+                    """
+                    SELECT TOP (?) ticker, volume_ratio, price_change
+                    FROM (
+                        SELECT ticker, volume_ratio, price_change, created_at,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY ticker ORDER BY created_at DESC, id DESC
+                               ) AS rn
+                        FROM daily_target
+                        WHERE trade_date = CAST(GETDATE() AS DATE)
+                          AND created_at >= DATEADD(
+                              second,
+                              -5,
+                              (
+                                  SELECT MAX(created_at)
+                                  FROM daily_target
+                                  WHERE trade_date = CAST(GETDATE() AS DATE)
+                              )
+                          )
+                    ) latest
+                    WHERE rn = 1
+                    ORDER BY created_at DESC
+                    """,
+                    (limit,),
+                )
+        if self._latest_screening_saved_no_targets():
+            return []
+        return rows
+
+    def latest_holdings(self, limit: int = 50) -> list[tuple[Any, ...]]:
+        try:
             return self._query(
                 """
-                SELECT TOP (?) ticker, volume_ratio, price_change
-                FROM daily_target
-                WHERE trade_date = CAST(GETDATE() AS DATE)
+                SELECT TOP (?) ticker, ticker_name, quantity, average_price,
+                       open_price, close_price, total_price
+                FROM (
+                    SELECT ticker, ticker_name, quantity, average_price,
+                           open_price, close_price, total_price, created_at,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY ticker ORDER BY created_at DESC, id DESC
+                           ) AS rn
+                    FROM holding_snapshot
+                    WHERE snapshot_date = CAST(GETDATE() AS DATE)
+                      AND is_mock = 1
+                      AND created_at >= DATEADD(
+                          second,
+                          -5,
+                          (
+                              SELECT MAX(created_at)
+                              FROM holding_snapshot
+                              WHERE snapshot_date = CAST(GETDATE() AS DATE)
+                                AND is_mock = 1
+                          )
+                      )
+                ) latest
+                WHERE rn = 1
                 ORDER BY created_at DESC
                 """,
                 (limit,),
             )
+        except Exception:
+            return []
 
     def latest_scores(self, limit: int = 20) -> list[tuple[Any, ...]]:
-        return self._query(
+        rows = self._query(
             """
             SELECT TOP (?) ticker, news_score, chart_score, total_score, is_selected
-            FROM scoring
-            WHERE trade_date = CAST(GETDATE() AS DATE)
+            FROM (
+                SELECT ticker, news_score, chart_score, total_score, is_selected, created_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY ticker ORDER BY created_at DESC, id DESC
+                       ) AS rn
+                FROM scoring
+                WHERE trade_date = CAST(GETDATE() AS DATE)
+                  AND created_at >= DATEADD(
+                      second,
+                      -5,
+                      (
+                          SELECT MAX(created_at)
+                          FROM scoring
+                          WHERE trade_date = CAST(GETDATE() AS DATE)
+                      )
+                  )
+            ) latest
+            WHERE rn = 1
             ORDER BY total_score DESC, created_at DESC
             """,
             (limit,),
         )
+        if self._latest_screening_saved_no_targets():
+            return []
+        return rows
+
+    def _latest_screening_saved_no_targets(self) -> bool:
+        try:
+            rows = self._query(
+                """
+                SELECT CASE WHEN EXISTS (
+                    SELECT 1
+                    FROM bot_log
+                    WHERE CAST(created_at AS DATE) = CAST(GETDATE() AS DATE)
+                      AND module = 'pipeline'
+                      AND message LIKE 'Screened 0 targets%'
+                      AND created_at >= COALESCE(
+                          (
+                              SELECT MAX(created_at)
+                              FROM daily_target
+                              WHERE trade_date = CAST(GETDATE() AS DATE)
+                          ),
+                          CONVERT(datetime, '19000101', 112)
+                      )
+                ) THEN 1 ELSE 0 END
+                """,
+                (),
+            )
+        except Exception:
+            return False
+        try:
+            return bool(rows and _number(rows[0][0]))
+        except (TypeError, ValueError):
+            return False
 
     def latest_trades(self, limit: int = 20) -> list[tuple[Any, ...]]:
         return self._query(
@@ -373,30 +635,93 @@ class SqlServerMonitorRepository:
         try:
             return self._query(
                 """
-                SELECT TOP (?) ticker, ticker_name, volume_ratio, price_change
-                FROM daily_target
-                WHERE trade_date = ?
+                SELECT TOP (?) ticker, ticker_name, price_usd, volume_ratio, price_change
+                FROM (
+                    SELECT ticker, ticker_name, price_usd, volume_ratio, price_change, created_at,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY ticker ORDER BY created_at DESC, id DESC
+                           ) AS rn
+                    FROM listed_target_snapshot
+                    WHERE trade_date = ?
+                ) latest
+                WHERE rn = 1
                 ORDER BY created_at DESC
                 """,
                 (limit, trade_date),
             )
         except Exception:
+            try:
+                return self._query(
+                    """
+                    SELECT TOP (?) ticker, ticker_name, volume_ratio, price_change
+                    FROM (
+                        SELECT ticker, ticker_name, volume_ratio, price_change, created_at,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY ticker ORDER BY created_at DESC, id DESC
+                               ) AS rn
+                        FROM daily_target
+                        WHERE trade_date = ?
+                    ) latest
+                    WHERE rn = 1
+                    ORDER BY created_at DESC
+                    """,
+                    (limit, trade_date),
+                )
+            except Exception:
+                return self._query(
+                    """
+                    SELECT TOP (?) ticker, volume_ratio, price_change
+                    FROM (
+                        SELECT ticker, volume_ratio, price_change, created_at,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY ticker ORDER BY created_at DESC, id DESC
+                               ) AS rn
+                        FROM daily_target
+                        WHERE trade_date = ?
+                    ) latest
+                    WHERE rn = 1
+                    ORDER BY created_at DESC
+                    """,
+                    (limit, trade_date),
+                )
+
+    def history_holdings(self, trade_date: date, limit: int = 200) -> list[tuple[Any, ...]]:
+        try:
             return self._query(
                 """
-                SELECT TOP (?) ticker, volume_ratio, price_change
-                FROM daily_target
-                WHERE trade_date = ?
+                SELECT TOP (?) ticker, ticker_name, quantity, average_price,
+                       open_price, close_price, total_price
+                FROM (
+                    SELECT ticker, ticker_name, quantity, average_price,
+                           open_price, close_price, total_price, created_at,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY ticker ORDER BY created_at DESC, id DESC
+                           ) AS rn
+                    FROM holding_snapshot
+                    WHERE snapshot_date = ?
+                      AND is_mock = 1
+                ) latest
+                WHERE rn = 1
                 ORDER BY created_at DESC
                 """,
                 (limit, trade_date),
             )
+        except Exception:
+            return []
 
     def history_scores(self, trade_date: date, limit: int = 200) -> list[tuple[Any, ...]]:
         return self._query(
             """
             SELECT TOP (?) ticker, news_score, chart_score, total_score, is_selected
-            FROM scoring
-            WHERE trade_date = ?
+            FROM (
+                SELECT ticker, news_score, chart_score, total_score, is_selected, created_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY ticker ORDER BY created_at DESC, id DESC
+                       ) AS rn
+                FROM scoring
+                WHERE trade_date = ?
+            ) latest
+            WHERE rn = 1
             ORDER BY total_score DESC, created_at DESC
             """,
             (limit, trade_date),
@@ -477,6 +802,10 @@ def _number(value: Any) -> float:
     if value is None:
         return 0.0
     try:
-        return float(value)
-    except TypeError:
-        return float(str(value))
+        return float(str(value).replace("$", "").replace(",", ""))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _text(value: Any) -> str:
+    return "" if value is None else str(value).strip()

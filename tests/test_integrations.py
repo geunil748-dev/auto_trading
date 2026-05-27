@@ -18,6 +18,7 @@ from trading_bot.models import (
     DailyScore,
     DailyTarget,
     FillRecord,
+    NewsRecord,
     ScoreRecord,
     Sentiment,
     TradeRecord,
@@ -105,6 +106,61 @@ def test_scoring_adapter_retries_news_before_combining_chart_score() -> None:
     assert scorer.score(candidate()) == ScoreRecord("AAA", 50, 72)
 
 
+def test_news_sentiment_uses_cached_scores_before_fetching_yahoo() -> None:
+    class Cache:
+        def recent_news(self, ticker, fetched_after):
+            assert ticker == "AAA"
+            assert fetched_after <= datetime(2026, 5, 27, 1, 0, tzinfo=timezone.utc)
+            return [NewsRecord("AAA", "AAA shares surge", sentiment_score=1)]
+
+        def save_news(self, records):
+            raise AssertionError("fresh news should not be fetched when cache is warm")
+
+        def update_sentiments(self, ticker, sentiments):
+            raise AssertionError("cached scored news should not be reclassified")
+
+    class News:
+        def recent_news(self, ticker):
+            raise AssertionError("Yahoo news should not be called when cache is warm")
+
+    source = YahooNewsSentimentSource(
+        News(),
+        KeywordHeadlineSentiment(),
+        cache=Cache(),
+        now=lambda: datetime(2026, 5, 27, 1, 30, tzinfo=timezone.utc),
+        cache_ttl_minutes=30,
+    )
+
+    assert source.sentiments("AAA") == (Sentiment.POSITIVE,)
+
+
+def test_news_sentiment_saves_and_scores_fresh_news_when_cache_is_empty() -> None:
+    class Cache:
+        def __init__(self) -> None:
+            self.saved = []
+            self.updated = []
+
+        def recent_news(self, ticker, fetched_after):
+            return []
+
+        def save_news(self, records):
+            self.saved.extend(records)
+
+        def update_sentiments(self, ticker, sentiments):
+            self.updated.extend((ticker, title, score) for title, score in sentiments)
+
+    class News:
+        def recent_news(self, ticker):
+            return [NewsRecord(ticker, "AAA beats estimates")]
+
+    cache = Cache()
+    source = YahooNewsSentimentSource(News(), KeywordHeadlineSentiment(), cache=cache)
+
+    assert source.sentiments("AAA") == (Sentiment.POSITIVE,)
+    assert [item.title for item in cache.saved] == ["AAA beats estimates"]
+    assert cache.updated == [("AAA", "AAA beats estimates", 1)]
+
+
 def test_sql_repository_writes_daily_rows_and_logs() -> None:
     cursors: list[Cursor] = []
     connections: list[Connection] = []
@@ -127,9 +183,13 @@ def test_sql_repository_writes_daily_rows_and_logs() -> None:
     )
 
     assert cursors[0].calls[0][1] == [(date(2026, 5, 22), "AAA", "", 180.0, 4.0)]
-    assert cursors[1].calls[0][1] == [(date(2026, 5, 22), "AAA", 95, 80, 87.5, True)]
-    assert cursors[2].calls[0][1] == ("INFO", "test", "stored")
-    assert cursors[4].calls[0][1] == [
+    assert "CREATE TABLE dbo.listed_target_snapshot" in cursors[1].calls[0][0]
+    assert cursors[2].calls[0][1] == [
+        (date(2026, 5, 22), "AAA", "", 12, 180.0, 4.0)
+    ]
+    assert cursors[3].calls[0][1] == [(date(2026, 5, 22), "AAA", 95, 80, 87.5, True)]
+    assert cursors[4].calls[0][1] == ("INFO", "test", "stored")
+    assert cursors[6].calls[0][1] == [
         (
             date(2026, 5, 22),
             "AAA",
@@ -148,6 +208,37 @@ def test_sql_repository_writes_daily_rows_and_logs() -> None:
         )
     ]
     assert all(connection.commits == 1 and connection.closed for connection in connections)
+
+
+def test_sql_repository_writes_holding_snapshot() -> None:
+    cursors: list[Cursor] = []
+
+    def connect() -> Connection:
+        cursor = Cursor()
+        cursors.append(cursor)
+        return Connection(cursor)
+
+    repository = SqlServerDailyRepository(connect)
+    repository.save_holdings(
+        [
+            {
+                "ticker": "AAA",
+                "name": "Alpha",
+                "quantity": "2",
+                "averagePrice": "$10.50",
+                "openPrice": "$11.10",
+                "closePrice": "$11.60",
+                "totalPrice": "$23.20",
+            }
+        ],
+        date(2026, 5, 22),
+    )
+
+    assert "CREATE TABLE dbo.holding_snapshot" in cursors[0].calls[0][0]
+    assert "DELETE FROM holding_snapshot" in cursors[1].calls[0][0]
+    assert cursors[2].calls[0][1] == [
+        (date(2026, 5, 22), "AAA", "Alpha", 2, 10.5, 11.1, 11.6, 23.2, True)
+    ]
 
 
 def test_sql_monitor_repository_reads_rows() -> None:

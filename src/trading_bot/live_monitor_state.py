@@ -15,11 +15,12 @@ def live_kis_monitor_state(
     settings: KisSettings,
     now: datetime | None = None,
     include_orders: bool = True,
+    include_holdings: bool = True,
 ) -> dict[str, object]:
     trade_date = current_us_market_date(now)
     rows = _safe_order_rows(kis, settings, trade_date, include_orders)
     account = _safe_account(accounts)
-    holdings = _safe_holdings(accounts)
+    holdings = _safe_holdings(accounts) if include_holdings else []
     return {
         "account": _account(account),
         "targets": [_target(row) for row in rows],

@@ -63,10 +63,19 @@ def test_load_notification_settings_reads_optional_alert_channels(monkeypatch) -
 
 def test_runtime_risk_settings_override_env_values(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
-    save_runtime_risk_settings(7.5, 12.0)
+    save_runtime_risk_settings(7.5, 12.0, 40, 2, 120, 1.5, 0.8, 25)
 
     settings = load_settings()
 
     assert settings.max_position_loss == -0.075
     assert settings.take_profit_rate == 0.12
+    assert settings.min_total_score == 40
+    assert settings.min_price_usd == 2
+    assert settings.max_price_usd == 120
+    assert settings.min_opening_price_change == 0.015
+    assert settings.min_volume_ratio == 0.8
+    assert settings.max_opening_gap == 0.25
     assert runtime_risk_settings_payload(settings)["stopLossPercent"] == 7.5
+    assert runtime_risk_settings_payload(settings)["minTotalScore"] == 40
+    assert runtime_risk_settings_payload(settings)["minOpeningPriceChangePercent"] == 1.5
+    assert runtime_risk_settings_payload(settings)["maxOpeningGapPercent"] == 25

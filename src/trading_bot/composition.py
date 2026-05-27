@@ -15,7 +15,7 @@ from trading_bot.adapters.yahoo_news import YahooFinanceNewsSource
 from trading_bot.clocks import SystemClock
 from trading_bot.config import KisSettings, TradingSettings
 from trading_bot.order_execution import BuyIntentExecutor
-from trading_bot.persistence import build_daily_repository
+from trading_bot.persistence import build_daily_repository, build_news_cache_repository
 from trading_bot.pipeline import ScreeningScoringPipeline
 from trading_bot.ports import DailyRepository
 from trading_bot.quote_polling import PollingExitMonitor
@@ -32,10 +32,13 @@ def build_live_dry_run(
     kis = KisOverseasClient(KisJsonClient(kis_settings))
     accounts = KisAccountReader(kis, kis_settings)
     repository = build_daily_repository()
+    news_cache = build_news_cache_repository()
     scoring = NewsChartScoringProvider(
         YahooNewsSentimentSource(
             YahooFinanceNewsSource(),
             KeywordHeadlineSentiment(),
+            cache=news_cache,
+            cache_ttl_minutes=settings.news_cache_ttl_minutes,
         ).sentiments,
         YahooChartScorer().score,
     )

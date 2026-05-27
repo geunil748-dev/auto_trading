@@ -231,7 +231,7 @@ def _write_live_state(
         live_state["logs"] = screening_state["logs"] + live_state["logs"]
     if extra_logs:
         live_state["logs"] = extra_logs + live_state["logs"]
-    persist_error = _persist_live_fills(live_state)
+    persist_error = _persist_live_snapshot(live_state)
     if persist_error:
         live_state["logs"] = [log_row("DB", persist_error)] + live_state["logs"]
     monitor_state.write_text(
@@ -241,21 +241,23 @@ def _write_live_state(
     return live_state
 
 
-def _persist_live_fills(live_state: dict[str, object]) -> str:
+def _persist_live_snapshot(live_state: dict[str, object]) -> str:
     fills = live_state.get("fills", [])
-    if not isinstance(fills, list):
-        return ""
+    holdings = live_state.get("holdings", [])
     try:
         repository = SqlServerDailyRepository(pyodbc_connect_factory())
-        entry_prices = repository.sell_entry_prices(current_us_market_date())
-        records = fill_records_from_monitor_rows(fills, entry_prices)
-        if not records:
-            return ""
-        repository.save_fills(records)
+        trade_date = current_us_market_date()
+        if isinstance(holdings, list):
+            repository.save_holdings(holdings, trade_date)
+        if isinstance(fills, list):
+            entry_prices = repository.sell_entry_prices(trade_date)
+            records = fill_records_from_monitor_rows(fills, entry_prices)
+            if records:
+                repository.save_fills(records)
     except ValueError:
         return ""
     except Exception as exc:
-        return f"체결 DB 저장 실패: {exc}"
+        return f"모니터 DB 저장 실패: {exc}"
     return ""
 
 

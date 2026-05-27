@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from enum import Enum
 
 
@@ -9,6 +9,18 @@ class Sentiment(Enum):
     NEGATIVE = -1
     NEUTRAL = 0
     POSITIVE = 1
+
+
+@dataclass(frozen=True)
+class NewsRecord:
+    ticker: str
+    title: str
+    summary: str = ""
+    url: str = ""
+    published_at: datetime | None = None
+    source: str = ""
+    sentiment_score: int | None = None
+    fetched_at: datetime | None = None
 
 
 @dataclass(frozen=True)

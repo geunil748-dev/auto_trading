@@ -11,7 +11,16 @@ except ImportError:  # pragma: no cover - 로컬 규칙 테스트에서 선택 �
     load_dotenv = None
 
 RUNTIME_SETTINGS_PATH = Path("monitor/trading_settings.json")
-RUNTIME_RISK_KEYS = {"max_position_loss", "take_profit_rate"}
+RUNTIME_SETTING_KEYS = {
+    "max_position_loss",
+    "take_profit_rate",
+    "min_total_score",
+    "min_price_usd",
+    "max_price_usd",
+    "min_opening_price_change",
+    "min_volume_ratio",
+    "max_opening_gap",
+}
 
 
 @dataclass(frozen=True)
@@ -37,6 +46,7 @@ class TradingSettings:
     max_intraday_entry_rounds: int = 2
     max_intraday_buy_intents_per_round: int = 1
     min_pyramiding_profit_rate: float = 0.03
+    news_cache_ttl_minutes: int = 30
     real_trading_enabled: bool = False
     real_max_order_krw: int = 100000
     real_max_daily_order_krw: int = 300000
@@ -93,6 +103,7 @@ def load_settings() -> TradingSettings:
             1,
         ),
         min_pyramiding_profit_rate=_float_env("MIN_PYRAMIDING_PROFIT_RATE", 0.03),
+        news_cache_ttl_minutes=_int_env("NEWS_CACHE_TTL_MINUTES", 30),
         take_profit_rate=_float_env("TAKE_PROFIT_RATE", 0.05),
         real_trading_enabled=_bool_env("REAL_TRADING_ENABLED", False),
         real_max_order_krw=_int_env("REAL_MAX_ORDER_KRW", 100000),
@@ -111,27 +122,68 @@ def runtime_risk_settings_payload(
         "stopLossPercent": abs(current.max_position_loss * 100),
         "takeProfitRate": current.take_profit_rate,
         "takeProfitPercent": current.take_profit_rate * 100,
+        "minTotalScore": current.min_total_score,
+        "minPriceUsd": current.min_price_usd,
+        "maxPriceUsd": current.max_price_usd,
+        "minOpeningPriceChangePercent": current.min_opening_price_change * 100,
+        "minVolumeRatio": current.min_volume_ratio,
+        "maxOpeningGapPercent": current.max_opening_gap * 100,
     }
 
 
 def save_runtime_risk_settings(
     stop_loss_percent: float,
     take_profit_percent: float,
+    min_total_score: float | None = None,
+    min_price_usd: float | None = None,
+    max_price_usd: float | None = None,
+    min_opening_price_change_percent: float | None = None,
+    min_volume_ratio: float | None = None,
+    max_opening_gap_percent: float | None = None,
     path: Path = RUNTIME_SETTINGS_PATH,
 ) -> dict[str, float]:
     stop = _validate_percent(stop_loss_percent, "손절 비율")
     profit = _validate_percent(take_profit_percent, "익절 비율")
-    payload = {
+    payload = _read_runtime_settings(path)
+    payload.update({
         "max_position_loss": -(stop / 100),
         "take_profit_rate": profit / 100,
-    }
+    })
+    if min_total_score is not None:
+        payload["min_total_score"] = _validate_score(min_total_score, "선정점수")
+    if min_price_usd is not None or max_price_usd is not None:
+        current_min = min_price_usd if min_price_usd is not None else payload.get("min_price_usd")
+        current_max = max_price_usd if max_price_usd is not None else payload.get("max_price_usd")
+        min_price, max_price = _validate_price_range(current_min, current_max)
+        payload["min_price_usd"] = min_price
+        payload["max_price_usd"] = max_price
+    if min_opening_price_change_percent is not None:
+        payload["min_opening_price_change"] = (
+            _validate_percent_range(min_opening_price_change_percent, "장초반 상승률") / 100
+        )
+    if min_volume_ratio is not None:
+        payload["min_volume_ratio"] = _validate_volume_ratio(min_volume_ratio, "거래량 비율")
+    if max_opening_gap_percent is not None:
+        payload["max_opening_gap"] = (
+            _validate_percent_range(max_opening_gap_percent, "시가 갭 상한") / 100
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    current = load_settings()
     return runtime_risk_settings_payload(
         replace(
-            load_settings(),
+            current,
             max_position_loss=payload["max_position_loss"],
             take_profit_rate=payload["take_profit_rate"],
+            min_total_score=payload.get("min_total_score", current.min_total_score),
+            min_price_usd=payload.get("min_price_usd", current.min_price_usd),
+            max_price_usd=payload.get("max_price_usd", current.max_price_usd),
+            min_opening_price_change=payload.get(
+                "min_opening_price_change",
+                current.min_opening_price_change,
+            ),
+            min_volume_ratio=payload.get("min_volume_ratio", current.min_volume_ratio),
+            max_opening_gap=payload.get("max_opening_gap", current.max_opening_gap),
         )
     )
 
@@ -240,7 +292,7 @@ def _read_runtime_settings(path: Path = RUNTIME_SETTINGS_PATH) -> dict[str, floa
     if not isinstance(payload, dict):
         return {}
     values: dict[str, float] = {}
-    for key in RUNTIME_RISK_KEYS:
+    for key in RUNTIME_SETTING_KEYS:
         if key in payload:
             values[key] = float(payload[key])
     return values
@@ -251,3 +303,39 @@ def _validate_percent(value: float, label: str) -> float:
     if percent <= 0 or percent > 50:
         raise ValueError(f"{label}은 0보다 크고 50 이하로 입력해 주세요.")
     return percent
+
+
+def _validate_score(value: float, label: str) -> float:
+    score = float(value)
+    if score < 0 or score > 100:
+        raise ValueError(f"{label}는 0점 이상 100점 이하로 입력해 주세요.")
+    return score
+
+
+def _validate_price_range(
+    min_value: float | None,
+    max_value: float | None,
+) -> tuple[float, float]:
+    if min_value is None or max_value is None:
+        raise ValueError("최저 가격과 최고 가격을 모두 입력해 주세요.")
+    min_price = float(min_value)
+    max_price = float(max_value)
+    if min_price <= 0 or max_price <= 0:
+        raise ValueError("가격 조건은 0보다 크게 입력해 주세요.")
+    if min_price >= max_price:
+        raise ValueError("최저 가격은 최고 가격보다 작아야 합니다.")
+    return min_price, max_price
+
+
+def _validate_percent_range(value: float, label: str) -> float:
+    percent = float(value)
+    if percent < 0 or percent > 500:
+        raise ValueError(f"{label}은 0 이상 500 이하로 입력해 주세요.")
+    return percent
+
+
+def _validate_volume_ratio(value: float, label: str) -> float:
+    ratio = float(value)
+    if ratio <= 0 or ratio > 100:
+        raise ValueError(f"{label}은 0보다 크고 100 이하로 입력해 주세요.")
+    return ratio

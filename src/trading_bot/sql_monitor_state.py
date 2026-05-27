@@ -18,7 +18,7 @@ class SqlMonitorStateSource:
                 for row in self.repository.latest_targets()
             ],
             "positions": [],
-            "holdings": [],
+            "holdings": [_holding(row) for row in self.repository.latest_holdings()],
             "orders": [],
             "fills": [_fill(row) for row in self.repository.latest_fills()],
             "gates": [
@@ -39,6 +39,7 @@ class SqlMonitorStateSource:
                 _target(row, scores.get(row[0]))
                 for row in self.repository.history_targets(trade_date)
             ],
+            "holdings": [_holding(row) for row in self.repository.history_holdings(trade_date)],
             "orders": [],
             "fills": [_fill(row) for row in self.repository.history_fills(trade_date)],
             "logs": [_log(row) for row in self.repository.history_logs(trade_date)],
@@ -48,17 +49,26 @@ class SqlMonitorStateSource:
 
 
 def _target(row: tuple[Any, ...], score: tuple[Any, ...] | None) -> list[str]:
-    if len(row) >= 4:
+    if len(row) >= 5:
+        ticker, ticker_name, price_usd, volume_ratio, price_change = row[:5]
+        price_text = _usd(_number(price_usd))
+    elif len(row) >= 4:
         ticker, ticker_name, volume_ratio, price_change = row[:4]
+        price_text = "-"
     else:
         ticker, volume_ratio, price_change = row
         ticker_name = "-"
-    score_value = "-" if score is None else str(round(_number(score[3])))
-    state = "점수대기" if score is None else ("선정" if score[4] else "제외")
+        price_text = "-"
+    score_value = (
+        str(round(_fallback_filter_score(volume_ratio, price_change)))
+        if score is None
+        else str(round(_number(score[3])))
+    )
+    state = "필터점수" if score is None else ("선정" if score[4] else "제외")
     return [
         str(ticker),
         str(ticker_name or "-"),
-        "-",
+        price_text,
         f"{_number(volume_ratio):.0f}%",
         f"{_number(price_change):+.1f}%",
         score_value,
@@ -66,10 +76,23 @@ def _target(row: tuple[Any, ...], score: tuple[Any, ...] | None) -> list[str]:
     ]
 
 
+def _holding(row: tuple[Any, ...]) -> dict[str, str]:
+    ticker, ticker_name, quantity, average_price, open_price, close_price, total_price = row[:7]
+    return {
+        "ticker": str(ticker),
+        "name": str(ticker_name or ""),
+        "quantity": str(quantity),
+        "averagePrice": _usd(_number(average_price)),
+        "openPrice": _usd_or_dash(open_price),
+        "closePrice": _usd_or_dash(close_price),
+        "totalPrice": _usd(_number(total_price)),
+    }
+
+
 def _log(row: tuple[Any, ...]) -> list[str]:
     created_at, level, message = row
     timestamp = created_at.strftime("%H:%M:%S") if hasattr(created_at, "strftime") else str(created_at)
-    return [timestamp, str(level), str(message)]
+    return [timestamp, _level_text(level), _message_text(message)]
 
 
 def _trade(row: tuple[Any, ...]) -> dict[str, str]:
@@ -78,10 +101,10 @@ def _trade(row: tuple[Any, ...]) -> dict[str, str]:
     profit_rate = row[6] if len(row) > 6 else None
     return {
         "ticker": str(ticker),
-        "type": str(order_type),
+        "type": _side_text(order_type),
         "price": f"${_number(order_price):.2f}",
         "quantity": str(quantity),
-        "exitReason": "" if exit_reason is None else str(exit_reason),
+        "exitReason": "" if exit_reason is None else _reason_text(str(exit_reason)),
         "profitUsd": "" if profit_usd is None else _signed_usd(_number(profit_usd)),
         "profitRate": "" if profit_rate is None else f"{_number(profit_rate) * 100:+.2f}%",
     }
@@ -99,7 +122,7 @@ def _fill(row: tuple[Any, ...]) -> dict[str, str]:
         "filledAt": f"{date_text} {time_text}".strip(),
         "ticker": str(ticker),
         "name": str(ticker_name or ""),
-        "side": str(side or ""),
+        "side": _side_text(side),
         "quantity": str(quantity),
         "price": f"${_number(fill_price):,.2f}",
         "total": f"${_number(fill_amount):,.2f}",
@@ -125,6 +148,15 @@ def _signed_usd(value: float) -> str:
     return f"{sign}${value:,.2f}"
 
 
+def _usd(value: float) -> str:
+    return f"${value:,.2f}"
+
+
+def _usd_or_dash(value: Any) -> str:
+    number = _number(value)
+    return "-" if number <= 0 else _usd(number)
+
+
 def _number(value: Any) -> float:
     if value is None:
         return 0.0
@@ -132,3 +164,82 @@ def _number(value: Any) -> float:
         return float(value)
     except TypeError:
         return float(str(value))
+
+
+def _fallback_filter_score(volume_ratio: Any, price_change: Any) -> float:
+    volume = max(0.0, _number(volume_ratio))
+    change = max(0.0, _number(price_change))
+    volume_score = min(volume / 3.0 * 50.0, 50.0)
+    change_score = min(change / 8.0 * 50.0, 50.0)
+    return volume_score + change_score
+
+
+def _level_text(level: Any) -> str:
+    mapping = {
+        "INFO": "정보",
+        "WARNING": "주의",
+        "WARN": "주의",
+        "ERROR": "오류",
+    }
+    return mapping.get(str(level).upper(), str(level))
+
+
+def _side_text(value: Any) -> str:
+    raw = str(value or "").strip()
+    normalized = raw.upper()
+    if normalized in {"BUY", "B"} or "매수" in raw:
+        return "매수"
+    if normalized in {"SELL", "S"} or "매도" in raw:
+        return "매도"
+    return raw
+
+
+def _message_text(message: Any) -> str:
+    text = str(message)
+    if text.startswith("Screened ") and " targets and selected " in text:
+        parts = text.rstrip(".").split()
+        if len(parts) >= 6:
+            return f"후보 {parts[1]}개를 점검했고, 최종 {parts[5]}개를 선정했습니다."
+    if text.startswith("Filter rejects: "):
+        raw = text.removeprefix("Filter rejects: ").rstrip(".")
+        if raw == "none":
+            return "필터에서 제외된 종목은 없습니다."
+        return "필터 제외 사유: " + ", ".join(_reason_count(part) for part in raw.split(", "))
+    if text.startswith("Entry blocked: "):
+        return "진입 차단: " + _reason_text(text.removeprefix("Entry blocked: ").strip())
+    return _replace_known_tokens(text)
+
+
+def _reason_count(part: str) -> str:
+    if "=" not in part:
+        return _reason_text(part)
+    reason, count = part.split("=", 1)
+    return f"{_reason_text(reason)} {count}건"
+
+
+def _replace_known_tokens(text: str) -> str:
+    for token, label in _REASON_TEXT.items():
+        text = text.replace(token, label)
+    return text
+
+
+def _reason_text(reason: str) -> str:
+    return _REASON_TEXT.get(reason.strip(), reason.strip())
+
+
+_REASON_TEXT = {
+    "ACCOUNT_EXPOSURE_LIMIT": "계좌 투자비중 초과",
+    "DAILY_ACCOUNT_LOSS": "일일 손실 제한 도달",
+    "FX_VOLATILITY": "환율 변동성 초과",
+    "INVALID_ACCOUNT_EQUITY": "계좌 평가금액 확인 불가",
+    "INVALID_ORDER_VALUE": "주문 금액 오류",
+    "LOW_OPENING_CHANGE": "장초반 상승률 부족",
+    "LOW_OPENING_VOLUME": "장초반 거래량 부족",
+    "MARKET_BELOW_MA20": "나스닥 20일선 하회",
+    "MISSING_SNAPSHOT": "시세 스냅샷 없음",
+    "OPENING_GAP": "시가 갭 과다",
+    "OPEN_POSITION_LIMIT": "최대 보유 종목 수 초과",
+    "PENNY_STOCK": "가격 하한 미달",
+    "POSITION_EXPOSURE_LIMIT": "종목별 투자비중 초과",
+    "PRICE_CAP": "가격 상한 초과",
+}

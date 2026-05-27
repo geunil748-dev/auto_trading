@@ -45,6 +45,7 @@ let activePage = "dashboard";
 
 const tokenStorageKey = "monitorBearerToken";
 const refreshButton = document.querySelector("#refreshState");
+const manualScreeningButton = document.querySelector("#manualScreening");
 const tabButtons = document.querySelectorAll(".tab-button");
 const navButtons = document.querySelectorAll(".nav-item");
 const sideNav = document.querySelector("#sideNav");
@@ -59,6 +60,12 @@ const historyStatus = document.querySelector("#historyStatus");
 const riskSettingsForm = document.querySelector("#riskSettingsForm");
 const stopLossInput = document.querySelector("#stopLossPercent");
 const takeProfitInput = document.querySelector("#takeProfitPercent");
+const minTotalScoreInput = document.querySelector("#minTotalScore");
+const minPriceUsdInput = document.querySelector("#minPriceUsd");
+const maxPriceUsdInput = document.querySelector("#maxPriceUsd");
+const minOpeningPriceChangeInput = document.querySelector("#minOpeningPriceChangePercent");
+const minVolumeRatioInput = document.querySelector("#minVolumeRatio");
+const maxOpeningGapInput = document.querySelector("#maxOpeningGapPercent");
 const riskSettingsStatus = document.querySelector("#riskSettingsStatus");
 const sellAllButton = document.querySelector("#sellAllPositions");
 
@@ -71,6 +78,7 @@ tokenInput?.addEventListener("keydown", (event) => {
   if (event.key === "Enter") saveTokenAndReload();
 });
 refreshButton?.addEventListener("click", loadState);
+manualScreeningButton?.addEventListener("click", submitManualScreening);
 refreshHistoryButton?.addEventListener("click", loadHistory);
 riskSettingsForm?.addEventListener("submit", saveRiskSettings);
 sellAllButton?.addEventListener("click", submitSellAllPositions);
@@ -110,7 +118,7 @@ function saveTokenAndReload() {
 }
 
 async function loadState() {
-  if (refreshButton) refreshButton.disabled = true;
+  setButtonLoading(refreshButton, true);
   try {
     currentState = normalizeState(await fetchState());
     setAuthStatus(bearerToken() ? "인증된 모니터입니다." : "");
@@ -118,14 +126,14 @@ async function loadState() {
     currentState = fallbackState;
     setAuthStatus("모니터 토큰을 확인해 주세요.");
   } finally {
-    if (refreshButton) refreshButton.disabled = false;
+    setButtonLoading(refreshButton, false);
   }
   render(currentState);
 }
 
 async function loadHistory() {
   if (!refreshHistoryButton) return;
-  refreshHistoryButton.disabled = true;
+  setButtonLoading(refreshHistoryButton, true);
   setHistoryStatus("DB 조회 중...");
   try {
     historyState = normalizeHistoryState(await fetchHistory());
@@ -134,9 +142,38 @@ async function loadHistory() {
     historyState = { targets: [], orders: [], fills: [], logs: [], trades: [] };
     setHistoryStatus("DB 기록을 불러오지 못했습니다.");
   } finally {
-    refreshHistoryButton.disabled = false;
+    setButtonLoading(refreshHistoryButton, false);
   }
   render(currentState);
+}
+
+async function submitManualScreening() {
+  setButtonLoading(manualScreeningButton, true);
+  setAuthStatus("수동 리스트업을 요청하는 중입니다.");
+  try {
+    const response = await fetch(
+      "/api/manual-screening",
+      fetchOptions("/api/manual-screening", { method: "POST" }),
+    );
+    const payload = await response.json();
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.error || "수동 리스트업 요청 실패");
+    }
+    setAuthStatus(payload.message || "수동 리스트업을 백그라운드에서 시작했습니다.");
+    setTimeout(loadState, 3000);
+    setTimeout(loadState, 10000);
+  } catch (error) {
+    setAuthStatus(error.message || "수동 리스트업 요청에 실패했습니다.");
+  } finally {
+    setButtonLoading(manualScreeningButton, false);
+  }
+}
+
+function setButtonLoading(button, isLoading) {
+  if (!button) return;
+  button.disabled = isLoading;
+  button.classList.toggle("is-loading", isLoading);
+  button.setAttribute("aria-busy", isLoading ? "true" : "false");
 }
 
 async function fetchState() {
@@ -182,6 +219,12 @@ async function saveRiskSettings(event) {
         body: JSON.stringify({
           stopLossPercent: Number(stopLossInput?.value || 0),
           takeProfitPercent: Number(takeProfitInput?.value || 0),
+          minTotalScore: Number(minTotalScoreInput?.value || 0),
+          minPriceUsd: Number(minPriceUsdInput?.value || 0),
+          maxPriceUsd: Number(maxPriceUsdInput?.value || 0),
+          minOpeningPriceChangePercent: Number(minOpeningPriceChangeInput?.value || 0),
+          minVolumeRatio: Number(minVolumeRatioInput?.value || 0),
+          maxOpeningGapPercent: Number(maxOpeningGapInput?.value || 0),
         }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
@@ -324,10 +367,40 @@ function applyRiskSettings(settings) {
   if (takeProfitInput && settings.takeProfitPercent != null) {
     takeProfitInput.value = formatPercentInput(settings.takeProfitPercent);
   }
+  if (minTotalScoreInput && settings.minTotalScore != null) {
+    minTotalScoreInput.value = formatScoreInput(settings.minTotalScore);
+  }
+  if (minPriceUsdInput && settings.minPriceUsd != null) {
+    minPriceUsdInput.value = formatPriceInput(settings.minPriceUsd);
+  }
+  if (maxPriceUsdInput && settings.maxPriceUsd != null) {
+    maxPriceUsdInput.value = formatPriceInput(settings.maxPriceUsd);
+  }
+  if (minOpeningPriceChangeInput && settings.minOpeningPriceChangePercent != null) {
+    minOpeningPriceChangeInput.value = formatPercentInput(settings.minOpeningPriceChangePercent);
+  }
+  if (minVolumeRatioInput && settings.minVolumeRatio != null) {
+    minVolumeRatioInput.value = formatRatioInput(settings.minVolumeRatio);
+  }
+  if (maxOpeningGapInput && settings.maxOpeningGapPercent != null) {
+    maxOpeningGapInput.value = formatPercentInput(settings.maxOpeningGapPercent);
+  }
 }
 
 function formatPercentInput(value) {
   return Number(value).toFixed(1).replace(/\.0$/, "");
+}
+
+function formatScoreInput(value) {
+  return Number(value).toFixed(1).replace(/\.0$/, "");
+}
+
+function formatPriceInput(value) {
+  return Number(value).toFixed(2).replace(/\.00$/, "");
+}
+
+function formatRatioInput(value) {
+  return Number(value).toFixed(2).replace(/0$/, "").replace(/\.0$/, "");
 }
 
 function selectedHistoryDate() {

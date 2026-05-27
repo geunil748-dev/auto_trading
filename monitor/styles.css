@@ -156,6 +156,7 @@ body.side-collapsed .side-scrim {
   align-items: center;
   justify-content: flex-start;
   width: 100%;
+  height: 38px;
   min-width: 0;
   margin-bottom: 8px;
   padding: 0 11px;
@@ -168,8 +169,10 @@ body.side-collapsed .side-scrim {
 .nav-item::before {
   content: attr(data-icon);
   display: inline-grid;
+  flex: 0 0 28px;
   place-items: center;
   width: 24px;
+  min-width: 28px;
   height: 24px;
   margin-right: 9px;
   border-radius: 6px;
@@ -177,6 +180,18 @@ body.side-collapsed .side-scrim {
   color: var(--teal);
   font-size: 0.76rem;
   font-weight: 800;
+  line-height: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+.nav-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: keep-all;
 }
 
 .nav-item.active {
@@ -212,6 +227,47 @@ button:disabled {
   color: var(--muted);
   cursor: wait;
   opacity: 0.72;
+}
+
+#refreshState,
+#refreshHistory,
+#manualScreening {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.button-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgb(156 176 187 / 32%);
+  border-top-color: var(--teal);
+  border-radius: 999px;
+  opacity: 0;
+  transform: scale(0.84);
+}
+
+button.is-loading .button-spinner {
+  opacity: 1;
+  animation: button-spin 720ms linear infinite;
+}
+
+@keyframes button-spin {
+  from {
+    transform: rotate(0deg) scale(0.84);
+  }
+
+  to {
+    transform: rotate(360deg) scale(0.84);
+  }
 }
 
 input {
