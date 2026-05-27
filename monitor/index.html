@@ -5,13 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>자동매매 모니터</title>
     <link rel="stylesheet" href="./styles.css?v=23" />
-    <link rel="stylesheet" href="./panels.css?v=16" />
+    <link rel="stylesheet" href="./panels.css?v=17" />
   </head>
   <body class="side-collapsed">
     <div class="app-frame">
       <aside class="side-nav is-collapsed" id="sideNav" aria-label="화면 메뉴">
         <div class="side-head">
-          <button id="toggleSideNav" type="button" aria-label="왼쪽 메뉴 열기">≡</button>
+          <button id="toggleSideNav" type="button" aria-label="왼쪽 메뉴 열기">☰</button>
           <strong>자동매매</strong>
         </div>
         <div class="side-action">
@@ -20,12 +20,18 @@
         <button class="nav-item active" type="button" data-page="dashboard" data-icon="홈">
           <span>대시보드</span>
         </button>
-        <button class="nav-item" type="button" data-page="activity" data-icon="주">
+        <button class="nav-item" type="button" data-page="activity" data-icon="주문">
           <span>주문/체결</span>
         </button>
-        <button class="nav-item" type="button" data-page="candidateHistory" data-icon="후">
+        <button class="nav-item" type="button" data-page="candidateHistory" data-icon="후보">
           <span>후보 리스트</span>
         </button>
+        <button class="nav-item" type="button" data-page="settings" data-icon="설정">
+          <span>설정</span>
+        </button>
+        <div class="side-bottom-action">
+          <button id="sellAllPositions" type="button">전량 매도</button>
+        </div>
       </aside>
       <button class="side-scrim" id="sideScrim" type="button" aria-label="왼쪽 메뉴 닫기"></button>
 
@@ -146,6 +152,7 @@
                     <th>장 시작가</th>
                     <th>장 마감가</th>
                     <th>총가격</th>
+                    <th>관리</th>
                   </tr>
                 </thead>
                 <tbody id="holdingRows"></tbody>
@@ -176,6 +183,33 @@
                 <tbody id="candidateHistoryRows"></tbody>
               </table>
             </div>
+          </article>
+
+          <article class="panel settings-panel">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">매도 기준</p>
+                <h2>손익절 설정</h2>
+              </div>
+            </div>
+            <form class="settings-form" id="riskSettingsForm">
+              <label>
+                <span>손절 비율</span>
+                <div class="percent-input">
+                  <input id="stopLossPercent" type="number" min="0.1" max="50" step="0.1" />
+                  <b>%</b>
+                </div>
+              </label>
+              <label>
+                <span>익절 비율</span>
+                <div class="percent-input">
+                  <input id="takeProfitPercent" type="number" min="0.1" max="50" step="0.1" />
+                  <b>%</b>
+                </div>
+              </label>
+              <button id="saveRiskSettings" type="submit">저장</button>
+              <p id="riskSettingsStatus" class="settings-status"></p>
+            </form>
           </article>
 
           <article class="panel orders">
@@ -211,6 +245,6 @@
       </main>
     </div>
     <script src="./runtime-controls.js?v=2"></script>
-    <script src="./app.js?v=27"></script>
+    <script src="./app.js?v=28"></script>
   </body>
 </html>

@@ -7,7 +7,7 @@ from trading_bot.chart_scoring import chart_pattern_score
 from trading_bot.models import RankedStock
 
 
-def test_kis_screening_market_data_maps_quote_and_volume_history() -> None:
+def test_kis_screening_market_data_maps_quote_and_volume_history(monkeypatch) -> None:
     class Kis:
         def ranked_gainers(self) -> list:
             return [RankedStock("AAA", 2)]
@@ -33,6 +33,7 @@ def test_kis_screening_market_data_maps_quote_and_volume_history() -> None:
             assert (ticker, sessions) == ("AAA", 20)
             return 2000
 
+    monkeypatch.setattr("trading_bot.adapters.market_data._regular_session_elapsed_fraction", lambda: 1.0)
     market = KisScreeningMarketData(Kis(), Context(), History())
     market.ranked_gainers()
     market.ranked_turnover()

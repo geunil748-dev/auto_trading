@@ -1,4 +1,10 @@
-from trading_bot.config import load_notification_settings, load_real_kis_settings, load_settings
+from trading_bot.config import (
+    load_notification_settings,
+    load_real_kis_settings,
+    load_settings,
+    runtime_risk_settings_payload,
+    save_runtime_risk_settings,
+)
 
 
 def test_load_real_kis_settings_uses_dedicated_real_env(monkeypatch) -> None:
@@ -53,3 +59,14 @@ def test_load_notification_settings_reads_optional_alert_channels(monkeypatch) -
     assert settings.discord_webhook_url == "https://discord.example"
     assert settings.telegram_bot_token == "telegram-token"
     assert settings.telegram_chat_id == "1234"
+
+
+def test_runtime_risk_settings_override_env_values(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    save_runtime_risk_settings(7.5, 12.0)
+
+    settings = load_settings()
+
+    assert settings.max_position_loss == -0.075
+    assert settings.take_profit_rate == 0.12
+    assert runtime_risk_settings_payload(settings)["stopLossPercent"] == 7.5

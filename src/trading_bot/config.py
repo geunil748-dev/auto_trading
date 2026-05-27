@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
 
 try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover - 로컬 규칙 테스트에서 선택 의존성을 허용한다.
     load_dotenv = None
+
+RUNTIME_SETTINGS_PATH = Path("monitor/trading_settings.json")
+RUNTIME_RISK_KEYS = {"max_position_loss", "take_profit_rate"}
 
 
 @dataclass(frozen=True)
@@ -70,7 +75,7 @@ def load_settings() -> TradingSettings:
     if load_dotenv is not None:
         load_dotenv()
 
-    return TradingSettings(
+    settings = TradingSettings(
         mock_trading=_bool_env("MOCK_TRADING", True),
         min_price_usd=_float_env("MIN_PRICE_USD", 5.0),
         max_price_usd=_float_env("MAX_PRICE_USD", 50.0),
@@ -93,6 +98,41 @@ def load_settings() -> TradingSettings:
         real_max_order_krw=_int_env("REAL_MAX_ORDER_KRW", 100000),
         real_max_daily_order_krw=_int_env("REAL_MAX_DAILY_ORDER_KRW", 300000),
         real_emergency_stop=_bool_env("REAL_EMERGENCY_STOP", True),
+    )
+    return _apply_runtime_settings(settings)
+
+
+def runtime_risk_settings_payload(
+    settings: TradingSettings | None = None,
+) -> dict[str, float]:
+    current = settings or load_settings()
+    return {
+        "stopLossRate": current.max_position_loss,
+        "stopLossPercent": abs(current.max_position_loss * 100),
+        "takeProfitRate": current.take_profit_rate,
+        "takeProfitPercent": current.take_profit_rate * 100,
+    }
+
+
+def save_runtime_risk_settings(
+    stop_loss_percent: float,
+    take_profit_percent: float,
+    path: Path = RUNTIME_SETTINGS_PATH,
+) -> dict[str, float]:
+    stop = _validate_percent(stop_loss_percent, "손절 비율")
+    profit = _validate_percent(take_profit_percent, "익절 비율")
+    payload = {
+        "max_position_loss": -(stop / 100),
+        "take_profit_rate": profit / 100,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return runtime_risk_settings_payload(
+        replace(
+            load_settings(),
+            max_position_loss=payload["max_position_loss"],
+            take_profit_rate=payload["take_profit_rate"],
+        )
     )
 
 
@@ -183,3 +223,31 @@ def _required_env(name: str) -> str:
     if not raw:
         raise ValueError(f"{name} is required")
     return raw
+
+
+def _apply_runtime_settings(settings: TradingSettings) -> TradingSettings:
+    overrides = _read_runtime_settings()
+    if not overrides:
+        return settings
+    return replace(settings, **overrides)
+
+
+def _read_runtime_settings(path: Path = RUNTIME_SETTINGS_PATH) -> dict[str, float]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    values: dict[str, float] = {}
+    for key in RUNTIME_RISK_KEYS:
+        if key in payload:
+            values[key] = float(payload[key])
+    return values
+
+
+def _validate_percent(value: float, label: str) -> float:
+    percent = float(value)
+    if percent <= 0 or percent > 50:
+        raise ValueError(f"{label}은 0보다 크고 50 이하로 입력해 주세요.")
+    return percent

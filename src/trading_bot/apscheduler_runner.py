@@ -16,6 +16,6 @@ def run_scheduler(monitor_state: Path) -> None:
     scheduler = BlockingScheduler(timezone="Asia/Seoul")
     register_daily_timeline(
         scheduler,
-        live_mock_tasks(load_settings(), load_kis_settings(), monitor_state),
+        live_mock_tasks(load_settings, load_kis_settings(), monitor_state),
     )
     scheduler.start()

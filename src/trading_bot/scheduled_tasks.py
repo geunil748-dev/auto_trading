@@ -34,7 +34,7 @@ from trading_bot.scheduled_messages import log_row, recheck_message, watch_messa
 
 
 def live_mock_tasks(
-    settings: TradingSettings,
+    settings: TradingSettings | Callable[[], TradingSettings],
     kis_settings: KisSettings,
     monitor_state: Path,
     trading_day: Callable[[], bool] = is_current_us_trading_day,
@@ -51,7 +51,8 @@ def live_mock_tasks(
             # 미국 휴장일에는 주문뿐 아니라 후보 수집도 멈춰 화면에 스킵 상태를 남긴다.
             _write_closed_state(monitor_state)
             return "Skipped screening because the US market is closed."
-        runtime, repository = build_live_dry_run(settings, kis_settings)
+        current_settings = _current_settings(settings)
+        runtime, repository = build_live_dry_run(current_settings, kis_settings)
         latest.result = runtime.run()
         latest.repository = repository
         monitor_state.write_text(
@@ -85,7 +86,8 @@ def live_mock_tasks(
     def intraday_watch() -> str:
         if not regular_session():
             return "Skipped intraday watch outside the regular US session."
-        accounts, monitor, repository = build_live_exit_poll(settings, kis_settings)
+        current_settings = _current_settings(settings)
+        accounts, monitor, repository = build_live_exit_poll(current_settings, kis_settings)
         positions = _remembered_highs(accounts.positions(), latest.highs)
         refreshed, exits = monitor.poll(positions)
         latest.highs.update({item.ticker: item.high_price_usd for item in refreshed})
@@ -109,7 +111,8 @@ def live_mock_tasks(
     def intraday_recheck() -> str:
         if not regular_session():
             return "Skipped intraday recheck outside the regular US session."
-        runtime, repository = build_live_dry_run(settings, kis_settings)
+        current_settings = _current_settings(settings)
+        runtime, repository = build_live_dry_run(current_settings, kis_settings)
         latest.result = runtime.run()
         latest.repository = repository
         positions = runtime.accounts.positions()
@@ -122,7 +125,7 @@ def live_mock_tasks(
             latest.add_on_tickers,
             unfilled,
             latest.intraday_entry_rounds,
-            settings,
+            current_settings,
         )
         trades = build_mock_buy_executor(kis_settings, repository).execute(intents)
         if trades:
@@ -145,7 +148,7 @@ def live_mock_tasks(
                         positions,
                         unfilled,
                         latest.intraday_entry_rounds,
-                        settings,
+                        current_settings,
                     ),
                 )
             ],
@@ -172,7 +175,8 @@ def live_mock_tasks(
             return "Skipped session close outside the regular US session."
         cancelled = _cancel_unfilled_orders(kis_settings)
         latest.cancelled_orders.extend(cancelled)
-        accounts, monitor, repository = build_live_exit_poll(settings, kis_settings)
+        current_settings = _current_settings(settings)
+        accounts, monitor, repository = build_live_exit_poll(current_settings, kis_settings)
         _, exits = monitor.poll(accounts.positions(), end_of_day=True)
         trades = build_mock_sell_executor(kis_settings, repository).execute(exits)
         state = _write_live_state(monitor_state, kis_settings)
@@ -329,3 +333,9 @@ def _ticker(value: str) -> str:
 
 def _int(row: dict[str, object], field: str) -> int:
     return int(float(str(row.get(field, 0)).replace(",", "") or 0))
+
+
+def _current_settings(
+    settings: TradingSettings | Callable[[], TradingSettings],
+) -> TradingSettings:
+    return settings() if callable(settings) else settings

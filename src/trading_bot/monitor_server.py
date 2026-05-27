@@ -9,9 +9,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from trading_bot.config import load_settings
+from trading_bot.config import (
+    load_settings,
+    runtime_risk_settings_payload,
+    save_runtime_risk_settings,
+)
 from trading_bot.dashboard_state import account_dashboard_state
 from trading_bot.database import mssql_dsn_from_env, pyodbc_connect_factory
+from trading_bot.manual_sell import submit_manual_mock_sell, submit_manual_mock_sell_all
 from trading_bot.monitor_api import MonitorStateReader, authorize_bearer
 from trading_bot.real_trading_control import load_real_trading_control, save_manual_enabled
 from trading_bot.repositories import SqlServerMonitorRepository
@@ -87,6 +92,9 @@ def _handler(reader: Any, monitor_dir: Path):
             if path == "/api/history":
                 self._write_history()
                 return
+            if path == "/api/trading-settings":
+                self._write_trading_settings()
+                return
             if path == "/":
                 self.path = "/index.html"
             super().do_GET()
@@ -95,6 +103,15 @@ def _handler(reader: Any, monitor_dir: Path):
             path = urlparse(self.path).path
             if path == "/api/real-trading-control":
                 self._write_real_trading_control()
+                return
+            if path == "/api/manual-mock-sell":
+                self._write_manual_mock_sell()
+                return
+            if path == "/api/manual-mock-sell-all":
+                self._write_manual_mock_sell_all()
+                return
+            if path == "/api/trading-settings":
+                self._save_trading_settings()
                 return
             self.send_error(404, "Not found")
 
@@ -121,6 +138,11 @@ def _handler(reader: Any, monitor_dir: Path):
                 return
             self._write_json(_read_history_state(reader, _query_date(self.path)))
 
+        def _write_trading_settings(self) -> None:
+            if not self._authorize_api():
+                return
+            self._write_json({"ok": True, "settings": runtime_risk_settings_payload()})
+
         def _write_real_trading_control(self) -> None:
             if not self._authorize_api():
                 return
@@ -132,6 +154,44 @@ def _handler(reader: Any, monitor_dir: Path):
             self._write_json(
                 {"runtime": _runtime_state(control, local_bypass=self._allow_local_bypass())}
             )
+
+        def _write_manual_mock_sell(self) -> None:
+            if not self._authorize_api():
+                return
+            body = self._read_json_body()
+            try:
+                result = submit_manual_mock_sell(
+                    str(body.get("ticker", "")),
+                    _optional_int(body.get("quantity")),
+                )
+            except Exception as exc:
+                self._write_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            self._write_json(result)
+
+        def _write_manual_mock_sell_all(self) -> None:
+            if not self._authorize_api():
+                return
+            try:
+                result = submit_manual_mock_sell_all()
+            except Exception as exc:
+                self._write_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            self._write_json(result)
+
+        def _save_trading_settings(self) -> None:
+            if not self._authorize_api():
+                return
+            body = self._read_json_body()
+            try:
+                settings_payload = save_runtime_risk_settings(
+                    float(body.get("stopLossPercent", 0)),
+                    float(body.get("takeProfitPercent", 0)),
+                )
+            except Exception as exc:
+                self._write_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            self._write_json({"ok": True, "settings": settings_payload})
 
         def _authorize_api(self) -> bool:
             token = self.headers.get("Authorization")
@@ -158,9 +218,9 @@ def _handler(reader: Any, monitor_dir: Path):
             value = json.loads(raw.decode("utf-8"))
             return value if isinstance(value, dict) else {}
 
-        def _write_json(self, value: dict[str, object]) -> None:
+        def _write_json(self, value: dict[str, object], status: int = 200) -> None:
             payload = json.dumps(value, ensure_ascii=False, default=str).encode("utf-8")
-            self.send_response(200)
+            self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
@@ -194,6 +254,12 @@ def _query_date(path: str) -> date:
         except ValueError:
             pass
     return date.today()
+
+
+def _optional_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    return int(float(str(value).replace(",", "").replace("주", "")))
 
 
 def _runtime_state(control: Any | None = None, local_bypass: bool = False) -> dict[str, object]:

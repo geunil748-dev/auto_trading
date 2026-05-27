@@ -8,7 +8,8 @@
 body[data-page="dashboard"] .logs,
 body[data-page="dashboard"] .orders,
 body[data-page="dashboard"] .fills,
-body[data-page="dashboard"] .candidate-history {
+body[data-page="dashboard"] .candidate-history,
+body[data-page="dashboard"] .settings-panel {
   display: none;
 }
 
@@ -20,7 +21,8 @@ body[data-page="activity"] .account-summary,
 body[data-page="activity"] .account-error,
 body[data-page="activity"] .candidates,
 body[data-page="activity"] .holdings,
-body[data-page="activity"] .candidate-history {
+body[data-page="activity"] .candidate-history,
+body[data-page="activity"] .settings-panel {
   display: none;
 }
 
@@ -40,7 +42,8 @@ body[data-page="candidateHistory"] .candidates,
 body[data-page="candidateHistory"] .holdings,
 body[data-page="candidateHistory"] .logs,
 body[data-page="candidateHistory"] .orders,
-body[data-page="candidateHistory"] .fills {
+body[data-page="candidateHistory"] .fills,
+body[data-page="candidateHistory"] .settings-panel {
   display: none;
 }
 
@@ -50,6 +53,61 @@ body[data-page="candidateHistory"] .work-grid {
 
 body[data-page="candidateHistory"] .candidate-history {
   min-height: 250px;
+}
+
+body[data-page="settings"] .account-summary,
+body[data-page="settings"] .account-error,
+body[data-page="settings"] .history-bar,
+body[data-page="settings"] .candidates,
+body[data-page="settings"] .holdings,
+body[data-page="settings"] .candidate-history,
+body[data-page="settings"] .logs,
+body[data-page="settings"] .orders,
+body[data-page="settings"] .fills {
+  display: none;
+}
+
+body[data-page="settings"] .work-grid {
+  grid-template-columns: minmax(320px, 680px);
+}
+
+.settings-panel {
+  min-height: 220px;
+}
+
+.settings-form {
+  display: grid;
+  max-width: 460px;
+  gap: 14px;
+}
+
+.settings-form label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.percent-input {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.percent-input input {
+  width: 100%;
+  padding: 0 12px;
+}
+
+.percent-input b {
+  color: var(--teal);
+}
+
+.settings-status {
+  min-height: 20px;
+  color: var(--muted);
+  font-size: 0.86rem;
 }
 
 .title-line {
@@ -200,7 +258,7 @@ td strong,
 }
 
 .holdings table {
-  min-width: 780px;
+  min-width: 900px;
   table-layout: auto;
 }
 
@@ -227,6 +285,24 @@ td strong,
 .holdings th:nth-child(n + 4),
 .holdings td:nth-child(n + 4) {
   min-width: 92px;
+}
+
+.holdings th:nth-child(8),
+.holdings td:nth-child(8) {
+  min-width: 110px;
+}
+
+.manual-sell-button {
+  min-width: 86px;
+  height: 32px;
+  border-color: rgb(255 106 114 / 46%);
+  background: rgb(255 106 114 / 10%);
+  color: #ffb1b6;
+  font-size: 0.82rem;
+}
+
+.manual-sell-button:hover {
+  background: rgb(255 106 114 / 18%);
 }
 
 .score {

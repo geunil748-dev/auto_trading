@@ -129,6 +129,28 @@ body.side-collapsed .side-scrim {
   background: rgb(255 106 114 / 18%);
 }
 
+.side-bottom-action {
+  position: absolute;
+  right: 12px;
+  bottom: 16px;
+  left: 12px;
+  padding-top: 14px;
+  border-top: 1px solid rgb(43 57 69 / 78%);
+}
+
+.side-bottom-action button {
+  width: 100%;
+  min-width: 0;
+  border-color: rgb(255 106 114 / 50%);
+  background: rgb(255 106 114 / 12%);
+  color: #ffb1b6;
+  font-weight: 700;
+}
+
+.side-bottom-action button:hover {
+  background: rgb(255 106 114 / 20%);
+}
+
 .nav-item {
   display: flex;
   align-items: center;
@@ -165,6 +187,7 @@ body.side-collapsed .side-scrim {
 
 .side-nav.is-collapsed .side-head strong,
 .side-nav.is-collapsed .side-action,
+.side-nav.is-collapsed .side-bottom-action,
 .side-nav.is-collapsed .nav-item,
 .side-nav.is-collapsed .nav-item span {
   display: none;
