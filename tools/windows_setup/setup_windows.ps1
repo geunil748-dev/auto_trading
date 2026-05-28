@@ -1,5 +1,5 @@
 param(
-    [string]$Workspace = (Split-Path -Parent $PSScriptRoot),
+    [string]$Workspace = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
     [string]$PythonPath = "",
     [switch]$SkipInstall,
     [switch]$InitDb,
@@ -118,7 +118,7 @@ if ($RegisterTasks) {
     Write-Step "Register Windows scheduled tasks"
     $taskArgs = @(
         "-ExecutionPolicy", "Bypass",
-        "-File", (Join-Path $workspacePath "tools\register_windows_tasks.ps1"),
+        "-File", (Join-Path $workspacePath "tools\windows_setup\register_windows_tasks.ps1"),
         "-Workspace", $workspacePath,
         "-PythonPath", $venvPython,
         "-RunAs", $RunAs

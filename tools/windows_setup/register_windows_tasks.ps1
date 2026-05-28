@@ -1,5 +1,5 @@
 param(
-    [string]$Workspace = (Split-Path -Parent $PSScriptRoot),
+    [string]$Workspace = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
     [string]$PythonPath = "",
     [string]$TaskPrefix = "AutoTrading",
     [ValidateSet("CurrentUser", "System")]

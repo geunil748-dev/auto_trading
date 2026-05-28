@@ -10,7 +10,7 @@
 ```powershell
 git clone https://github.com/geunil748-dev/auto_trading.git C:\auto_trading
 cd C:\auto_trading
-.\tools\setup_windows.ps1
+.\tools\windows_setup\setup_windows.ps1
 ```
 
 위 명령은 `.env.example`을 `.env`로 복사하고, `.venv` 가상환경을 만든 뒤
@@ -20,21 +20,24 @@ cd C:\auto_trading
 DB 테이블까지 초기화하려면 `.env` 입력 후 아래 명령을 실행합니다.
 
 ```powershell
-.\tools\setup_windows.ps1 -SkipInstall -InitDb
+.\tools\windows_setup\setup_windows.ps1 -SkipInstall -InitDb
 ```
 
 로그인 시 자동 실행까지 등록하려면 일반 PC에서는 현재 사용자 방식으로 등록합니다.
 
 ```powershell
-.\tools\setup_windows.ps1 -SkipInstall -RegisterTasks -ReplaceTasks -StartNow
+.\tools\windows_setup\setup_windows.ps1 -SkipInstall -RegisterTasks -ReplaceTasks -StartNow
 ```
 
 AWS Windows 서버에서 관리자 PowerShell을 사용할 수 있다면 부팅 시 자동 실행되는
 SYSTEM 방식으로 등록할 수 있습니다.
 
 ```powershell
-.\tools\setup_windows.ps1 -SkipInstall -RegisterTasks -RunAs System -ReplaceTasks -StartNow
+.\tools\windows_setup\setup_windows.ps1 -SkipInstall -RegisterTasks -RunAs System -ReplaceTasks -StartNow
 ```
+
+자세한 실행 순서는 [tools/windows_setup/README.txt](tools/windows_setup/README.txt)에도
+별도로 정리되어 있습니다.
 
 자동 실행 작업은 두 개입니다.
 
