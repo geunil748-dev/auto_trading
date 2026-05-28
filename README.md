@@ -2,6 +2,48 @@
 
 주식 자동 매도/매수 모의투자 시스템입니다.
 
+## 빠른 시작: Windows / AWS Windows
+
+새 PC나 AWS Windows 서버에서 저장소를 받은 뒤 아래 순서로 진행합니다.
+민감정보가 들어가는 `.env`는 GitHub에 올리지 않고 서버마다 직접 만듭니다.
+
+```powershell
+git clone https://github.com/geunil748-dev/auto_trading.git C:\auto_trading
+cd C:\auto_trading
+.\tools\setup_windows.ps1
+```
+
+위 명령은 `.env.example`을 `.env`로 복사하고, `.venv` 가상환경을 만든 뒤
+필요한 Python 패키지를 설치합니다. 그 다음 `.env`에 MSSQL, KIS 모의투자,
+모니터 토큰 값을 입력합니다.
+
+DB 테이블까지 초기화하려면 `.env` 입력 후 아래 명령을 실행합니다.
+
+```powershell
+.\tools\setup_windows.ps1 -SkipInstall -InitDb
+```
+
+로그인 시 자동 실행까지 등록하려면 일반 PC에서는 현재 사용자 방식으로 등록합니다.
+
+```powershell
+.\tools\setup_windows.ps1 -SkipInstall -RegisterTasks -ReplaceTasks -StartNow
+```
+
+AWS Windows 서버에서 관리자 PowerShell을 사용할 수 있다면 부팅 시 자동 실행되는
+SYSTEM 방식으로 등록할 수 있습니다.
+
+```powershell
+.\tools\setup_windows.ps1 -SkipInstall -RegisterTasks -RunAs System -ReplaceTasks -StartNow
+```
+
+자동 실행 작업은 두 개입니다.
+
+- `AutoTrading-Monitor`: `http://서버주소:4174/` 모니터 서버
+- `AutoTrading-Scheduler`: 종목 수집, 매수/매도 판단, 장중 감시 스케줄러
+
+로컬 PC나 노트북에서 운영할 때는 장중 절전모드가 들어가지 않도록 전원 설정을
+꺼두어야 합니다.
+
 ## Trading Bot Phase 2
 
 This repository starts the mock-trading foundation described in the planning

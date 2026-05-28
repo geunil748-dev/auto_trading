@@ -1,5 +1,18 @@
 $workspace = Split-Path -Parent $PSScriptRoot
-$python = "C:\Users\admin\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+$defaultPython = "C:\Users\admin\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+$venvPython = Join-Path $workspace ".venv\Scripts\python.exe"
+$python = if ($env:AUTO_TRADING_PYTHON) {
+    $env:AUTO_TRADING_PYTHON
+}
+elseif (Test-Path -LiteralPath $venvPython) {
+    $venvPython
+}
+elseif (Test-Path -LiteralPath $defaultPython) {
+    $defaultPython
+}
+else {
+    "python"
+}
 $logDir = Join-Path $workspace "logs"
 $logPath = Join-Path $logDir "startup-monitor.log"
 
