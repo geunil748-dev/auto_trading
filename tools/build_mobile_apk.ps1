@@ -4,6 +4,30 @@ $root = Split-Path -Parent $PSScriptRoot
 $sourceDir = Join-Path $root "mobile\stock_monitor_app"
 $buildDir = "C:\Users\admin\develop\stock_monitor_app_build"
 $apiUrl = if ($args.Count -gt 0) { $args[0] } else { "http://10.0.2.2:4174/api/state" }
+$envPath = Join-Path $root ".env"
+
+function Read-DotEnvValue {
+    param(
+        [string]$Path,
+        [string]$Key
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return ""
+    }
+
+    $line = Get-Content -LiteralPath $Path -Encoding UTF8 |
+        Where-Object { $_ -match "^\s*$([regex]::Escape($Key))\s*=" } |
+        Select-Object -First 1
+    if (-not $line) {
+        return ""
+    }
+
+    $value = ($line -split "=", 2)[1].Trim()
+    return $value.Trim('"').Trim("'")
+}
+
+$monitorBearerToken = Read-DotEnvValue -Path $envPath -Key "MONITOR_BEARER_TOKEN"
 
 $defaultJavaHome = "C:\Users\admin\develop\jdk-17"
 $defaultAndroidHome = "C:\Users\admin\develop\android-sdk"
@@ -68,7 +92,17 @@ try {
     }
 
     & $flutter pub get
-    & $flutter build apk --release --dart-define="MONITOR_API_URL=$apiUrl"
+    $buildArgs = @(
+        "build",
+        "apk",
+        "--release",
+        "--dart-define=MONITOR_API_URL=$apiUrl"
+    )
+    if ($monitorBearerToken) {
+        $buildArgs += "--dart-define=MONITOR_BEARER_TOKEN=$monitorBearerToken"
+    }
+
+    & $flutter @buildArgs
     if ($LASTEXITCODE -ne 0) {
         throw "APK 빌드 실패: Flutter 출력의 Android SDK/JDK 설정을 확인하세요."
     }
