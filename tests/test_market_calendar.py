@@ -5,6 +5,7 @@ from trading_bot.market_calendar import (
     is_current_us_regular_session,
     is_us_trading_day,
 )
+from trading_bot.trading_date import current_trade_date
 
 
 def test_market_calendar_skips_weekends_and_2026_holidays() -> None:
@@ -28,4 +29,23 @@ def test_regular_session_uses_new_york_market_hours() -> None:
     )
     assert not is_current_us_regular_session(
         datetime(2026, 5, 22, 20, 0, tzinfo=timezone.utc)
+    )
+
+
+def test_current_trade_date_defaults_to_us_market_date(monkeypatch) -> None:
+    monkeypatch.delenv("TRADING_DAY_MODE", raising=False)
+
+    assert current_trade_date(datetime(2026, 5, 23, 3, tzinfo=timezone.utc)) == date(
+        2026, 5, 22
+    )
+
+
+def test_current_trade_date_can_use_korea_session(monkeypatch) -> None:
+    monkeypatch.setenv("TRADING_DAY_MODE", "korea_session")
+
+    assert current_trade_date(datetime(2026, 5, 29, 14, tzinfo=timezone.utc)) == date(
+        2026, 5, 29
+    )
+    assert current_trade_date(datetime(2026, 5, 30, 12, tzinfo=timezone.utc)) == date(
+        2026, 5, 29
     )

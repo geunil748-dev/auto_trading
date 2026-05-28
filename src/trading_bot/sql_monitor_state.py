@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from datetime import date
 from typing import Any
 
 from trading_bot.repositories import SqlServerMonitorRepository
+from trading_bot.trading_date import current_trade_date
 
 
 class SqlMonitorStateSource:
@@ -12,14 +14,21 @@ class SqlMonitorStateSource:
 
     def read(self) -> dict[str, object]:
         scores = {row[0]: row for row in self.repository.latest_scores()}
+        account = self.repository.latest_account(is_mock=True)
+        real_account = self.repository.latest_account(is_mock=False)
+        realized_profit = self.repository.today_realized_profit()
+        realized_profit_rate = self.repository.today_realized_profit_rate()
         return {
+            "date": current_trade_date().isoformat(),
+            "account": _account(account, realized_profit, realized_profit_rate),
+            "realAccount": _account(real_account, 0.0),
             "targets": [
                 _target(row, scores.get(row[0]))
                 for row in self.repository.latest_targets()
             ],
             "positions": [],
             "holdings": [_holding(row) for row in self.repository.latest_holdings()],
-            "orders": [],
+            "orders": [_order(row) for row in self.repository.latest_orders()],
             "fills": [_fill(row) for row in self.repository.latest_fills()],
             "gates": [
                 ["저장소", "MSSQL"],
@@ -27,53 +36,76 @@ class SqlMonitorStateSource:
             ],
             "logs": [_log(row) for row in self.repository.latest_logs()],
             "trades": [_trade(row) for row in self.repository.latest_trades()],
-            "summary": _summary(self.repository.today_realized_profit()),
+            "summary": _summary(realized_profit),
             "chart": {"closes": [], "movingAverage": []},
         }
 
     def read_history(self, trade_date: date) -> dict[str, object]:
         scores = {row[0]: row for row in self.repository.history_scores(trade_date)}
+        account = self.repository.history_account(trade_date)
+        realized_profit = self.repository.history_realized_profit(trade_date)
+        realized_profit_rate = self.repository.history_realized_profit_rate(trade_date)
         return {
             "date": trade_date.isoformat(),
+            "account": _account(account, realized_profit, realized_profit_rate),
             "targets": [
                 _target(row, scores.get(row[0]))
                 for row in self.repository.history_targets(trade_date)
             ],
             "holdings": [_holding(row) for row in self.repository.history_holdings(trade_date)],
-            "orders": [],
+            "orders": [_order(row) for row in self.repository.history_orders(trade_date)],
             "fills": [_fill(row) for row in self.repository.history_fills(trade_date)],
             "logs": [_log(row) for row in self.repository.history_logs(trade_date)],
             "trades": [_trade(row) for row in self.repository.history_trades(trade_date)],
-            "summary": _summary(self.repository.history_realized_profit(trade_date)),
+            "runSummaries": [
+                _run_summary(row)
+                for row in self.repository.history_run_summaries(trade_date)
+            ],
+            "summary": _summary(realized_profit),
         }
 
 
 def _target(row: tuple[Any, ...], score: tuple[Any, ...] | None) -> list[str]:
-    if len(row) >= 5:
+    if len(row) >= 6:
+        ticker, ticker_name, price_usd, opening_volume, volume_ratio, price_change = row[:6]
+        price_text = _usd_or_dash(price_usd)
+    elif len(row) >= 5:
         ticker, ticker_name, price_usd, volume_ratio, price_change = row[:5]
-        price_text = _usd(_number(price_usd))
+        opening_volume = None
+        price_text = _usd_or_dash(price_usd)
     elif len(row) >= 4:
         ticker, ticker_name, volume_ratio, price_change = row[:4]
+        opening_volume = None
         price_text = "-"
     else:
         ticker, volume_ratio, price_change = row
         ticker_name = "-"
+        opening_volume = None
         price_text = "-"
     score_value = (
         str(round(_fallback_filter_score(volume_ratio, price_change)))
         if score is None
         else str(round(_number(score[3])))
     )
-    state = "필터점수" if score is None else ("선정" if score[4] else "제외")
+    state = _target_decision(score)
     return [
         str(ticker),
         str(ticker_name or "-"),
         price_text,
+        _volume_text(opening_volume),
         f"{_number(volume_ratio):.0f}%",
         f"{_number(price_change):+.1f}%",
         score_value,
         state,
     ]
+
+
+def _target_decision(score: tuple[Any, ...] | None) -> str:
+    if score is None:
+        return "점수 계산 전"
+    if bool(score[4]):
+        return "최종 선정"
+    return "선정점수/순위 미달"
 
 
 def _holding(row: tuple[Any, ...]) -> dict[str, str]:
@@ -89,6 +121,54 @@ def _holding(row: tuple[Any, ...]) -> dict[str, str]:
     }
 
 
+def _account(
+    row: tuple[Any, ...] | None,
+    realized_profit_usd: float,
+    realized_profit_rate: float | None = None,
+) -> dict[str, str]:
+    if row is None:
+        return {
+            "cashUsd": "-",
+            "equityUsd": "-",
+            "investedUsd": "-",
+            "cashKrw": "-",
+            "equityKrw": "-",
+            "openPositions": "-",
+            "dailyProfitRate": "-" if realized_profit_rate is None else f"{realized_profit_rate:.2f}%",
+            "realizedProfitUsd": _signed_usd(realized_profit_usd),
+        }
+    cash, equity, invested, open_positions, daily_profit_rate, realized = row[:6]
+    cash_krw = row[6] if len(row) > 6 else None
+    equity_krw = row[7] if len(row) > 7 else None
+    realized_value = realized_profit_usd if realized_profit_usd else _number(realized)
+    rate_value = _number(daily_profit_rate) if realized_profit_rate is None else realized_profit_rate
+    return {
+        "cashUsd": _usd(_number(cash)),
+        "equityUsd": _usd(_number(equity)),
+        "investedUsd": _usd(_number(invested)),
+        "cashKrw": _krw_or_dash(cash_krw),
+        "equityKrw": _krw_or_dash(equity_krw),
+        "openPositions": str(int(_number(open_positions))),
+        "dailyProfitRate": f"{rate_value:.2f}%",
+        "realizedProfitUsd": _signed_usd(realized_value),
+    }
+
+
+def _order(row: tuple[Any, ...]) -> dict[str, str]:
+    order_date, order_time, ticker, ticker_name, side, quantity, price, unfilled, order_no = row[:9]
+    return {
+        "date": _date_text(order_date),
+        "time": "" if order_time is None else str(order_time),
+        "ticker": str(ticker),
+        "name": str(ticker_name or ""),
+        "side": _side_text(side),
+        "quantity": str(quantity),
+        "price": _usd(_number(price)),
+        "unfilled": str(unfilled),
+        "orderNo": "" if order_no is None else str(order_no),
+    }
+
+
 def _log(row: tuple[Any, ...]) -> list[str]:
     created_at, level, message = row
     timestamp = created_at.strftime("%H:%M:%S") if hasattr(created_at, "strftime") else str(created_at)
@@ -96,11 +176,29 @@ def _log(row: tuple[Any, ...]) -> list[str]:
 
 
 def _trade(row: tuple[Any, ...]) -> dict[str, str]:
-    ticker, order_type, order_price, quantity, exit_reason = row[:5]
-    profit_usd = row[5] if len(row) > 5 else None
-    profit_rate = row[6] if len(row) > 6 else None
+    if len(row) >= 10:
+        trade_date, created_at, ticker, ticker_name, order_type, order_price, quantity, exit_reason = row[:8]
+        profit_usd = row[8]
+        profit_rate = row[9]
+    elif len(row) >= 9:
+        trade_date, created_at, ticker, order_type, order_price, quantity, exit_reason = row[:7]
+        ticker_name = ""
+        profit_usd = row[7]
+        profit_rate = row[8]
+    else:
+        trade_date, created_at = None, None
+        ticker, order_type, order_price, quantity, exit_reason = row[:5]
+        ticker_name = ""
+        profit_usd = row[5] if len(row) > 5 else None
+        profit_rate = row[6] if len(row) > 6 else None
+    date_text = _date_text(trade_date) if trade_date is not None else ""
+    time_text = _time_text(created_at)
     return {
+        "date": date_text,
+        "time": time_text,
+        "orderedAt": f"{date_text} {time_text}".strip(),
         "ticker": str(ticker),
+        "name": str(ticker_name or ""),
         "type": _side_text(order_type),
         "price": f"${_number(order_price):.2f}",
         "quantity": str(quantity),
@@ -131,6 +229,68 @@ def _fill(row: tuple[Any, ...]) -> dict[str, str]:
     }
 
 
+def _run_summary(row: tuple[Any, ...]) -> dict[str, str]:
+    trade_date = row[0]
+    mode = row[1]
+    settings_json = row[2]
+    realized_profit = row[3]
+    realized_rate = row[4]
+    eod_sell_count = row[5]
+    cancelled_count = row[6]
+    buy_fill_count = row[7] if len(row) > 8 else 0
+    sell_fill_count = row[8] if len(row) > 8 else 0
+    updated_at = row[9] if len(row) > 8 else row[7]
+    settings = _settings_text(settings_json)
+    return {
+        "date": _date_text(trade_date),
+        "updatedAt": _time_text(updated_at),
+        "mode": _mode_text(mode),
+        "settings": settings,
+        "profitUsd": _signed_usd(_number(realized_profit)),
+        "profitRate": f"{_number(realized_rate):+.2f}%",
+        "eodSellCount": str(int(_number(eod_sell_count))),
+        "cancelledOrderCount": str(int(_number(cancelled_count))),
+        "buyFillCount": str(int(_number(buy_fill_count))),
+        "sellFillCount": str(int(_number(sell_fill_count))),
+    }
+
+
+def _settings_text(settings_json: Any) -> str:
+    try:
+        settings = json.loads(str(settings_json or "{}"))
+    except json.JSONDecodeError:
+        return "-"
+    labels = [
+        ("손절", "stopLossPercent", "%"),
+        ("익절", "takeProfitPercent", "%"),
+        ("선정점수", "minTotalScore", "점"),
+        ("가격", "minPriceUsd", ""),
+        ("최고가", "maxPriceUsd", ""),
+        ("상승률", "minOpeningPriceChangePercent", "%"),
+        ("거래량", "minVolumeRatio", "배"),
+        ("갭", "maxOpeningGapPercent", "%"),
+    ]
+    parts = []
+    for label, key, suffix in labels:
+        if key not in settings:
+            continue
+        value = settings[key]
+        if key == "minPriceUsd":
+            max_value = settings.get("maxPriceUsd")
+            parts.append(f"가격 ${_compact_number(value)}~${_compact_number(max_value)}")
+        elif key == "maxPriceUsd":
+            continue
+        else:
+            parts.append(f"{label} {_compact_number(value)}{suffix}")
+    return " · ".join(parts) or "-"
+
+
+def _compact_number(value: Any) -> str:
+    number = _number(value)
+    text = f"{number:.2f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
 def _date_text(value: Any) -> str:
     if all(hasattr(value, field) for field in ("Year", "Month", "Day")):
         return f"{value.Year:04d}-{value.Month:02d}-{value.Day:02d}"
@@ -139,13 +299,28 @@ def _date_text(value: Any) -> str:
     return str(value)
 
 
+def _time_text(value: Any) -> str:
+    if hasattr(value, "strftime"):
+        try:
+            return value.strftime("%H:%M:%S")
+        except Exception:
+            pass
+    if all(hasattr(value, field) for field in ("Hour", "Minute", "Second")):
+        return f"{value.Hour:02d}:{value.Minute:02d}:{value.Second:02d}"
+    raw = str(value or "")
+    return raw[11:19] if len(raw) >= 19 and raw[10] == " " else raw
+
+
 def _summary(realized_profit_usd: float) -> dict[str, str]:
     return {"realizedProfitUsd": _signed_usd(realized_profit_usd)}
 
 
 def _signed_usd(value: float) -> str:
-    sign = "+" if value > 0 else ""
-    return f"{sign}${value:,.2f}"
+    if value > 0:
+        return f"+${value:,.2f}"
+    if value < 0:
+        return f"-${abs(value):,.2f}"
+    return "$0.00"
 
 
 def _usd(value: float) -> str:
@@ -155,6 +330,22 @@ def _usd(value: float) -> str:
 def _usd_or_dash(value: Any) -> str:
     number = _number(value)
     return "-" if number <= 0 else _usd(number)
+
+
+def _volume_text(value: Any) -> str:
+    volume = _number(value)
+    if volume <= 0:
+        return "-"
+    if volume >= 100_000_000:
+        return f"{volume / 100_000_000:.1f}억주"
+    if volume >= 10_000:
+        return f"{volume / 10_000:.0f}만주"
+    return f"{volume:,.0f}주"
+
+
+def _krw_or_dash(value: Any) -> str:
+    number = _number(value)
+    return "-" if number <= 0 else f"{number:,.0f}원"
 
 
 def _number(value: Any) -> float:
@@ -227,19 +418,34 @@ def _reason_text(reason: str) -> str:
     return _REASON_TEXT.get(reason.strip(), reason.strip())
 
 
+def _mode_text(mode: Any) -> str:
+    mapping = {
+        "refresh": "15분마다 새 후보 수집",
+        "fixed": "장초반 후보 고정 감시",
+        "hybrid": "장초반+15분 새로운 종목 수집",
+    }
+    return mapping.get(str(mode or "").strip().lower(), str(mode or "-"))
+
+
 _REASON_TEXT = {
     "ACCOUNT_EXPOSURE_LIMIT": "계좌 투자비중 초과",
     "DAILY_ACCOUNT_LOSS": "일일 손실 제한 도달",
+    "EOD": "장마감 매도",
     "FX_VOLATILITY": "환율 변동성 초과",
     "INVALID_ACCOUNT_EQUITY": "계좌 평가금액 확인 불가",
     "INVALID_ORDER_VALUE": "주문 금액 오류",
     "LOW_OPENING_CHANGE": "장초반 상승률 부족",
     "LOW_OPENING_VOLUME": "장초반 거래량 부족",
     "MARKET_BELOW_MA20": "나스닥 20일선 하회",
+    "MANUAL_SELL": "수동 매도",
+    "MANUAL_SELL_ALL": "전량 수동 매도",
     "MISSING_SNAPSHOT": "시세 스냅샷 없음",
     "OPENING_GAP": "시가 갭 과다",
     "OPEN_POSITION_LIMIT": "최대 보유 종목 수 초과",
     "PENNY_STOCK": "가격 하한 미달",
     "POSITION_EXPOSURE_LIMIT": "종목별 투자비중 초과",
     "PRICE_CAP": "가격 상한 초과",
+    "STOP_LOSS": "손절",
+    "TAKE_PROFIT": "익절",
+    "TRAILING_STOP": "트레일링 스탑",
 }

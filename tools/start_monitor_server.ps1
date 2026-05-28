@@ -13,22 +13,35 @@ function Write-StartupLog {
 }
 
 # Windows PowerShell 5 reads UTF-8 without BOM inconsistently, so log text stays ASCII.
+$createdNew = $false
+$mutex = New-Object System.Threading.Mutex($true, "Local\AutoTradingMonitorServer", [ref]$createdNew)
+if (-not $createdNew) {
+    Write-StartupLog "monitor server launcher already running; exiting"
+    return
+}
+
 Start-Sleep -Seconds 20
 
-while ($true) {
-    try {
-        Set-Location -LiteralPath $workspace
-        $env:PYTHONPATH = Join-Path $workspace "src"
+try {
+    while ($true) {
+        try {
+            Set-Location -LiteralPath $workspace
+            $env:PYTHONPATH = Join-Path $workspace "src"
 
-        Write-StartupLog "monitor server starting"
-        & $python -m trading_bot serve-monitor --host 0.0.0.0 --port 4174 2>&1 |
-            ForEach-Object { Write-StartupLog $_.ToString() }
+            Write-StartupLog "monitor server starting"
+            & $python -m trading_bot serve-monitor --host 0.0.0.0 --port 4174 2>&1 |
+                ForEach-Object { Write-StartupLog $_.ToString() }
 
-        Write-StartupLog "monitor server exited: $LASTEXITCODE"
+            Write-StartupLog "monitor server exited: $LASTEXITCODE"
+        }
+        catch {
+            Write-StartupLog "monitor server start error: $($_.Exception.Message)"
+        }
+
+        Start-Sleep -Seconds 15
     }
-    catch {
-        Write-StartupLog "monitor server start error: $($_.Exception.Message)"
-    }
-
-    Start-Sleep -Seconds 15
+}
+finally {
+    $mutex.ReleaseMutex()
+    $mutex.Dispose()
 }

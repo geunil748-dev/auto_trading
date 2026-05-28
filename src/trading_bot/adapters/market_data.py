@@ -66,6 +66,8 @@ class KisScreeningMarketData:
                     turnover_rank=self._volume_ranks[ticker],
                     gain_rank=self._gain_ranks[ticker],
                     name=_candidate_name(ticker, quote, self._names),
+                    opening_volume=opening_volume,
+                    average_volume_20d=average_volume,
                 )
             except Exception:
                 continue

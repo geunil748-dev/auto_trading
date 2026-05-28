@@ -14,7 +14,7 @@ from trading_bot.composition import (
     build_mock_buy_executor,
     build_mock_sell_executor,
 )
-from trading_bot.config import KisSettings, TradingSettings
+from trading_bot.config import KisSettings, TradingSettings, load_settings
 from trading_bot.daily_report import write_daily_report
 from trading_bot.database import pyodbc_connect_factory
 from trading_bot.fill_persistence import fill_records_from_monitor_rows
@@ -28,9 +28,12 @@ from trading_bot.market_calendar import (
 from trading_bot.models import PositionState
 from trading_bot.monitor_state import state_from_dry_run
 from trading_bot.order_cancellation import cancel_unfilled_orders
-from trading_bot.repositories import SqlServerDailyRepository
+from trading_bot.entry_planner import plan_buy_intents
+from trading_bot.repositories import SqlServerDailyRepository, SqlServerMonitorRepository
+from trading_bot.runtime import DryRunResult
 from trading_bot.schedule import DailyTasks
 from trading_bot.scheduled_messages import log_row, recheck_message, watch_message
+from trading_bot.trading_date import current_trade_date
 
 
 def live_mock_tasks(
@@ -40,6 +43,7 @@ def live_mock_tasks(
     trading_day: Callable[[], bool] = is_current_us_trading_day,
     regular_session: Callable[[], bool] = is_current_us_regular_session,
 ) -> DailyTasks:
+    # 스케줄러 안에서는 가장 최근 수집 결과를 들고 있다가 매수/감시 단계에서 재사용한다.
     latest = _LatestRunState()
 
     def prepare_day() -> str:
@@ -55,6 +59,9 @@ def live_mock_tasks(
         runtime, repository = build_live_dry_run(current_settings, kis_settings)
         latest.result = runtime.run()
         latest.repository = repository
+        latest.opening_result = latest.result
+        latest.opening_trade_date = current_trade_date()
+        latest.opening_fixed_mode = _candidate_mode(current_settings) in {"fixed", "hybrid"}
         monitor_state.write_text(
             json.dumps(state_from_dry_run(latest.result), indent=2, ensure_ascii=False),
             encoding="utf-8",
@@ -113,7 +120,17 @@ def live_mock_tasks(
             return "Skipped intraday recheck outside the regular US session."
         current_settings = _current_settings(settings)
         runtime, repository = build_live_dry_run(current_settings, kis_settings)
-        latest.result = runtime.run()
+        fixed_opening = _fixed_opening_result(latest, current_settings)
+        mode = _candidate_mode(current_settings)
+        if mode == "fixed" and fixed_opening is not None:
+            # 장초반 고정 모드에서는 기존 후보만 최신 가격 기준으로 재평가한다.
+            latest.result = _recheck_fixed_watchlist(runtime, fixed_opening, current_settings)
+        elif mode == "hybrid" and fixed_opening is not None:
+            # 하이브리드는 장초반 고정 후보와 15분 신규 후보 상위권을 합쳐 감시한다.
+            latest.result = _hybrid_recheck(runtime, fixed_opening, current_settings)
+        else:
+            # 15분 재수집 모드에서는 매번 새 후보를 수집해 점수를 다시 계산한다.
+            latest.result = runtime.run()
         latest.repository = repository
         positions = runtime.accounts.positions()
         unfilled = _unfilled_order_tickers(kis_settings)
@@ -180,6 +197,11 @@ def live_mock_tasks(
         _, exits = monitor.poll(accounts.positions(), end_of_day=True)
         trades = build_mock_sell_executor(kis_settings, repository).execute(exits)
         state = _write_live_state(monitor_state, kis_settings)
+        _save_daily_run_summary(
+            current_settings,
+            len(trades),
+            len(latest.cancelled_orders),
+        )
         report_path = write_daily_report(
             monitor_state.parent / "reports",
             current_us_market_date().strftime("%Y%m%d"),
@@ -204,6 +226,37 @@ def live_mock_tasks(
     )
 
 
+def _save_daily_run_summary(
+    settings: TradingSettings,
+    eod_sell_count: int | None,
+    cancelled_order_count: int | None,
+) -> None:
+    try:
+        connect = pyodbc_connect_factory()
+        monitor_repository = SqlServerMonitorRepository(connect)
+        daily_repository = SqlServerDailyRepository(connect)
+        trade_date = current_trade_date()
+        buy_count, sell_count = monitor_repository.history_fill_counts(trade_date)
+        daily_repository.save_daily_run_summary(
+            trade_date,
+            settings,
+            monitor_repository.history_realized_profit(trade_date),
+            monitor_repository.history_realized_profit_rate(trade_date),
+            eod_sell_count,
+            cancelled_order_count,
+            buy_count,
+            sell_count,
+        )
+    except Exception:
+        return
+
+
+def _candidate_mode(settings: TradingSettings) -> str:
+    if settings.candidate_selection_mode != "refresh":
+        return settings.candidate_selection_mode
+    return "refresh" if settings.refresh_intraday_candidates else "fixed"
+
+
 class _LatestRunState:
     def __init__(self) -> None:
         self.result = None
@@ -214,6 +267,73 @@ class _LatestRunState:
         self.add_on_tickers: set[str] = set()
         self.intraday_entry_rounds = 0
         self.cancelled_orders: list[dict[str, object]] = []
+        self.opening_result = None
+        self.opening_trade_date = None
+        self.opening_fixed_mode = False
+
+
+def _fixed_opening_result(
+    latest: _LatestRunState,
+    settings: TradingSettings,
+) -> DryRunResult | None:
+    if _candidate_mode(settings) not in {"fixed", "hybrid"}:
+        return None
+    if not latest.opening_fixed_mode:
+        return None
+    if latest.opening_trade_date != current_trade_date():
+        return None
+    # 장초반 고정 모드는 22:35~22:40에 수집한 후보만 장중에 계속 감시한다.
+    return latest.opening_result
+
+
+def _recheck_fixed_watchlist(runtime, latest_result: DryRunResult, settings: TradingSettings) -> DryRunResult:
+    account = runtime.accounts.current_account()
+    selected = latest_result.scoring.selected[: settings.opening_fixed_candidate_limit]
+    breakout_inputs = {
+        item.ticker: runtime.breakout.breakout_input(item.ticker)
+        for item in selected
+    }
+    intents = plan_buy_intents(
+        selected,
+        breakout_inputs,
+        account,
+        settings,
+    )
+    return DryRunResult(account, latest_result.scoring, tuple(intents))
+
+
+def _hybrid_recheck(
+    runtime,
+    opening_result: DryRunResult,
+    settings: TradingSettings,
+) -> DryRunResult:
+    refreshed = runtime.run()
+    account = runtime.accounts.current_account()
+    selected = _hybrid_selected_scores(opening_result, refreshed, settings)
+    breakout_inputs = {
+        item.ticker: runtime.breakout.breakout_input(item.ticker)
+        for item in selected
+    }
+    intents = plan_buy_intents(selected, breakout_inputs, account, settings)
+    return DryRunResult(account, refreshed.scoring, tuple(intents))
+
+
+def _hybrid_selected_scores(
+    opening_result: DryRunResult,
+    refreshed: DryRunResult,
+    settings: TradingSettings,
+) -> tuple:
+    combined = {}
+    for score in opening_result.scoring.selected[: settings.opening_fixed_candidate_limit]:
+        combined[score.ticker] = score
+    intraday_ranked = sorted(
+        refreshed.scoring.selected,
+        key=lambda item: (-item.total_score, item.ticker),
+    )
+    for score in intraday_ranked[: settings.intraday_refresh_candidate_limit]:
+        combined[score.ticker] = score
+    ranked = sorted(combined.values(), key=lambda item: (-item.total_score, item.ticker))
+    return tuple(ranked[: settings.hybrid_candidate_limit])
 
 
 def _write_live_state(
@@ -242,11 +362,17 @@ def _write_live_state(
 
 
 def _persist_live_snapshot(live_state: dict[str, object]) -> str:
+    account = live_state.get("account", {})
     fills = live_state.get("fills", [])
     holdings = live_state.get("holdings", [])
+    orders = live_state.get("orders", [])
     try:
         repository = SqlServerDailyRepository(pyodbc_connect_factory())
-        trade_date = current_us_market_date()
+        trade_date = current_trade_date()
+        if isinstance(account, dict):
+            repository.save_account_snapshot(account, trade_date)
+        if isinstance(orders, list):
+            repository.save_order_snapshot(orders, trade_date)
         if isinstance(holdings, list):
             repository.save_holdings(holdings, trade_date)
         if isinstance(fills, list):
@@ -254,6 +380,8 @@ def _persist_live_snapshot(live_state: dict[str, object]) -> str:
             records = fill_records_from_monitor_rows(fills, entry_prices)
             if records:
                 repository.save_fills(records)
+                if any(item.profit_usd is not None for item in records):
+                    _save_daily_run_summary(load_settings(), None, None)
     except ValueError:
         return ""
     except Exception as exc:

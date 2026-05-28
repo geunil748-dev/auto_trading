@@ -5,15 +5,76 @@ BEGIN
         trade_date DATE NOT NULL,
         ticker VARCHAR(10) NOT NULL,
         ticker_name NVARCHAR(100),
+        opening_volume BIGINT,
+        average_volume_20d BIGINT,
         volume_ratio DECIMAL(6, 2),
         price_change DECIMAL(6, 2),
         created_at DATETIME DEFAULT GETDATE()
     );
 END;
 
+IF OBJECT_ID(N'dbo.daily_run_summary', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.daily_run_summary (
+        id INT IDENTITY PRIMARY KEY,
+        trade_date DATE NOT NULL,
+        candidate_selection_mode VARCHAR(20) NOT NULL,
+        settings_json NVARCHAR(MAX),
+        realized_profit_usd DECIMAL(14, 2),
+    realized_profit_rate DECIMAL(8, 4),
+    eod_sell_count INT DEFAULT 0,
+    cancelled_order_count INT DEFAULT 0,
+    buy_fill_count INT DEFAULT 0,
+    sell_fill_count INT DEFAULT 0,
+    is_mock BIT DEFAULT 1,
+        created_at DATETIME DEFAULT GETDATE(),
+        updated_at DATETIME DEFAULT GETDATE()
+    );
+END;
+
+IF COL_LENGTH('dbo.daily_run_summary', 'candidate_selection_mode') IS NULL
+    ALTER TABLE dbo.daily_run_summary ADD candidate_selection_mode VARCHAR(20) NULL;
+
+IF COL_LENGTH('dbo.daily_run_summary', 'settings_json') IS NULL
+    ALTER TABLE dbo.daily_run_summary ADD settings_json NVARCHAR(MAX) NULL;
+
+IF COL_LENGTH('dbo.daily_run_summary', 'realized_profit_usd') IS NULL
+    ALTER TABLE dbo.daily_run_summary ADD realized_profit_usd DECIMAL(14, 2) NULL;
+
+IF COL_LENGTH('dbo.daily_run_summary', 'realized_profit_rate') IS NULL
+    ALTER TABLE dbo.daily_run_summary ADD realized_profit_rate DECIMAL(8, 4) NULL;
+
+IF COL_LENGTH('dbo.daily_run_summary', 'eod_sell_count') IS NULL
+    ALTER TABLE dbo.daily_run_summary ADD eod_sell_count INT DEFAULT 0;
+
+IF COL_LENGTH('dbo.daily_run_summary', 'cancelled_order_count') IS NULL
+    ALTER TABLE dbo.daily_run_summary ADD cancelled_order_count INT DEFAULT 0;
+
+IF COL_LENGTH('dbo.daily_run_summary', 'buy_fill_count') IS NULL
+    ALTER TABLE dbo.daily_run_summary ADD buy_fill_count INT DEFAULT 0;
+
+IF COL_LENGTH('dbo.daily_run_summary', 'sell_fill_count') IS NULL
+    ALTER TABLE dbo.daily_run_summary ADD sell_fill_count INT DEFAULT 0;
+
+IF COL_LENGTH('dbo.daily_run_summary', 'is_mock') IS NULL
+    ALTER TABLE dbo.daily_run_summary ADD is_mock BIT DEFAULT 1;
+
+IF COL_LENGTH('dbo.daily_run_summary', 'updated_at') IS NULL
+    ALTER TABLE dbo.daily_run_summary ADD updated_at DATETIME DEFAULT GETDATE();
+
 IF COL_LENGTH('dbo.daily_target', 'ticker_name') IS NULL
 BEGIN
     ALTER TABLE dbo.daily_target ADD ticker_name NVARCHAR(100) NULL;
+END;
+
+IF COL_LENGTH('dbo.daily_target', 'opening_volume') IS NULL
+BEGIN
+    ALTER TABLE dbo.daily_target ADD opening_volume BIGINT NULL;
+END;
+
+IF COL_LENGTH('dbo.daily_target', 'average_volume_20d') IS NULL
+BEGIN
+    ALTER TABLE dbo.daily_target ADD average_volume_20d BIGINT NULL;
 END;
 
 ALTER TABLE dbo.daily_target ALTER COLUMN volume_ratio DECIMAL(12, 2) NULL;
@@ -27,16 +88,29 @@ BEGIN
         ticker VARCHAR(10) NOT NULL,
         ticker_name NVARCHAR(100),
         price_usd DECIMAL(12, 2),
+        opening_volume BIGINT,
+        average_volume_20d BIGINT,
         volume_ratio DECIMAL(12, 2),
         price_change DECIMAL(12, 2),
         created_at DATETIME DEFAULT GETDATE()
     );
 END;
 
+IF COL_LENGTH('dbo.listed_target_snapshot', 'opening_volume') IS NULL
+BEGIN
+    ALTER TABLE dbo.listed_target_snapshot ADD opening_volume BIGINT NULL;
+END;
+
+IF COL_LENGTH('dbo.listed_target_snapshot', 'average_volume_20d') IS NULL
+BEGIN
+    ALTER TABLE dbo.listed_target_snapshot ADD average_volume_20d BIGINT NULL;
+END;
+
 IF OBJECT_ID(N'dbo.holding_snapshot', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.holding_snapshot (
         id INT IDENTITY PRIMARY KEY,
+        trade_date DATE NOT NULL,
         snapshot_date DATE NOT NULL,
         ticker VARCHAR(10) NOT NULL,
         ticker_name NVARCHAR(100),
@@ -47,6 +121,107 @@ BEGIN
         total_price DECIMAL(14, 2),
         is_mock BIT DEFAULT 1,
         created_at DATETIME DEFAULT GETDATE()
+    );
+END;
+
+IF COL_LENGTH('dbo.holding_snapshot', 'trade_date') IS NULL
+BEGIN
+    ALTER TABLE dbo.holding_snapshot ADD trade_date DATE NULL;
+END;
+
+EXEC(N'
+UPDATE dbo.holding_snapshot
+SET trade_date = snapshot_date
+WHERE trade_date IS NULL;
+');
+
+IF OBJECT_ID(N'dbo.account_snapshot', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.account_snapshot (
+        id INT IDENTITY PRIMARY KEY,
+        trade_date DATE NOT NULL,
+        snapshot_date DATE NOT NULL,
+        cash_usd DECIMAL(14, 2),
+        equity_usd DECIMAL(14, 2),
+        invested_usd DECIMAL(14, 2),
+        open_positions INT,
+        daily_profit_rate DECIMAL(8, 4),
+        realized_profit_usd DECIMAL(14, 2),
+        is_mock BIT DEFAULT 1,
+        created_at DATETIME DEFAULT GETDATE()
+    );
+END;
+
+IF COL_LENGTH('dbo.account_snapshot', 'trade_date') IS NULL
+BEGIN
+    ALTER TABLE dbo.account_snapshot ADD trade_date DATE NULL;
+END;
+
+EXEC(N'
+UPDATE dbo.account_snapshot
+SET trade_date = snapshot_date
+WHERE trade_date IS NULL;
+');
+
+IF OBJECT_ID(N'dbo.account_current', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.account_current (
+        account_type VARCHAR(10) NOT NULL PRIMARY KEY,
+        account_label NVARCHAR(30) NOT NULL,
+        trade_date DATE,
+        cash_usd DECIMAL(14, 2),
+        equity_usd DECIMAL(14, 2),
+        invested_usd DECIMAL(14, 2),
+        cash_krw DECIMAL(18, 2),
+        equity_krw DECIMAL(18, 2),
+        open_positions INT,
+        daily_profit_rate DECIMAL(8, 4),
+        realized_profit_usd DECIMAL(14, 2),
+        updated_at DATETIME DEFAULT GETDATE()
+    );
+END;
+
+IF COL_LENGTH('dbo.account_current', 'trade_date') IS NULL
+BEGIN
+    ALTER TABLE dbo.account_current ADD trade_date DATE NULL;
+END;
+
+IF OBJECT_ID(N'dbo.order_snapshot', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.order_snapshot (
+        id INT IDENTITY PRIMARY KEY,
+        trade_date DATE NOT NULL,
+        order_date DATE NOT NULL,
+        order_time VARCHAR(8),
+        ticker VARCHAR(10) NOT NULL,
+        ticker_name NVARCHAR(100),
+        side NVARCHAR(20),
+        quantity INT,
+        order_price DECIMAL(12, 2),
+        unfilled_quantity INT,
+        order_no VARCHAR(30),
+        is_mock BIT DEFAULT 1,
+        created_at DATETIME DEFAULT GETDATE()
+    );
+END;
+
+IF COL_LENGTH('dbo.order_snapshot', 'trade_date') IS NULL
+BEGIN
+    ALTER TABLE dbo.order_snapshot ADD trade_date DATE NULL;
+END;
+
+EXEC(N'
+UPDATE dbo.order_snapshot
+SET trade_date = order_date
+WHERE trade_date IS NULL;
+');
+
+IF OBJECT_ID(N'dbo.runtime_setting', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.runtime_setting (
+        setting_key VARCHAR(80) NOT NULL PRIMARY KEY,
+        setting_value FLOAT NOT NULL,
+        updated_at DATETIME DEFAULT GETDATE()
     );
 END;
 
@@ -86,6 +261,7 @@ BEGIN
         id INT IDENTITY PRIMARY KEY,
         trade_date DATE NOT NULL,
         ticker VARCHAR(10) NOT NULL,
+        ticker_name NVARCHAR(100),
         order_type VARCHAR(4) NOT NULL,
         order_price DECIMAL(10, 2),
         exec_price DECIMAL(10, 2),
@@ -107,10 +283,16 @@ BEGIN
     ALTER TABLE dbo.trade_history ADD entry_price DECIMAL(10, 2) NULL;
 END;
 
+IF COL_LENGTH('dbo.trade_history', 'ticker_name') IS NULL
+BEGIN
+    ALTER TABLE dbo.trade_history ADD ticker_name NVARCHAR(100) NULL;
+END;
+
 IF OBJECT_ID(N'dbo.fill_history', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.fill_history (
         id INT IDENTITY PRIMARY KEY,
+        trade_date DATE NOT NULL,
         fill_date DATE NOT NULL,
         fill_time VARCHAR(8),
         ticker VARCHAR(10) NOT NULL,
@@ -127,6 +309,17 @@ BEGIN
     );
 END;
 
+IF COL_LENGTH('dbo.fill_history', 'trade_date') IS NULL
+BEGIN
+    ALTER TABLE dbo.fill_history ADD trade_date DATE NULL;
+END;
+
+EXEC(N'
+UPDATE dbo.fill_history
+SET trade_date = fill_date
+WHERE trade_date IS NULL;
+');
+
 IF COL_LENGTH('dbo.fill_history', 'profit_usd') IS NULL
 BEGIN
     ALTER TABLE dbo.fill_history ADD profit_usd DECIMAL(10, 2) NULL;
@@ -137,13 +330,57 @@ BEGIN
     ALTER TABLE dbo.fill_history ADD profit_rate DECIMAL(8, 4) NULL;
 END;
 
+EXEC(N'
+UPDATE th
+SET ticker_name = COALESCE(fh.ticker_name, lts.ticker_name, dt.ticker_name)
+FROM dbo.trade_history th
+OUTER APPLY (
+    SELECT TOP (1) ticker_name
+    FROM dbo.fill_history
+    WHERE ticker = th.ticker
+      AND ticker_name IS NOT NULL
+      AND ticker_name <> ''''
+    ORDER BY fill_date DESC, created_at DESC
+) fh
+OUTER APPLY (
+    SELECT TOP (1) ticker_name
+    FROM dbo.listed_target_snapshot
+    WHERE ticker = th.ticker
+      AND ticker_name IS NOT NULL
+      AND ticker_name <> ''''
+    ORDER BY trade_date DESC, created_at DESC
+) lts
+OUTER APPLY (
+    SELECT TOP (1) ticker_name
+    FROM dbo.daily_target
+    WHERE ticker = th.ticker
+      AND ticker_name IS NOT NULL
+      AND ticker_name <> ''''
+    ORDER BY trade_date DESC, created_at DESC
+) dt
+WHERE (th.ticker_name IS NULL OR th.ticker_name = '''')
+  AND COALESCE(fh.ticker_name, lts.ticker_name, dt.ticker_name) IS NOT NULL;
+');
+
 IF OBJECT_ID(N'dbo.bot_log', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.bot_log (
         id INT IDENTITY PRIMARY KEY,
+        trade_date DATE,
         log_level VARCHAR(10),
         module VARCHAR(50),
         message NVARCHAR(500),
         created_at DATETIME DEFAULT GETDATE()
     );
 END;
+
+IF COL_LENGTH('dbo.bot_log', 'trade_date') IS NULL
+BEGIN
+    ALTER TABLE dbo.bot_log ADD trade_date DATE NULL;
+END;
+
+EXEC(N'
+UPDATE dbo.bot_log
+SET trade_date = CAST(created_at AS DATE)
+WHERE trade_date IS NULL;
+');

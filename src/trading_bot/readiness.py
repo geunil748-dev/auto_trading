@@ -15,9 +15,13 @@ from trading_bot.market_calendar import (
 
 REQUIRED_TABLES = {
     "bot_log",
+    "account_current",
+    "account_snapshot",
     "daily_target",
     "holding_snapshot",
     "listed_target_snapshot",
+    "order_snapshot",
+    "runtime_setting",
     "scoring",
     "trade_history",
 }

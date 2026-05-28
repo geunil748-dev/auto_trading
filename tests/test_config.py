@@ -63,7 +63,15 @@ def test_load_notification_settings_reads_optional_alert_channels(monkeypatch) -
 
 def test_runtime_risk_settings_override_env_values(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
-    save_runtime_risk_settings(7.5, 12.0, 40, 2, 120, 1.5, 0.8, 25)
+    for name in (
+        "MSSQL_DSN",
+        "MSSQL_HOST",
+        "MSSQL_DATABASE",
+        "MSSQL_USERNAME",
+        "MSSQL_PASSWORD",
+    ):
+        monkeypatch.setenv(name, "")
+    save_runtime_risk_settings(7.5, 12.0, 40, 2, 120, 1.5, 0.8, 25, False, "hybrid")
 
     settings = load_settings()
 
@@ -75,7 +83,11 @@ def test_runtime_risk_settings_override_env_values(tmp_path, monkeypatch) -> Non
     assert settings.min_opening_price_change == 0.015
     assert settings.min_volume_ratio == 0.8
     assert settings.max_opening_gap == 0.25
+    assert settings.refresh_intraday_candidates is True
+    assert settings.candidate_selection_mode == "hybrid"
     assert runtime_risk_settings_payload(settings)["stopLossPercent"] == 7.5
     assert runtime_risk_settings_payload(settings)["minTotalScore"] == 40
     assert runtime_risk_settings_payload(settings)["minOpeningPriceChangePercent"] == 1.5
     assert runtime_risk_settings_payload(settings)["maxOpeningGapPercent"] == 25
+    assert runtime_risk_settings_payload(settings)["refreshIntradayCandidates"] is True
+    assert runtime_risk_settings_payload(settings)["candidateSelectionMode"] == "hybrid"

@@ -31,7 +31,8 @@ def register_daily_timeline(
     close_timezone: str = "America/New_York",
 ) -> None:
     _daily(scheduler, tasks.prepare_day, "prepare_day", 9, 0, timezone)
-    _daily(scheduler, tasks.dry_run, "screen_and_score", 22, 35, timezone)
+    # 장 시작 직후 시세가 흔들릴 수 있어 22:35~22:40 동안 매분 후보를 다시 수집한다.
+    _daily(scheduler, tasks.dry_run, "screen_and_score", 22, "35-40", timezone)
     _daily(scheduler, tasks.mock_buy, "mock_buy", 22, 45, timezone)
     _daily(scheduler, tasks.refresh_orders, "refresh_orders", 22, 50, timezone)
     _minute(scheduler, tasks.intraday_watch, "intraday_watch")
@@ -45,7 +46,7 @@ def _daily(
     job: Job,
     job_id: str,
     hour: int,
-    minute: int,
+    minute: int | str,
     timezone: str,
 ) -> None:
     scheduler.add_job(

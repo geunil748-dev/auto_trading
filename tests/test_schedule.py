@@ -30,7 +30,7 @@ def test_daily_timeline_registers_planning_document_times_in_kst() -> None:
         if job[1] == "cron"
     ] == [
         ("prepare_day", "cron", 9, 0, "Asia/Seoul"),
-        ("screen_and_score", "cron", 22, 35, "Asia/Seoul"),
+        ("screen_and_score", "cron", 22, "35-40", "Asia/Seoul"),
         ("mock_buy", "cron", 22, 45, "Asia/Seoul"),
         ("refresh_orders", "cron", 22, 50, "Asia/Seoul"),
         ("cancel_unfilled", "cron", 15, 55, "America/New_York"),

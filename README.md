@@ -125,12 +125,13 @@ For a Windows logon task, point PowerShell at
 `tools/start_scheduler.ps1`; the script sets the workspace and `PYTHONPATH`
 before starting the same scheduler command.
 
-The scheduler prepares the KIS token at 09:00, runs screening/scoring at 22:35,
-submits mock buys at 22:45 KST, and refreshes order/fill/holding monitor state
-at 22:50. During the regular U.S. session it polls holdings each minute for
-stop-loss and trailing-stop mock sells, then re-runs screening/scoring every 15
-minutes for constrained additional mock entries. By default each intraday entry
-recheck may submit one ticker and at most two such rounds per day. Existing
+The scheduler prepares the KIS token at 09:00, runs screening/scoring every
+minute from 22:35 to 22:40, submits mock buys at 22:45 KST, and refreshes
+order/fill/holding monitor state at 22:50. During the regular U.S. session it
+polls holdings each minute for stop-loss and trailing-stop mock sells, then
+re-runs screening/scoring every 15 minutes for constrained additional mock
+entries. By default each intraday entry recheck may submit one ticker and at
+most two such rounds per day. Existing
 holdings are skipped unless the ticker is selected again, still passes the
 breakout entry check, has no unfilled order, and is at least 3% above its
 average entry price. Tickers already submitted by the scheduler are skipped for

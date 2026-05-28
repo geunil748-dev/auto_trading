@@ -8,7 +8,9 @@ from trading_bot.adapters.kis_domestic import KisDomesticClient
 from trading_bot.adapters.kis_http import KisJsonClient
 from trading_bot.adapters.kis_overseas import KisOverseasClient
 from trading_bot.config import KisSettings, load_kis_settings, load_real_kis_settings
+from trading_bot.database import pyodbc_connect_factory
 from trading_bot.live_monitor_state import live_kis_monitor_state
+from trading_bot.repositories import SqlServerDailyRepository
 
 
 def account_dashboard_state(
@@ -42,6 +44,7 @@ def _account_state(
         )
         if not mock:
             state["account"].update(_real_krw_summary(settings))
+        _persist_account_current(state, mock)
     except Exception as error:
         return {
             "label": label,
@@ -71,6 +74,19 @@ def _real_krw_summary(settings: KisSettings) -> dict[str, str]:
         "cashKrw": _krw(_float(summary, "dnca_tot_amt")),
         "equityKrw": _krw(_float(summary, "tot_evlu_amt")),
     }
+
+
+def _persist_account_current(state: dict[str, Any], mock: bool) -> None:
+    account = state.get("account")
+    if not isinstance(account, dict):
+        return
+    try:
+        SqlServerDailyRepository(pyodbc_connect_factory()).save_account_current(
+            account,
+            is_mock=mock,
+        )
+    except Exception:
+        return
 
 
 def _empty_account() -> dict[str, str]:

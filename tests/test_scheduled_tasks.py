@@ -1,5 +1,5 @@
 from trading_bot.config import KisSettings, TradingSettings
-from trading_bot.models import BuyIntent, PositionState, SellIntent
+from trading_bot.models import AccountState, BuyIntent, PositionState, ScoreRecord, SellIntent
 from trading_bot.scheduled_tasks import live_mock_tasks
 
 
@@ -51,12 +51,15 @@ class RecordingExecutor:
 
 
 class RecheckAccounts:
+    def current_account(self) -> AccountState:
+        return AccountState(100000, 100000, 0, 0, 0)
+
     def positions(self) -> list[PositionState]:
-        return [PositionState("AAA", 10, 1, 10.31, 10.31)]
+        return []
 
 
 class RecheckScoring:
-    selected = ("AAA", "BBB")
+    selected = (ScoreRecord("AAA", 90, 90), ScoreRecord("BBB", 80, 80))
 
 
 class RecheckResult:
@@ -67,12 +70,30 @@ class RecheckResult:
     )
 
 
+class HybridScoring:
+    def __init__(self, selected: tuple[ScoreRecord, ...]) -> None:
+        self.selected = selected
+
+
+class HybridResult:
+    def __init__(self, selected: tuple[ScoreRecord, ...]) -> None:
+        self.scoring = HybridScoring(selected)
+        self.buy_intents = tuple(
+            BuyIntent(item.ticker, 1, 10, 10, 0.01)
+            for item in selected
+        )
+
+
 class RecheckRuntime:
     def __init__(self) -> None:
         self.accounts = RecheckAccounts()
+        self.breakout = self
 
     def run(self) -> RecheckResult:
         return RecheckResult()
+
+    def breakout_input(self, ticker: str):
+        return (10, 9, 9.5, 8)
 
 
 def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> None:
@@ -222,6 +243,10 @@ def test_intraday_recheck_screens_and_limits_additional_buys(monkeypatch, tmp_pa
         "trading_bot.scheduled_tasks._write_live_state",
         lambda monitor_state, kis_settings, screening_state=None, **kwargs: None,
     )
+    monkeypatch.setattr(
+        "trading_bot.entry_planner.position_fraction_for_score",
+        lambda score, settings: 0.01,
+    )
     tasks = live_mock_tasks(
         TradingSettings(max_intraday_entry_rounds=1),
         KisSettings("key", "secret", "account", "01", "https://kis.example"),
@@ -232,6 +257,175 @@ def test_intraday_recheck_screens_and_limits_additional_buys(monkeypatch, tmp_pa
     assert "submitted 1 mock buy orders" in tasks.intraday_recheck()
     assert "submitted 0 mock buy orders" in tasks.intraday_recheck()
     assert executor.calls == [[BuyIntent("AAA", 1, 10, 10, 0.01)], []]
+
+
+def test_intraday_recheck_can_reuse_fixed_watchlist(monkeypatch, tmp_path) -> None:
+    runtime = RecheckRuntime()
+    run_count = 0
+    executor = RecordingExecutor()
+
+    def run_once():
+        nonlocal run_count
+        run_count += 1
+        return RecheckResult()
+
+    runtime.run = run_once
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_dry_run",
+        lambda settings, kis_settings: (runtime, "repository"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_mock_buy_executor",
+        lambda kis_settings, repository: executor,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._unfilled_order_tickers",
+        lambda kis_settings: set(),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.state_from_dry_run",
+        lambda result: {"targets": [["AAA"]], "gates": [], "logs": []},
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._write_live_state",
+        lambda monitor_state, kis_settings, screening_state=None, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.plan_buy_intents",
+        lambda selected, breakout_inputs, account, settings: [
+            BuyIntent(item.ticker, 1, 10, 10, 0.01) for item in selected
+        ],
+    )
+    tasks = live_mock_tasks(
+        TradingSettings(refresh_intraday_candidates=False, max_intraday_entry_rounds=2),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+        regular_session=lambda: True,
+    )
+
+    tasks.dry_run()
+    tasks.intraday_recheck()
+    tasks.intraday_recheck()
+
+    assert run_count == 1
+
+
+def test_fixed_watchlist_waits_for_next_opening_collection(monkeypatch, tmp_path) -> None:
+    runtime = RecheckRuntime()
+    run_count = 0
+    current_settings = TradingSettings(refresh_intraday_candidates=True)
+
+    def run_once():
+        nonlocal run_count
+        run_count += 1
+        return RecheckResult()
+
+    runtime.run = run_once
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_dry_run",
+        lambda settings, kis_settings: (runtime, "repository"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_mock_buy_executor",
+        lambda kis_settings, repository: RecordingExecutor(),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._unfilled_order_tickers",
+        lambda kis_settings: set(),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.state_from_dry_run",
+        lambda result: {"targets": [["AAA"]], "gates": [], "logs": []},
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._write_live_state",
+        lambda monitor_state, kis_settings, screening_state=None, **kwargs: None,
+    )
+    tasks = live_mock_tasks(
+        lambda: current_settings,
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+        regular_session=lambda: True,
+    )
+
+    tasks.dry_run()
+    current_settings = TradingSettings(refresh_intraday_candidates=False)
+    tasks.intraday_recheck()
+
+    assert run_count == 2
+
+
+def test_intraday_recheck_hybrid_merges_opening_and_refresh_candidates(monkeypatch, tmp_path) -> None:
+    runtime = RecheckRuntime()
+    results = [
+        HybridResult((
+            ScoreRecord("OPEN1", 95, 95),
+            ScoreRecord("OPEN2", 94, 94),
+            ScoreRecord("OPEN3", 93, 93),
+            ScoreRecord("OPEN4", 92, 92),
+            ScoreRecord("OPEN5", 91, 91),
+            ScoreRecord("OPEN6", 90, 90),
+        )),
+        HybridResult((
+            ScoreRecord("NEW1", 99, 99),
+            ScoreRecord("NEW2", 98, 98),
+            ScoreRecord("OPEN2", 97, 97),
+            ScoreRecord("NEW3", 70, 70),
+        )),
+    ]
+
+    def run_once():
+        return results.pop(0)
+
+    runtime.run = run_once
+    executor = RecordingExecutor()
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_dry_run",
+        lambda settings, kis_settings: (runtime, "repository"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_mock_buy_executor",
+        lambda kis_settings, repository: executor,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._unfilled_order_tickers",
+        lambda kis_settings: set(),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.state_from_dry_run",
+        lambda result: {"targets": [], "gates": [], "logs": []},
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._write_live_state",
+        lambda monitor_state, kis_settings, screening_state=None, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.plan_buy_intents",
+        lambda selected, breakout_inputs, account, settings: [
+            BuyIntent(item.ticker, 1, 10, 10, 0.01) for item in selected
+        ],
+    )
+    tasks = live_mock_tasks(
+        TradingSettings(
+            candidate_selection_mode="hybrid",
+            max_intraday_entry_rounds=2,
+            max_intraday_buy_intents_per_round=8,
+            max_position_exposure=1.0,
+            max_account_exposure=1.0,
+        ),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+        regular_session=lambda: True,
+    )
+
+    tasks.dry_run()
+    tasks.intraday_recheck()
+
+    tickers = [intent.ticker for intent in executor.calls[0]]
+    assert tickers == ["NEW1", "NEW2", "OPEN2", "OPEN1", "OPEN3", "OPEN4", "OPEN5"]
 
 
 def test_intraday_recheck_blocks_add_on_when_order_is_unfilled(

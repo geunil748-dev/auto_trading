@@ -39,9 +39,10 @@ const fallbackState = {
 };
 
 let currentState = fallbackState;
-let historyState = { targets: [], orders: [], fills: [], logs: [], trades: [] };
+let historyState = { targets: [], orders: [], fills: [], logs: [], trades: [], runSummaries: [] };
 let activeAccount = "mock";
 let activePage = "dashboard";
+let historyDateTouched = false;
 
 const tokenStorageKey = "monitorBearerToken";
 const refreshButton = document.querySelector("#refreshState");
@@ -58,6 +59,7 @@ const historyDateInput = document.querySelector("#historyDate");
 const refreshHistoryButton = document.querySelector("#refreshHistory");
 const historyStatus = document.querySelector("#historyStatus");
 const riskSettingsForm = document.querySelector("#riskSettingsForm");
+const filterSettingsForm = document.querySelector("#filterSettingsForm");
 const stopLossInput = document.querySelector("#stopLossPercent");
 const takeProfitInput = document.querySelector("#takeProfitPercent");
 const minTotalScoreInput = document.querySelector("#minTotalScore");
@@ -66,7 +68,9 @@ const maxPriceUsdInput = document.querySelector("#maxPriceUsd");
 const minOpeningPriceChangeInput = document.querySelector("#minOpeningPriceChangePercent");
 const minVolumeRatioInput = document.querySelector("#minVolumeRatio");
 const maxOpeningGapInput = document.querySelector("#maxOpeningGapPercent");
+const intradayCandidateModeInput = document.querySelector("#intradayCandidateMode");
 const riskSettingsStatus = document.querySelector("#riskSettingsStatus");
+const filterSettingsStatus = document.querySelector("#filterSettingsStatus");
 const sellAllButton = document.querySelector("#sellAllPositions");
 
 document.body.dataset.page = activePage;
@@ -80,7 +84,11 @@ tokenInput?.addEventListener("keydown", (event) => {
 refreshButton?.addEventListener("click", loadState);
 manualScreeningButton?.addEventListener("click", submitManualScreening);
 refreshHistoryButton?.addEventListener("click", loadHistory);
+historyDateInput?.addEventListener("change", () => {
+  historyDateTouched = true;
+});
 riskSettingsForm?.addEventListener("submit", saveRiskSettings);
+filterSettingsForm?.addEventListener("submit", saveFilterSettings);
 sellAllButton?.addEventListener("click", submitSellAllPositions);
 window.runtimeControls?.bind(toggleRealOrderUnlock);
 tabButtons.forEach((button) => {
@@ -93,8 +101,9 @@ tabButtons.forEach((button) => {
 navButtons.forEach((button) => {
   button.addEventListener("click", () => {
     activePage = button.dataset.page || "dashboard";
+    setSideNavOpen(false);
     renderPage();
-    if (activePage === "activity" || activePage === "candidateHistory") loadHistory();
+    if (activePage === "activity" || activePage === "candidateHistory" || activePage === "runSummary") loadHistory();
     if (activePage === "settings") loadRiskSettings();
   });
 });
@@ -121,6 +130,9 @@ async function loadState() {
   setButtonLoading(refreshButton, true);
   try {
     currentState = normalizeState(await fetchState());
+    if (currentState.date && historyDateInput && !historyDateTouched) {
+      historyDateInput.value = currentState.date;
+    }
     setAuthStatus(bearerToken() ? "인증된 모니터입니다." : "");
   } catch {
     currentState = fallbackState;
@@ -160,13 +172,37 @@ async function submitManualScreening() {
       throw new Error(payload.error || "수동 리스트업 요청 실패");
     }
     setAuthStatus(payload.message || "수동 리스트업을 백그라운드에서 시작했습니다.");
-    setTimeout(loadState, 3000);
-    setTimeout(loadState, 10000);
+    await pollManualScreeningStatus();
+    await loadState();
+    await loadHistory();
   } catch (error) {
     setAuthStatus(error.message || "수동 리스트업 요청에 실패했습니다.");
   } finally {
     setButtonLoading(manualScreeningButton, false);
   }
+}
+
+async function pollManualScreeningStatus() {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    await wait(attempt === 0 ? 1500 : 5000);
+    const response = await fetch(
+      `/api/manual-screening?ts=${Date.now()}`,
+      fetchOptions("/api/manual-screening"),
+    );
+    if (!response.ok) throw new Error("수동 리스트업 상태 확인 실패");
+    const payload = await response.json();
+    const status = payload.status || {};
+    if (status.message) setAuthStatus(status.message);
+    if (!status.running) {
+      if (status.ok === false) throw new Error(status.message || "수동 리스트업 실패");
+      return status;
+    }
+  }
+  throw new Error("수동 리스트업 시간이 오래 걸리고 있습니다. 잠시 후 새로고침해 주세요.");
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function setButtonLoading(button, isLoading) {
@@ -196,15 +232,17 @@ async function fetchHistory() {
 }
 
 async function loadRiskSettings() {
-  if (!riskSettingsForm) return;
+  if (!riskSettingsForm && !filterSettingsForm) return;
   try {
     const response = await fetch(`/api/trading-settings?ts=${Date.now()}`, fetchOptions("/api/trading-settings"));
     if (!response.ok) throw new Error("settings request failed");
     const payload = await response.json();
     applyRiskSettings(payload.settings || {});
     setRiskSettingsStatus("현재 설정을 불러왔습니다.");
+    setFilterSettingsStatus("현재 설정을 불러왔습니다.");
   } catch {
     setRiskSettingsStatus("설정을 불러오지 못했습니다.");
+    setFilterSettingsStatus("설정을 불러오지 못했습니다.");
   }
 }
 
@@ -213,34 +251,57 @@ async function saveRiskSettings(event) {
   const button = document.querySelector("#saveRiskSettings");
   if (button) button.disabled = true;
   try {
-    const response = await fetch(
-      "/api/trading-settings",
-      fetchOptions("/api/trading-settings", {
-        body: JSON.stringify({
-          stopLossPercent: Number(stopLossInput?.value || 0),
-          takeProfitPercent: Number(takeProfitInput?.value || 0),
-          minTotalScore: Number(minTotalScoreInput?.value || 0),
-          minPriceUsd: Number(minPriceUsdInput?.value || 0),
-          maxPriceUsd: Number(maxPriceUsdInput?.value || 0),
-          minOpeningPriceChangePercent: Number(minOpeningPriceChangeInput?.value || 0),
-          minVolumeRatio: Number(minVolumeRatioInput?.value || 0),
-          maxOpeningGapPercent: Number(maxOpeningGapInput?.value || 0),
-        }),
-        headers: { "Content-Type": "application/json" },
-        method: "POST",
-      }),
-    );
-    const payload = await response.json();
-    if (!response.ok || payload.ok === false) {
-      throw new Error(payload.error || "설정 저장 실패");
-    }
+    const payload = await postTradingSettings({
+      stopLossPercent: Number(stopLossInput?.value || 0),
+      takeProfitPercent: Number(takeProfitInput?.value || 0),
+    });
     applyRiskSettings(payload.settings || {});
-    setRiskSettingsStatus("저장했습니다. 다음 감시 루프부터 반영됩니다.");
+    setRiskSettingsStatus("손익절 설정을 저장했습니다. 다음 감시 루프부터 반영됩니다.");
   } catch (error) {
     setRiskSettingsStatus(error.message || "설정 저장에 실패했습니다.");
   } finally {
     if (button) button.disabled = false;
   }
+}
+
+async function saveFilterSettings(event) {
+  event.preventDefault();
+  const button = document.querySelector("#saveFilterSettings");
+  if (button) button.disabled = true;
+  try {
+    const payload = await postTradingSettings({
+      minTotalScore: Number(minTotalScoreInput?.value || 0),
+      minPriceUsd: Number(minPriceUsdInput?.value || 0),
+      maxPriceUsd: Number(maxPriceUsdInput?.value || 0),
+      minOpeningPriceChangePercent: Number(minOpeningPriceChangeInput?.value || 0),
+      minVolumeRatio: Number(minVolumeRatioInput?.value || 0),
+      maxOpeningGapPercent: Number(maxOpeningGapInput?.value || 0),
+      refreshIntradayCandidates: (intradayCandidateModeInput?.value || "refresh") === "refresh",
+      candidateSelectionMode: intradayCandidateModeInput?.value || "refresh",
+    });
+    applyRiskSettings(payload.settings || {});
+    setFilterSettingsStatus("필수값 세팅을 저장했습니다. 다음 리스트업부터 반영됩니다.");
+  } catch (error) {
+    setFilterSettingsStatus(error.message || "필수값 저장에 실패했습니다.");
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function postTradingSettings(body) {
+  const response = await fetch(
+    "/api/trading-settings",
+    fetchOptions("/api/trading-settings", {
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    }),
+  );
+  const payload = await response.json();
+  if (!response.ok || payload.ok === false) {
+    throw new Error(payload.error || "설정 저장 실패");
+  }
+  return payload;
 }
 
 async function toggleRealOrderUnlock() {
@@ -360,6 +421,10 @@ function setRiskSettingsStatus(message) {
   if (riskSettingsStatus) riskSettingsStatus.textContent = message;
 }
 
+function setFilterSettingsStatus(message) {
+  if (filterSettingsStatus) filterSettingsStatus.textContent = message;
+}
+
 function applyRiskSettings(settings) {
   if (stopLossInput && settings.stopLossPercent != null) {
     stopLossInput.value = formatPercentInput(settings.stopLossPercent);
@@ -384,6 +449,10 @@ function applyRiskSettings(settings) {
   }
   if (maxOpeningGapInput && settings.maxOpeningGapPercent != null) {
     maxOpeningGapInput.value = formatPercentInput(settings.maxOpeningGapPercent);
+  }
+  if (intradayCandidateModeInput) {
+    intradayCandidateModeInput.value = settings.candidateSelectionMode
+      || (settings.refreshIntradayCandidates ? "refresh" : "fixed");
   }
 }
 
@@ -436,6 +505,7 @@ function normalizeHistoryState(state) {
     fills: state.fills || [],
     logs: state.logs || [],
     trades: state.trades || [],
+    runSummaries: state.runSummaries || [],
   };
 }
 
@@ -478,8 +548,8 @@ function renderSummary(accountState) {
 
 function renderTables(accountState) {
   const names = tickerNames(accountState);
-  renderRows("#targetRows", accountState.targets, (row) => renderTargetRow(row, names), 7, "오늘 조건에 맞는 종목 없음");
-  renderRows("#candidateHistoryRows", historyState.targets, (row) => renderTargetRow(row, names), 7, "저장된 후보 리스트가 없습니다");
+  renderRows("#targetRows", accountState.targets, (row) => renderTargetRow(row, names), 8, "오늘 조건에 맞는 종목 없음");
+  renderRows("#candidateHistoryRows", historyState.targets, (row) => renderTargetRow(row, names), 8, "저장된 후보 리스트가 없습니다");
   renderRows("#holdingRows", accountState.holdings, renderHoldingRow, 8, "보유 종목이 없습니다");
 
   const activityLogs = activePage === "activity" ? historyState.logs : accountState.logs;
@@ -490,6 +560,7 @@ function renderTables(accountState) {
   renderList("#orderRows", orders, renderOrderRow, "주문 내역이 없습니다");
   const fills = activePage === "activity" ? historyState.fills : accountState.fills;
   renderList("#fillRows", fills, renderFillRow, "체결 내역이 없습니다");
+  renderList("#runSummaryRows", historyState.runSummaries, renderRunSummaryRow, "저장된 운용 결과가 없습니다");
 }
 
 function renderRows(selector, rows, renderer, colspan, emptyText) {
@@ -500,17 +571,21 @@ function renderRows(selector, rows, renderer, colspan, emptyText) {
 
 function renderList(selector, rows, renderer, emptyText) {
   document.querySelector(selector).innerHTML = (rows || []).length === 0
-    ? `<p class="empty-copy">${emptyText}</p>`
+    ? `<section class="trade-empty empty-copy">${escapeHtml(emptyText)}</section>`
     : rows.map(renderer).join("");
 }
 
 function renderTargetRow(row, names = {}) {
-  const [ticker, name, price, volume, gap, score, state] =
-    row.length >= 7 ? row : [row[0], names[row[0]] || "-", ...row.slice(1)];
+  const [ticker, name, price, volume, volumeRatio, gap, score, state] =
+    row.length >= 8
+      ? row
+      : row.length >= 7
+        ? [row[0], row[1], row[2], "-", ...row.slice(3)]
+        : [row[0], names[row[0]] || "-", row[1], "-", ...row.slice(2)];
   return `<tr>
     <td><strong>${escapeHtml(name && name !== "-" ? name : names[ticker] || "-")}</strong></td>
     <td>${escapeHtml(ticker)}</td><td>${escapeHtml(price)}</td><td>${escapeHtml(volume)}</td>
-    <td>${escapeHtml(gap)}</td><td class="score">${escapeHtml(score)}</td>
+    <td>${escapeHtml(volumeRatio)}</td><td>${escapeHtml(gap)}</td><td class="score">${escapeHtml(score)}</td>
     <td><span class="trade-state">${escapeHtml(state)}</span></td>
   </tr>`;
 }
@@ -533,8 +608,10 @@ function renderLogRow([time, level, message]) {
 
 function renderOrderRow(order) {
   const detail = [order.exitReason || "접수", order.profitUsd].filter(Boolean).join(" / ");
+  const orderedAt = order.orderedAt || [order.date, order.time].filter(Boolean).join(" ") || "-";
   return `<section class="trade-row">
-    <strong>${escapeHtml(order.ticker)}</strong><span>${escapeHtml(order.side || order.type)}</span>
+    <time>${escapeHtml(orderedAt)}</time><strong>${escapeHtml(order.name || "-")}</strong>
+    <span>${escapeHtml(order.ticker)}</span><span>${escapeHtml(order.side || order.type)}</span>
     <b>${escapeHtml(order.price)}</b><small>${escapeHtml(order.quantity)}주</small>
     <em>${escapeHtml(order.unfilled ? `미체결 ${order.unfilled}주` : detail)}</em>
   </section>`;
@@ -544,9 +621,22 @@ function renderFillRow(fill) {
   const filledAt = fill.filledAt || [fill.date, fill.time].filter(Boolean).join(" ");
   const result = fill.profitUsd ? `${fill.total} / ${fill.profitUsd}` : fill.total;
   return `<section class="trade-row fill-row">
-    <strong>${escapeHtml(fill.ticker)}</strong><span>${escapeHtml(fill.side)}</span>
+    <time>${escapeHtml(filledAt || "-")}</time><strong>${escapeHtml(fill.name || "-")}</strong>
+    <span>${escapeHtml(fill.ticker)}</span><span>${escapeHtml(fill.side)}</span>
     <b>${escapeHtml(fill.price)}</b><small>${escapeHtml(fill.quantity)}주</small>
-    <em>${escapeHtml(result)}</em><time>${escapeHtml(filledAt || "-")}</time>
+    <em>${escapeHtml(result)}</em>
+  </section>`;
+}
+
+function renderRunSummaryRow(summary) {
+  return `<section class="trade-row run-summary-row">
+    <time>${escapeHtml(summary.date || "-")}</time><strong>${escapeHtml(summary.mode || "-")}</strong>
+    <em>${escapeHtml(summary.settings || "-")}</em><b>${escapeHtml(summary.profitUsd || "$0.00")}</b>
+    <span>${escapeHtml(summary.profitRate || "0.00%")}</span>
+    <small>${escapeHtml(summary.buyFillCount || "0")}건</small>
+    <small>${escapeHtml(summary.sellFillCount || "0")}건</small>
+    <small>${escapeHtml(summary.eodSellCount || "0")}건</small>
+    <small>${escapeHtml(summary.cancelledOrderCount || "0")}건</small>
   </section>`;
 }
 

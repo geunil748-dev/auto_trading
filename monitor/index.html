@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>자동매매 모니터</title>
     <link rel="stylesheet" href="./styles.css?v=25" />
-    <link rel="stylesheet" href="./panels.css?v=18" />
+    <link rel="stylesheet" href="./panels.css?v=29" />
   </head>
   <body class="side-collapsed">
     <div class="app-frame">
@@ -25,6 +25,9 @@
         </button>
         <button class="nav-item" type="button" data-page="candidateHistory" data-icon="후">
           <span>후보 리스트</span>
+        </button>
+        <button class="nav-item" type="button" data-page="runSummary" data-icon="결">
+          <span>운용 결과</span>
         </button>
         <button class="nav-item" type="button" data-page="settings" data-icon="설">
           <span>설정</span>
@@ -122,10 +125,6 @@
                   <span class="button-spinner" aria-hidden="true"></span>
                   <span>새로고침</span>
                 </button>
-                <button id="manualScreening" type="button">
-                  <span class="button-spinner" aria-hidden="true"></span>
-                  <span>수동 리스트업</span>
-                </button>
               </div>
             </div>
             <div class="table-wrap">
@@ -136,7 +135,8 @@
                     <th>종목</th>
                     <th>가격</th>
                     <th>거래량</th>
-                    <th>갭</th>
+                    <th>20일 대비</th>
+                    <th>등락률</th>
                     <th>점수</th>
                     <th>상태</th>
                   </tr>
@@ -178,6 +178,12 @@
                 <p class="eyebrow">DB 기록</p>
                 <h2>후보 리스트</h2>
               </div>
+              <div class="panel-actions">
+                <button id="manualScreening" type="button">
+                  <span class="button-spinner" aria-hidden="true"></span>
+                  <span>수동 리스트업</span>
+                </button>
+              </div>
             </div>
             <div class="table-wrap">
               <table>
@@ -187,14 +193,36 @@
                     <th>종목</th>
                     <th>가격</th>
                     <th>거래량</th>
-                    <th>갭</th>
+                    <th>20일 대비</th>
+                    <th>등락률</th>
                     <th>점수</th>
-                    <th>상태</th>
+                    <th>판정</th>
                   </tr>
                 </thead>
                 <tbody id="candidateHistoryRows"></tbody>
               </table>
             </div>
+          </article>
+
+          <article class="panel run-summary">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">장마감 기록</p>
+                <h2>운용 결과</h2>
+              </div>
+            </div>
+            <div class="trade-list-head run-summary-head" aria-hidden="true">
+              <span>날짜</span>
+              <span>진행모드</span>
+              <span>세팅값</span>
+              <span>수익금</span>
+              <span>수익률</span>
+              <span>매수체결</span>
+              <span>매도체결</span>
+              <span>매도</span>
+              <span>취소</span>
+            </div>
+            <div class="trade-list run-summary-list" id="runSummaryRows"></div>
           </article>
 
           <article class="panel settings-panel">
@@ -204,66 +232,89 @@
                 <h2>손익절 설정</h2>
               </div>
             </div>
-            <form class="settings-form" id="riskSettingsForm">
-              <label>
-                <span>손절 비율</span>
-                <div class="percent-input">
-                  <input id="stopLossPercent" type="number" min="0.1" max="50" step="0.1" />
-                  <b>%</b>
+            <div class="settings-stack">
+              <form class="settings-form" id="riskSettingsForm">
+                <div class="settings-group-head">
+                  <strong>손익절 설정</strong>
+                  <span>보유 종목 매도 판단에만 적용됩니다.</span>
                 </div>
-              </label>
-              <label>
-                <span>익절 비율</span>
-                <div class="percent-input">
-                  <input id="takeProfitPercent" type="number" min="0.1" max="50" step="0.1" />
-                  <b>%</b>
+                <label>
+                  <span>손절 비율</span>
+                  <div class="percent-input">
+                    <input id="stopLossPercent" type="number" min="0.1" max="50" step="0.1" />
+                    <b>%</b>
+                  </div>
+                </label>
+                <label>
+                  <span>익절 비율</span>
+                  <div class="percent-input">
+                    <input id="takeProfitPercent" type="number" min="0.1" max="50" step="0.1" />
+                    <b>%</b>
+                  </div>
+                </label>
+                <button id="saveRiskSettings" type="submit">손익절 저장</button>
+                <p id="riskSettingsStatus" class="settings-status"></p>
+              </form>
+
+              <form class="settings-form" id="filterSettingsForm">
+                <div class="settings-group-head">
+                  <strong>필수값 세팅</strong>
+                  <span>리스트업과 자동 매수 후보 선별에 적용됩니다.</span>
                 </div>
-              </label>
-              <label>
-                <span>선정점수</span>
-                <div class="percent-input">
-                  <input id="minTotalScore" type="number" min="0" max="100" step="1" />
-                  <b>점</b>
-                </div>
-              </label>
-              <label>
-                <span>최저 가격</span>
-                <div class="percent-input">
-                  <input id="minPriceUsd" type="number" min="0.01" step="0.01" />
-                  <b>$</b>
-                </div>
-              </label>
-              <label>
-                <span>최고 가격</span>
-                <div class="percent-input">
-                  <input id="maxPriceUsd" type="number" min="0.01" step="0.01" />
-                  <b>$</b>
-                </div>
-              </label>
-              <label>
-                <span>장초반 상승률</span>
-                <div class="percent-input">
-                  <input id="minOpeningPriceChangePercent" type="number" min="0" max="500" step="0.1" />
-                  <b>%</b>
-                </div>
-              </label>
-              <label>
-                <span>거래량 비율</span>
-                <div class="percent-input">
-                  <input id="minVolumeRatio" type="number" min="0.1" max="100" step="0.1" />
-                  <b>배</b>
-                </div>
-              </label>
-              <label>
-                <span>시가 갭 상한</span>
-                <div class="percent-input">
-                  <input id="maxOpeningGapPercent" type="number" min="0" max="500" step="0.1" />
-                  <b>%</b>
-                </div>
-              </label>
-              <button id="saveRiskSettings" type="submit">저장</button>
-              <p id="riskSettingsStatus" class="settings-status"></p>
-            </form>
+                <label class="setting-wide">
+                  <span>후보선정방식</span>
+                  <select id="intradayCandidateMode">
+                    <option value="refresh">15분마다 새 후보 수집</option>
+                    <option value="fixed">장초반 후보 고정 감시</option>
+                    <option value="hybrid">장초반+15분 새로운 종목 수집</option>
+                  </select>
+                </label>
+                <label>
+                  <span>최저 가격</span>
+                  <div class="percent-input">
+                    <input id="minPriceUsd" type="number" min="0.01" step="0.01" />
+                    <b>$</b>
+                  </div>
+                </label>
+                <label>
+                  <span>최고 가격</span>
+                  <div class="percent-input">
+                    <input id="maxPriceUsd" type="number" min="0.01" step="0.01" />
+                    <b>$</b>
+                  </div>
+                </label>
+                <label>
+                  <span>선정점수</span>
+                  <div class="percent-input">
+                    <input id="minTotalScore" type="number" min="0" max="100" step="1" />
+                    <b>점</b>
+                  </div>
+                </label>
+                <label>
+                  <span>장초반 상승률</span>
+                  <div class="percent-input">
+                    <input id="minOpeningPriceChangePercent" type="number" min="0" max="500" step="0.1" />
+                    <b>%</b>
+                  </div>
+                </label>
+                <label>
+                  <span>거래량 비율</span>
+                  <div class="percent-input">
+                    <input id="minVolumeRatio" type="number" min="0.1" max="100" step="0.1" />
+                    <b>배</b>
+                  </div>
+                </label>
+                <label>
+                  <span>시가 갭 상한</span>
+                  <div class="percent-input">
+                    <input id="maxOpeningGapPercent" type="number" min="0" max="500" step="0.1" />
+                    <b>%</b>
+                  </div>
+                </label>
+                <button id="saveFilterSettings" type="submit">필수값 저장</button>
+                <p id="filterSettingsStatus" class="settings-status"></p>
+              </form>
+            </div>
           </article>
 
           <article class="panel orders">
@@ -272,6 +323,15 @@
                 <p class="eyebrow">주문 접수</p>
                 <h2>주문 내용</h2>
               </div>
+            </div>
+            <div class="trade-list-head" aria-hidden="true">
+              <span>날짜</span>
+              <span>종목명</span>
+              <span>종목</span>
+              <span>구분</span>
+              <span>가격</span>
+              <span>수량</span>
+              <span>내용</span>
             </div>
             <div class="trade-list" id="orderRows"></div>
           </article>
@@ -282,6 +342,15 @@
                 <p class="eyebrow">체결 결과</p>
                 <h2>체결 내용</h2>
               </div>
+            </div>
+            <div class="trade-list-head" aria-hidden="true">
+              <span>날짜</span>
+              <span>종목명</span>
+              <span>종목</span>
+              <span>구분</span>
+              <span>가격</span>
+              <span>수량</span>
+              <span>내용</span>
             </div>
             <div class="trade-list" id="fillRows"></div>
           </article>
@@ -299,6 +368,6 @@
       </main>
     </div>
     <script src="./runtime-controls.js?v=2"></script>
-    <script src="./app.js?v=32"></script>
+    <script src="./app.js?v=43"></script>
   </body>
 </html>

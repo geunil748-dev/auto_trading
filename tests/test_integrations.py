@@ -11,7 +11,7 @@ from trading_bot.adapters.kis_orders import (
 from trading_bot.adapters.news_sentiment import YahooNewsSentimentSource
 from trading_bot.adapters.scoring import NewsChartScoringProvider
 from trading_bot.adapters.yahoo_news import YahooFinanceNewsSource
-from trading_bot.config import KisSettings
+from trading_bot.config import KisSettings, TradingSettings, save_runtime_risk_settings
 from trading_bot.models import (
     BotLog,
     CandidateSnapshot,
@@ -28,6 +28,7 @@ from trading_bot.models import (
 from trading_bot.repositories import SqlServerDailyRepository
 from trading_bot.repositories import SqlServerMonitorRepository
 from trading_bot.retry import RetryPolicy, call_with_retry
+from trading_bot.runtime_settings_store import RuntimeSettingsStore
 from trading_bot.sentiment import KeywordHeadlineSentiment
 
 
@@ -179,20 +180,33 @@ def test_sql_repository_writes_daily_rows_and_logs() -> None:
     )
     repository.save_log(BotLog("INFO", "test", "stored"))
     repository.save_trades(
-        [TradeRecord(date(2026, 5, 22), "AAA", "BUY", 12, None, 2)]
+        [
+            TradeRecord(
+                date(2026, 5, 22),
+                "AAA",
+                "BUY",
+                12,
+                None,
+                2,
+                ticker_name="Alpha",
+            )
+        ]
     )
 
-    assert cursors[0].calls[0][1] == [(date(2026, 5, 22), "AAA", "", 180.0, 4.0)]
+    assert cursors[0].calls[0][1] == [
+        (date(2026, 5, 22), "AAA", "", 0.0, 0.0, 180.0, 4.0)
+    ]
     assert "CREATE TABLE dbo.listed_target_snapshot" in cursors[1].calls[0][0]
     assert cursors[2].calls[0][1] == [
-        (date(2026, 5, 22), "AAA", "", 12, 180.0, 4.0)
+        (date(2026, 5, 22), "AAA", "", 12, 0.0, 0.0, 180.0, 4.0)
     ]
     assert cursors[3].calls[0][1] == [(date(2026, 5, 22), "AAA", 95, 80, 87.5, True)]
-    assert cursors[4].calls[0][1] == ("INFO", "test", "stored")
-    assert cursors[6].calls[0][1] == [
+    assert cursors[5].calls[0][1][1:] == ("INFO", "test", "stored")
+    assert cursors[9].calls[0][1] == [
         (
             date(2026, 5, 22),
             "AAA",
+            "Alpha",
             "BUY",
             12,
             None,
@@ -207,7 +221,31 @@ def test_sql_repository_writes_daily_rows_and_logs() -> None:
             True,
         )
     ]
-    assert all(connection.commits == 1 and connection.closed for connection in connections)
+    assert all(connection.closed for connection in connections)
+    assert sum(connection.commits for connection in connections) == 9
+
+
+def test_sql_repository_writes_daily_run_summary() -> None:
+    cursor = Cursor()
+    connection = Connection(cursor)
+    repository = SqlServerDailyRepository(lambda: connection)
+
+    repository.save_daily_run_summary(
+        date(2026, 5, 22),
+        TradingSettings(candidate_selection_mode="hybrid", min_total_score=40),
+        12.5,
+        3.4,
+        2,
+        1,
+        4,
+        3,
+    )
+
+    assert "daily_run_summary" in cursor.calls[0][0]
+    assert "IF EXISTS" in cursor.calls[1][0]
+    assert cursor.calls[1][1][1] == "hybrid"
+    assert '"minTotalScore": 40' in cursor.calls[1][1][2]
+    assert cursor.calls[1][1][3:9] == (12.5, 3.4, 2, 1, 4, 3)
 
 
 def test_sql_repository_writes_holding_snapshot() -> None:
@@ -237,8 +275,141 @@ def test_sql_repository_writes_holding_snapshot() -> None:
     assert "CREATE TABLE dbo.holding_snapshot" in cursors[0].calls[0][0]
     assert "DELETE FROM holding_snapshot" in cursors[1].calls[0][0]
     assert cursors[2].calls[0][1] == [
-        (date(2026, 5, 22), "AAA", "Alpha", 2, 10.5, 11.1, 11.6, 23.2, True)
+        (
+            date(2026, 5, 22),
+            date(2026, 5, 22),
+            "AAA",
+            "Alpha",
+            2,
+            10.5,
+            11.1,
+            11.6,
+            23.2,
+            True,
+        )
     ]
+
+
+def test_sql_repository_writes_account_and_order_snapshots() -> None:
+    cursors: list[Cursor] = []
+
+    def connect() -> Connection:
+        cursor = Cursor()
+        cursors.append(cursor)
+        return Connection(cursor)
+
+    repository = SqlServerDailyRepository(connect)
+    repository.save_account_snapshot(
+        {
+            "cashUsd": "$1,000.00",
+            "equityUsd": "$1,250.00",
+            "investedUsd": "$250.00",
+            "openPositions": "1",
+            "dailyProfitRate": "1.25%",
+            "realizedProfitUsd": "+$15.50",
+            "cashKrw": "100,000원",
+            "equityKrw": "125,000원",
+        },
+        date(2026, 5, 22),
+    )
+    repository.save_order_snapshot(
+        [
+            {
+                "time": "22:40:10",
+                "ticker": "AAA",
+                "name": "Alpha",
+                "side": "매수",
+                "quantity": "2",
+                "price": "$12.50",
+                "unfilled": "0",
+                "orderNo": "1001",
+            }
+        ],
+        date(2026, 5, 22),
+    )
+
+    assert "CREATE TABLE dbo.account_snapshot" in cursors[0].calls[0][0]
+    assert "CREATE TABLE dbo.account_current" in cursors[1].calls[0][0]
+    assert "IF EXISTS" in cursors[2].calls[0][0]
+    current_params = cursors[2].calls[0][1]
+    assert current_params[0] == "mock"
+    assert current_params[6:8] == (100000.0, 125000.0)
+    assert current_params[18:20] == (100000.0, 125000.0)
+    assert cursors[3].calls[0][1] == (
+        date(2026, 5, 22),
+        date(2026, 5, 22),
+        1000.0,
+        1250.0,
+        250.0,
+        1,
+        1.25,
+        15.5,
+        True,
+    )
+    assert "CREATE TABLE dbo.order_snapshot" in cursors[4].calls[0][0]
+    assert "DELETE FROM order_snapshot" in cursors[5].calls[0][0]
+    assert cursors[6].calls[0][1] == [
+        (
+            date(2026, 5, 22),
+            date(2026, 5, 22),
+            "22:40:10",
+            "AAA",
+            "Alpha",
+            "매수",
+            2,
+            12.5,
+            0,
+            "1001",
+            True,
+        )
+    ]
+
+
+def test_runtime_settings_store_saves_and_reads_settings() -> None:
+    class SettingsCursor(Cursor):
+        def fetchall(self) -> list[tuple[object, ...]]:
+            return [("take_profit_rate", 0.1), ("min_total_score", 40.0)]
+
+    cursor = SettingsCursor()
+    connection = Connection(cursor)
+    store = RuntimeSettingsStore(lambda: connection)
+
+    store.save({"take_profit_rate": 0.1, "min_total_score": 40})
+    values = store.read({"take_profit_rate", "min_total_score"})
+
+    assert "CREATE TABLE dbo.runtime_setting" in cursor.calls[0][0]
+    assert "IF EXISTS" in cursor.calls[1][0]
+    assert cursor.calls[1][1] == (
+        "take_profit_rate",
+        0.1,
+        "take_profit_rate",
+        "take_profit_rate",
+        0.1,
+    )
+    assert "FROM runtime_setting" in cursor.calls[-1][0]
+    assert values == {"take_profit_rate": 0.1, "min_total_score": 40.0}
+
+
+def test_save_runtime_settings_accepts_hybrid_candidate_mode(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in (
+        "MSSQL_DSN",
+        "MSSQL_HOST",
+        "MSSQL_DATABASE",
+        "MSSQL_USERNAME",
+        "MSSQL_PASSWORD",
+    ):
+        monkeypatch.setenv(name, "")
+
+    payload = save_runtime_risk_settings(
+        5,
+        10,
+        refresh_intraday_candidates=True,
+        candidate_selection_mode="hybrid",
+    )
+
+    assert payload["candidateSelectionMode"] == "hybrid"
+    assert payload["refreshIntradayCandidates"] is True
 
 
 def test_sql_monitor_repository_reads_rows() -> None:
@@ -247,8 +418,75 @@ def test_sql_monitor_repository_reads_rows() -> None:
     rows = SqlServerMonitorRepository(lambda: connection).latest_targets(5)
 
     assert rows == [("AAA", 180, 4.2)]
-    assert cursor.calls[0][1] == (5,)
+    assert cursor.calls[0][1][0] == 5
     assert connection.closed
+
+
+def test_sql_monitor_repository_falls_back_to_daily_targets_when_snapshot_is_empty() -> None:
+    class SequenceCursor(Cursor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.results = [
+                [],
+                [(0,)],
+                [("AAA", "Alpha", 180, 4.2)],
+            ]
+
+        def fetchall(self) -> list[tuple[object, ...]]:
+            return self.results.pop(0)
+
+    cursor = SequenceCursor()
+    connection = Connection(cursor)
+    rows = SqlServerMonitorRepository(lambda: connection).latest_targets(5)
+
+    assert rows == [("AAA", "Alpha", 180, 4.2)]
+    assert "FROM listed_target_snapshot" in cursor.calls[0][0]
+    assert "FROM daily_target" in cursor.calls[2][0]
+
+
+def test_sql_monitor_repository_sums_all_realized_profit() -> None:
+    class ProfitCursor(Cursor):
+        def fetchall(self) -> list[tuple[object, ...]]:
+            return [(12.5,)]
+
+    cursor = ProfitCursor()
+    connection = Connection(cursor)
+
+    profit = SqlServerMonitorRepository(lambda: connection).today_realized_profit()
+
+    assert profit == 12.5
+    assert "FROM fill_history" in cursor.calls[0][0]
+    assert "fill_date = ?" not in cursor.calls[0][0]
+    assert cursor.calls[0][1] == ()
+
+
+def test_sql_monitor_repository_calculates_all_realized_profit_rate() -> None:
+    class ProfitRateCursor(Cursor):
+        def fetchall(self) -> list[tuple[object, ...]]:
+            return [(12.5, 250.0)]
+
+    cursor = ProfitRateCursor()
+    connection = Connection(cursor)
+
+    rate = SqlServerMonitorRepository(lambda: connection).today_realized_profit_rate()
+
+    assert rate == 5.0
+    assert "SUM(fill_amount - profit_usd)" in cursor.calls[0][0]
+    assert cursor.calls[0][1] == ()
+
+
+def test_sql_monitor_repository_uses_us_market_date_for_latest_trades(monkeypatch) -> None:
+    cursor = Cursor()
+    connection = Connection(cursor)
+    monkeypatch.setattr(
+        "trading_bot.repositories.current_trade_date",
+        lambda: date(2026, 5, 27),
+    )
+
+    SqlServerMonitorRepository(lambda: connection).latest_trades(10)
+
+    assert "trade_date = ?" in cursor.calls[0][0]
+    assert cursor.calls[0][1] == (10, date(2026, 5, 27))
 
 
 def test_sql_repository_writes_fill_rows_without_duplicates() -> None:
@@ -294,10 +532,11 @@ def test_sql_repository_writes_fill_rows_without_duplicates() -> None:
         "매수",
         2,
         12.5,
-        True,
-        date(2026, 5, 22),
-        "22:41:10",
-        "AAA",
+            True,
+            date(2026, 5, 22),
+            date(2026, 5, 22),
+            "22:41:10",
+            "AAA",
         "Alpha",
         "매수",
         2,

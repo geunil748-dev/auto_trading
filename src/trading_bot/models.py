@@ -48,6 +48,8 @@ class CandidateSnapshot:
     turnover_rank: int
     gain_rank: int
     name: str = ""
+    opening_volume: float = 0.0
+    average_volume_20d: float = 0.0
 
     @property
     def opening_gap(self) -> float:
@@ -145,6 +147,7 @@ class TradeRecord:
     exit_reason: str | None = None
     max_price_after_buy: float | None = None
     is_mock: bool = True
+    ticker_name: str = ""
 
 
 @dataclass(frozen=True)

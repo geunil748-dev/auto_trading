@@ -13,22 +13,35 @@ function Write-StartupLog {
 }
 
 # Windows PowerShell 5 reads UTF-8 without BOM inconsistently, so log text stays ASCII.
+$createdNew = $false
+$mutex = New-Object System.Threading.Mutex($true, "Local\AutoTradingScheduler", [ref]$createdNew)
+if (-not $createdNew) {
+    Write-StartupLog "scheduler launcher already running; exiting"
+    return
+}
+
 Start-Sleep -Seconds 20
 
-while ($true) {
-    try {
-        Set-Location -LiteralPath $workspace
-        $env:PYTHONPATH = Join-Path $workspace "src"
+try {
+    while ($true) {
+        try {
+            Set-Location -LiteralPath $workspace
+            $env:PYTHONPATH = Join-Path $workspace "src"
 
-        Write-StartupLog "scheduler starting"
-        & $python -m trading_bot run-scheduler --monitor-state "monitor/state.json" 2>&1 |
-            ForEach-Object { Write-StartupLog $_.ToString() }
+            Write-StartupLog "scheduler starting"
+            & $python -m trading_bot run-scheduler --monitor-state "monitor/state.json" 2>&1 |
+                ForEach-Object { Write-StartupLog $_.ToString() }
 
-        Write-StartupLog "scheduler exited: $LASTEXITCODE"
+            Write-StartupLog "scheduler exited: $LASTEXITCODE"
+        }
+        catch {
+            Write-StartupLog "scheduler start error: $($_.Exception.Message)"
+        }
+
+        Start-Sleep -Seconds 15
     }
-    catch {
-        Write-StartupLog "scheduler start error: $($_.Exception.Message)"
-    }
-
-    Start-Sleep -Seconds 15
+}
+finally {
+    $mutex.ReleaseMutex()
+    $mutex.Dispose()
 }
