@@ -72,6 +72,8 @@ const intradayCandidateModeInput = document.querySelector("#intradayCandidateMod
 const riskSettingsStatus = document.querySelector("#riskSettingsStatus");
 const filterSettingsStatus = document.querySelector("#filterSettingsStatus");
 const sellAllButton = document.querySelector("#sellAllPositions");
+const showNoSellLogsInput = document.querySelector("#showNoSellLogs");
+const panelToggleButtons = document.querySelectorAll("[data-collapse-target]");
 
 document.body.dataset.page = activePage;
 if (historyDateInput) historyDateInput.value = todayText();
@@ -84,6 +86,12 @@ tokenInput?.addEventListener("keydown", (event) => {
 refreshButton?.addEventListener("click", loadState);
 manualScreeningButton?.addEventListener("click", submitManualScreening);
 refreshHistoryButton?.addEventListener("click", loadHistory);
+showNoSellLogsInput?.addEventListener("change", () => {
+  render(currentState);
+});
+panelToggleButtons.forEach((button) => {
+  button.addEventListener("click", () => togglePanel(button));
+});
 historyDateInput?.addEventListener("change", () => {
   historyDateTouched = true;
 });
@@ -553,7 +561,8 @@ function renderTables(accountState) {
   renderRows("#holdingRows", accountState.holdings, renderHoldingRow, 8, "보유 종목이 없습니다");
 
   const activityLogs = activePage === "activity" ? historyState.logs : accountState.logs;
-  document.querySelector("#logRows").innerHTML = (activityLogs || []).map(renderLogRow).join("");
+  const visibleLogs = filterVisibleLogs(activityLogs || []);
+  renderList("#logRows", visibleLogs, renderLogRow, "표시할 체결 시도 로그가 없습니다");
   const orders = activePage === "activity"
     ? historyState.trades
     : (accountState.orders || []).length > 0 ? accountState.orders : accountState.trades;
@@ -604,6 +613,25 @@ function renderHoldingRow(holding) {
 
 function renderLogRow([time, level, message]) {
   return `<div class="log-row"><time>${escapeHtml(time)}</time><span class="log-level">${escapeHtml(level)}</span><span>${escapeHtml(message)}</span></div>`;
+}
+
+function filterVisibleLogs(logs) {
+  if (showNoSellLogsInput?.checked) return logs;
+  return logs.filter((row) => !isNoSellOrderLog(row?.[2]));
+}
+
+function isNoSellOrderLog(message) {
+  return String(message || "").includes("매도 주문 0건: 매도 조건을 만족한 보유 종목이 없습니다.");
+}
+
+function togglePanel(button) {
+  const target = button.dataset.collapseTarget;
+  const panel = target ? document.querySelector(`.panel.${target}`) : null;
+  if (!panel) return;
+  const collapsed = !panel.classList.contains("is-collapsed");
+  panel.classList.toggle("is-collapsed", collapsed);
+  button.setAttribute("aria-expanded", String(!collapsed));
+  button.textContent = collapsed ? "펼치기" : "접기";
 }
 
 function renderOrderRow(order) {

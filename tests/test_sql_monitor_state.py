@@ -24,6 +24,7 @@ class Repository:
             ("22:40:00", "INFO", "Screened 3 targets and selected 0."),
             ("22:41:00", "INFO", "Filter rejects: MISSING_SNAPSHOT=2, PENNY_STOCK=2."),
             ("22:42:00", "WARNING", "Entry blocked: DAILY_ACCOUNT_LOSS"),
+            ("22:43:00", "INFO", "Expanded screening universe to top 5 (10 tickers)."),
         ]
 
     def latest_trades(self) -> list[tuple[object, ...]]:
@@ -173,6 +174,7 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
         ["22:40:00", "정보", "후보 3개를 점검했고, 최종 0개를 선정했습니다."],
         ["22:41:00", "정보", "필터 제외 사유: 시세 스냅샷 없음 2건, 가격 하한 미달 2건"],
         ["22:42:00", "주의", "진입 차단: 일일 손실 제한 도달"],
+        ["22:43:00", "정보", "후보 수집 범위를 상위 5위까지 확대했습니다. (10종목)"],
     ]
     assert state["summary"] == {"realizedProfitUsd": "+$15.50"}
 

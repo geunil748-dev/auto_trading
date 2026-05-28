@@ -110,6 +110,10 @@
             <span class="button-spinner" aria-hidden="true"></span>
             <span>DB 새로고침</span>
           </button>
+          <label class="log-filter-toggle history-log-filter">
+            <input type="checkbox" id="showNoSellLogs" />
+            <span>매도 0건 로그 표시</span>
+          </label>
           <span id="historyStatus"></span>
         </section>
 
@@ -323,6 +327,9 @@
                 <p class="eyebrow">주문 접수</p>
                 <h2>주문 내용</h2>
               </div>
+              <button class="panel-toggle" type="button" data-collapse-target="orders" aria-expanded="true">
+                접기
+              </button>
             </div>
             <div class="trade-list-head" aria-hidden="true">
               <span>날짜</span>
@@ -342,6 +349,9 @@
                 <p class="eyebrow">체결 결과</p>
                 <h2>체결 내용</h2>
               </div>
+              <button class="panel-toggle" type="button" data-collapse-target="fills" aria-expanded="true">
+                접기
+              </button>
             </div>
             <div class="trade-list-head" aria-hidden="true">
               <span>날짜</span>
@@ -361,6 +371,9 @@
                 <p class="eyebrow">주문 시도</p>
                 <h2>체결 시도 로그</h2>
               </div>
+              <button class="panel-toggle" type="button" data-collapse-target="logs" aria-expanded="true">
+                접기
+              </button>
             </div>
             <div class="log-stream" id="logRows"></div>
           </article>
@@ -368,6 +381,6 @@
       </main>
     </div>
     <script src="./runtime-controls.js?v=2"></script>
-    <script src="./app.js?v=43"></script>
+    <script src="./app.js?v=47"></script>
   </body>
 </html>

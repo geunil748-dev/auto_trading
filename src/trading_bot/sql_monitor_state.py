@@ -391,6 +391,12 @@ def _message_text(message: Any) -> str:
         parts = text.rstrip(".").split()
         if len(parts) >= 6:
             return f"후보 {parts[1]}개를 점검했고, 최종 {parts[5]}개를 선정했습니다."
+    if text.startswith("Expanded screening universe to top "):
+        parts = text.rstrip(".").split()
+        if len(parts) >= 7:
+            rank = parts[5]
+            count = parts[6].strip("()")
+            return f"후보 수집 범위를 상위 {rank}위까지 확대했습니다. ({count}종목)"
     if text.startswith("Filter rejects: "):
         raw = text.removeprefix("Filter rejects: ").rstrip(".")
         if raw == "none":

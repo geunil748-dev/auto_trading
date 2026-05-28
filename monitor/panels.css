@@ -504,6 +504,64 @@ td strong,
   text-align: center;
 }
 
+.log-filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.log-filter-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--cyan);
+}
+
+.history-log-filter {
+  min-height: 38px;
+  padding-inline: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #10171d;
+}
+
+.panel-toggle {
+  min-width: 58px;
+  height: 32px;
+  padding: 0 12px;
+  border-color: rgb(88 199 213 / 38%);
+  background: rgb(88 199 213 / 10%);
+  color: var(--teal);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.panel-toggle:hover {
+  background: rgb(88 199 213 / 18%);
+}
+
+.orders.is-collapsed,
+.fills.is-collapsed,
+.logs.is-collapsed {
+  min-height: 0;
+}
+
+.orders.is-collapsed .trade-list-head,
+.orders.is-collapsed .trade-list,
+.fills.is-collapsed .trade-list-head,
+.fills.is-collapsed .trade-list,
+.logs.is-collapsed .log-stream {
+  display: none;
+}
+
+.logs .panel-head {
+  flex-wrap: wrap;
+}
+
 .run-summary-head,
 .run-summary-row {
   grid-template-columns: 116px minmax(150px, 0.8fr) minmax(320px, 1.7fr) 96px 82px 72px 72px 58px 58px;

@@ -86,8 +86,8 @@ class ScreeningScoringPipeline:
                     BotLog(
                         "INFO",
                         "screening",
-                        "Expanded screening universe "
-                        f"to top {rank_limit} ({len(expanded_tickers)} tickers).",
+                        f"후보 수집 범위를 상위 {rank_limit}위까지 확대했습니다. "
+                        f"({len(expanded_tickers)}종목)",
                     )
                 )
                 if len(candidates) >= self.settings.min_selected_candidates:
