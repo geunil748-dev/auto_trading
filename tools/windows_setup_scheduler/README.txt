@@ -36,7 +36,7 @@ register_windows_tasks.ps1
 
 아래 명령을 한 번 실행합니다.
 
-   powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup\setup_windows.ps1
+   powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup_scheduler\setup_windows.ps1
 
 이 명령은 다음 작업을 합니다.
 
@@ -57,7 +57,7 @@ register_windows_tasks.ps1
 
 .env 입력을 끝낸 뒤 DB 테이블을 준비하려면 아래 명령을 실행합니다.
 
-   powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup\setup_windows.ps1 -SkipInstall -InitDb
+   powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup_scheduler\setup_windows.ps1 -SkipInstall -InitDb
 
 
 3. 일반 PC/노트북에서 자동 실행 등록
@@ -66,7 +66,7 @@ register_windows_tasks.ps1
 Windows 로그인 시 자동으로 모니터와 자동매매 스케줄러가 실행되게 하려면
 아래 명령을 실행합니다.
 
-   powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup\setup_windows.ps1 -SkipInstall -RegisterTasks -ReplaceTasks -StartNow
+   powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup_scheduler\setup_windows.ps1 -SkipInstall -RegisterTasks -ReplaceTasks -StartNow
 
 이 방식은 현재 사용자 로그인 후 자동 실행됩니다.
 
@@ -77,7 +77,7 @@ Windows 로그인 시 자동으로 모니터와 자동매매 스케줄러가 실
 AWS Windows 서버에서 로그인 없이 부팅 시 자동 실행되게 하려면
 PowerShell을 관리자 권한으로 열고 아래 명령을 실행합니다.
 
-   powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup\setup_windows.ps1 -SkipInstall -RegisterTasks -RunAs System -ReplaceTasks -StartNow
+   powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup_scheduler\setup_windows.ps1 -SkipInstall -RegisterTasks -RunAs System -ReplaceTasks -StartNow
 
 이 방식은 SYSTEM 계정으로 등록됩니다.
 
