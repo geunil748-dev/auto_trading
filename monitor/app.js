@@ -43,6 +43,7 @@ let historyState = { targets: [], orders: [], fills: [], logs: [], trades: [], r
 let activeAccount = "mock";
 let activePage = "dashboard";
 let historyDateTouched = false;
+let candidateHistoryMessage = "";
 
 const tokenStorageKey = "monitorBearerToken";
 const refreshButton = document.querySelector("#refreshState");
@@ -55,9 +56,9 @@ const toggleSideNavButton = document.querySelector("#toggleSideNav");
 const tokenInput = document.querySelector("#monitorToken");
 const saveTokenButton = document.querySelector("#saveMonitorToken");
 const authStatus = document.querySelector("#authStatus");
+const securityBar = document.querySelector(".security-bar");
 const historyDateInput = document.querySelector("#historyDate");
 const refreshHistoryButton = document.querySelector("#refreshHistory");
-const historyStatus = document.querySelector("#historyStatus");
 const riskSettingsForm = document.querySelector("#riskSettingsForm");
 const filterSettingsForm = document.querySelector("#filterSettingsForm");
 const stopLossInput = document.querySelector("#stopLossPercent");
@@ -94,6 +95,7 @@ panelToggleButtons.forEach((button) => {
 });
 historyDateInput?.addEventListener("change", () => {
   historyDateTouched = true;
+  loadHistory();
 });
 riskSettingsForm?.addEventListener("submit", saveRiskSettings);
 filterSettingsForm?.addEventListener("submit", saveFilterSettings);
@@ -154,13 +156,12 @@ async function loadState() {
 async function loadHistory() {
   if (!refreshHistoryButton) return;
   setButtonLoading(refreshHistoryButton, true);
-  setHistoryStatus("DB 조회 중...");
   try {
     historyState = normalizeHistoryState(await fetchHistory());
-    setHistoryStatus(`${historyState.date || selectedHistoryDate()} 기준`);
+    candidateHistoryMessage = "";
   } catch {
     historyState = { targets: [], orders: [], fills: [], logs: [], trades: [] };
-    setHistoryStatus("DB 기록을 불러오지 못했습니다.");
+    setAuthStatus("DB 기록을 불러오지 못했습니다.");
   } finally {
     setButtonLoading(refreshHistoryButton, false);
   }
@@ -177,14 +178,17 @@ async function submitManualScreening() {
     );
     const payload = await response.json();
     if (!response.ok || payload.ok === false) {
-      throw new Error(payload.error || "수동 리스트업 요청 실패");
+      throw new Error(payload.error || payload.message || "수동 리스트업 요청 실패");
     }
     setAuthStatus(payload.message || "수동 리스트업을 백그라운드에서 시작했습니다.");
     await pollManualScreeningStatus();
     await loadState();
     await loadHistory();
   } catch (error) {
-    setAuthStatus(error.message || "수동 리스트업 요청에 실패했습니다.");
+    const message = error.message || "수동 리스트업 요청에 실패했습니다.";
+    setAuthStatus(message);
+    candidateHistoryMessage = message;
+    render(currentState);
   } finally {
     setButtonLoading(manualScreeningButton, false);
   }
@@ -217,6 +221,9 @@ function setButtonLoading(button, isLoading) {
   if (!button) return;
   button.disabled = isLoading;
   button.classList.toggle("is-loading", isLoading);
+  document
+    .querySelector(`[data-spinner-for="${button.id}"]`)
+    ?.classList.toggle("is-loading", isLoading);
   button.setAttribute("aria-busy", isLoading ? "true" : "false");
 }
 
@@ -418,11 +425,10 @@ function fetchOptions(url, options = {}) {
 }
 
 function setAuthStatus(message) {
-  if (authStatus) authStatus.textContent = message;
-}
-
-function setHistoryStatus(message) {
-  if (historyStatus) historyStatus.textContent = message;
+  const text = message || "";
+  const shouldShowAuth = text.includes("토큰") || text.includes("인증");
+  if (securityBar) securityBar.hidden = !shouldShowAuth;
+  if (authStatus) authStatus.textContent = shouldShowAuth ? text : "";
 }
 
 function setRiskSettingsStatus(message) {
@@ -557,7 +563,13 @@ function renderSummary(accountState) {
 function renderTables(accountState) {
   const names = tickerNames(accountState);
   renderRows("#targetRows", accountState.targets, (row) => renderTargetRow(row, names), 8, "오늘 조건에 맞는 종목 없음");
-  renderRows("#candidateHistoryRows", historyState.targets, (row) => renderTargetRow(row, names), 8, "저장된 후보 리스트가 없습니다");
+  renderRows(
+    "#candidateHistoryRows",
+    historyState.targets,
+    (row) => renderTargetRow(row, names),
+    8,
+    candidateHistoryMessage || "저장된 후보 리스트가 없습니다",
+  );
   renderRows("#holdingRows", accountState.holdings, renderHoldingRow, 8, "보유 종목이 없습니다");
 
   const activityLogs = activePage === "activity" ? historyState.logs : accountState.logs;

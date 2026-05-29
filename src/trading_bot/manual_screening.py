@@ -8,6 +8,7 @@ from typing import Callable
 
 from trading_bot.composition import build_live_dry_run
 from trading_bot.config import load_kis_settings, load_settings
+from trading_bot.market_calendar import is_current_us_regular_session
 from trading_bot.monitor_state import state_from_dry_run
 
 
@@ -16,9 +17,13 @@ class ManualScreeningRunner:
         self,
         monitor_state: Path,
         run_screening: Callable[[], dict[str, object]] | None = None,
+        can_start: Callable[[], bool] | None = None,
     ) -> None:
         self.monitor_state = monitor_state
         self.run_screening = run_screening or self._run_live_screening
+        self.can_start = can_start or (
+            is_current_us_regular_session if run_screening is None else lambda: True
+        )
         self._lock = threading.Lock()
         self._running = False
         self._last_status: dict[str, object] = {
@@ -27,6 +32,14 @@ class ManualScreeningRunner:
         }
 
     def start(self) -> dict[str, object]:
+        if not self.can_start():
+            message = "수동 종목수집 시간대가 아닙니다. 미국 정규장 중에 다시 시도해주세요."
+            return {
+                "ok": False,
+                "started": False,
+                "status": {"running": False, "message": message},
+                "message": message,
+            }
         with self._lock:
             if self._running:
                 return {

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 from trading_bot.database import mssql_dsn_from_env, pyodbc_connect_factory
 from trading_bot.in_memory import InMemoryDailyRepository
 from trading_bot.news_cache import NewsCacheRepository, SqlServerNewsCacheRepository

@@ -9,8 +9,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# Register Windows scheduled tasks on a dedicated laptop or AWS Windows server.
-# This only registers tasks; the actual services are started by the launcher scripts.
+# 전용 노트북 또는 AWS Windows 서버에서 자동매매 작업 스케줄러를 등록합니다.
+# 콘솔 창이 뜨지 않도록 작업 스케줄러는 wscript 숨김 런처를 실행합니다.
 
 function Resolve-PythonPath {
     param(
@@ -48,16 +48,9 @@ function Register-AutoTradingTask {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
     }
 
-    # The task runs this PowerShell command.
-    # Passing Python through an environment variable keeps the source portable.
-    $argument = @(
-        "-NoProfile",
-        "-ExecutionPolicy Bypass",
-        "-WindowStyle Hidden",
-        "-Command `"& { `$env:AUTO_TRADING_PYTHON='$PythonPath'; Set-Location -LiteralPath '$WorkspacePath'; & '$ScriptPath' }`""
-    ) -join " "
-
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $argument
+    # powershell.exe를 직접 실행하면 창이 순간적으로 보일 수 있습니다.
+    # wscript.exe가 VBS 런처를 숨김 모드로 실행하게 해서 시작 창 노출을 막습니다.
+    $action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$ScriptPath`" `"$PythonPath`""
     if ($RunAsMode -eq "System") {
         $trigger = New-ScheduledTaskTrigger -AtStartup
         $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
@@ -72,6 +65,7 @@ function Register-AutoTradingTask {
         -MultipleInstances IgnoreNew `
         -RestartCount 3 `
         -RestartInterval (New-TimeSpan -Minutes 1)
+    $settings.Hidden = $true
 
     Register-ScheduledTask `
         -TaskName $TaskName `
@@ -86,8 +80,8 @@ function Register-AutoTradingTask {
 
 $workspacePath = (Resolve-Path -LiteralPath $Workspace).Path
 $resolvedPython = Resolve-PythonPath -WorkspacePath $workspacePath -RequestedPython $PythonPath
-$monitorScript = Join-Path $workspacePath "tools\start_monitor_server.ps1"
-$schedulerScript = Join-Path $workspacePath "tools\start_scheduler.ps1"
+$monitorScript = Join-Path $workspacePath "tools\start_monitor_server_hidden.vbs"
+$schedulerScript = Join-Path $workspacePath "tools\start_scheduler_hidden.vbs"
 
 if (-not (Test-Path -LiteralPath $monitorScript)) {
     throw "Monitor script not found: $monitorScript"

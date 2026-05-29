@@ -169,7 +169,7 @@ def save_runtime_risk_settings(
 ) -> dict[str, float]:
     stop = _validate_percent(stop_loss_percent, "손절 비율")
     profit = _validate_percent(take_profit_percent, "익절 비율")
-    payload = _read_runtime_settings(path)
+    payload = _runtime_settings_from_settings(load_settings())
     payload.update({
         "max_position_loss": -(stop / 100),
         "take_profit_rate": profit / 100,
@@ -330,8 +330,7 @@ def _required_env(name: str) -> str:
 
 def _apply_runtime_settings(settings: TradingSettings) -> TradingSettings:
     overrides = _read_runtime_settings()
-    if not overrides:
-        return _normalize_candidate_mode(settings)
+    overrides = _complete_runtime_settings(settings, overrides)
     if "refresh_intraday_candidates" in overrides:
         overrides["refresh_intraday_candidates"] = bool(overrides["refresh_intraday_candidates"])
     if "candidate_selection_mode" in overrides:
@@ -347,6 +346,38 @@ def _normalize_candidate_mode(settings: TradingSettings) -> TradingSettings:
     if not settings.refresh_intraday_candidates:
         return replace(settings, candidate_selection_mode=CANDIDATE_MODE_FIXED)
     return settings
+
+
+def _runtime_settings_from_settings(settings: TradingSettings) -> dict[str, float]:
+    return {
+        "max_position_loss": settings.max_position_loss,
+        "take_profit_rate": settings.take_profit_rate,
+        "min_total_score": settings.min_total_score,
+        "min_price_usd": settings.min_price_usd,
+        "max_price_usd": settings.max_price_usd,
+        "min_opening_price_change": settings.min_opening_price_change,
+        "min_volume_ratio": settings.min_volume_ratio,
+        "max_opening_gap": settings.max_opening_gap,
+        "refresh_intraday_candidates": 1.0 if settings.refresh_intraday_candidates else 0.0,
+        "candidate_selection_mode": _candidate_mode_to_float(settings.candidate_selection_mode),
+    }
+
+
+def _complete_runtime_settings(
+    settings: TradingSettings,
+    overrides: dict[str, float],
+    path: Path = RUNTIME_SETTINGS_PATH,
+) -> dict[str, float]:
+    # 화면에서 관리하는 매매 설정은 런타임 저장소(DB 또는 설정 파일)를 기준으로 운용합니다.
+    # 저장소가 비어 있거나 일부 키가 빠진 경우에만 현재 안전값으로 한 번 채워 넣습니다.
+    complete = _runtime_settings_from_settings(settings)
+    complete.update(overrides)
+    missing_keys = set(RUNTIME_SETTING_KEYS) - set(overrides)
+    if missing_keys:
+        if not _save_runtime_settings_to_db(complete):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(complete, ensure_ascii=False, indent=2), encoding="utf-8")
+    return complete
 
 
 def _read_runtime_settings(path: Path = RUNTIME_SETTINGS_PATH) -> dict[str, float]:

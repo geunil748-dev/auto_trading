@@ -38,3 +38,24 @@ def test_manual_screening_runner_blocks_duplicate_start(tmp_path) -> None:
 
     assert first["started"] is True
     assert second["started"] is False
+
+
+def test_manual_screening_runner_blocks_outside_allowed_time(tmp_path) -> None:
+    calls = []
+
+    def run_screening():
+        calls.append("run")
+        return {"ok": True, "message": "done"}
+
+    runner = ManualScreeningRunner(
+        tmp_path / "state.json",
+        run_screening,
+        can_start=lambda: False,
+    )
+
+    result = runner.start()
+
+    assert result["ok"] is False
+    assert result["started"] is False
+    assert "수동 종목수집 시간대가 아닙니다" in result["message"]
+    assert calls == []

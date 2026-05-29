@@ -1,2 +1,14 @@
 Set shell = CreateObject("WScript.Shell")
-shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""C:\auto_trading\tools\start_scheduler.ps1""", 0, False
+Set fso = CreateObject("Scripting.FileSystemObject")
+
+scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
+workspace = fso.GetParentFolderName(scriptDir)
+scriptPath = fso.BuildPath(scriptDir, "start_scheduler.ps1")
+
+shell.CurrentDirectory = workspace
+
+If WScript.Arguments.Count > 0 Then
+    shell.Environment("PROCESS")("AUTO_TRADING_PYTHON") = WScript.Arguments(0)
+End If
+
+shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & scriptPath & """", 0, False

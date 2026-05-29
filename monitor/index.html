@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>자동매매 모니터</title>
-    <link rel="stylesheet" href="./styles.css?v=25" />
-    <link rel="stylesheet" href="./panels.css?v=29" />
+    <link rel="stylesheet" href="./styles.css?v=29" />
+    <link rel="stylesheet" href="./panels.css?v=36" />
   </head>
   <body class="side-collapsed">
     <div class="app-frame">
@@ -63,7 +63,7 @@
           </div>
         </header>
 
-        <section class="security-bar" aria-label="모니터 인증">
+        <section class="security-bar" aria-label="모니터 인증" hidden>
           <label for="monitorToken">모니터 토큰</label>
           <input id="monitorToken" type="password" autocomplete="off" placeholder=".env 토큰 입력" />
           <button id="saveMonitorToken" type="button">저장</button>
@@ -106,15 +106,10 @@
         <section class="history-bar" aria-label="DB 기록 조회">
           <label for="historyDate">조회 날짜</label>
           <input id="historyDate" type="date" />
-          <button id="refreshHistory" type="button">
-            <span class="button-spinner" aria-hidden="true"></span>
+          <span class="button-spinner external-spinner" data-spinner-for="refreshHistory" aria-hidden="true"></span>
+          <button id="refreshHistory" class="ghost-action" type="button">
             <span>DB 새로고침</span>
           </button>
-          <label class="log-filter-toggle history-log-filter">
-            <input type="checkbox" id="showNoSellLogs" />
-            <span>매도 0건 로그 표시</span>
-          </label>
-          <span id="historyStatus"></span>
         </section>
 
         <section class="work-grid" aria-label="매매 현황">
@@ -125,8 +120,8 @@
                 <h2>리스트업 종목</h2>
               </div>
               <div class="panel-actions">
-                <button id="refreshState" type="button">
-                  <span class="button-spinner" aria-hidden="true"></span>
+                <span class="button-spinner external-spinner" data-spinner-for="refreshState" aria-hidden="true"></span>
+                <button id="refreshState" class="ghost-action" type="button">
                   <span>새로고침</span>
                 </button>
               </div>
@@ -183,8 +178,8 @@
                 <h2>후보 리스트</h2>
               </div>
               <div class="panel-actions">
-                <button id="manualScreening" type="button">
-                  <span class="button-spinner" aria-hidden="true"></span>
+                <span class="button-spinner external-spinner" data-spinner-for="manualScreening" aria-hidden="true"></span>
+                <button id="manualScreening" class="ghost-action" type="button">
                   <span>수동 리스트업</span>
                 </button>
               </div>
@@ -215,6 +210,7 @@
                 <h2>운용 결과</h2>
               </div>
             </div>
+            <div class="trade-list-box">
             <div class="trade-list-head run-summary-head" aria-hidden="true">
               <span>날짜</span>
               <span>진행모드</span>
@@ -227,6 +223,7 @@
               <span>취소</span>
             </div>
             <div class="trade-list run-summary-list" id="runSummaryRows"></div>
+            </div>
           </article>
 
           <article class="panel settings-panel">
@@ -331,6 +328,7 @@
                 접기
               </button>
             </div>
+            <div class="trade-list-box">
             <div class="trade-list-head" aria-hidden="true">
               <span>날짜</span>
               <span>종목명</span>
@@ -341,6 +339,7 @@
               <span>내용</span>
             </div>
             <div class="trade-list" id="orderRows"></div>
+            </div>
           </article>
 
           <article class="panel fills">
@@ -353,6 +352,7 @@
                 접기
               </button>
             </div>
+            <div class="trade-list-box">
             <div class="trade-list-head" aria-hidden="true">
               <span>날짜</span>
               <span>종목명</span>
@@ -363,6 +363,7 @@
               <span>내용</span>
             </div>
             <div class="trade-list" id="fillRows"></div>
+            </div>
           </article>
 
           <article class="panel logs">
@@ -371,9 +372,15 @@
                 <p class="eyebrow">주문 시도</p>
                 <h2>체결 시도 로그</h2>
               </div>
-              <button class="panel-toggle" type="button" data-collapse-target="logs" aria-expanded="true">
-                접기
-              </button>
+              <div class="panel-actions logs-actions">
+                <label class="log-filter-toggle">
+                  <input type="checkbox" id="showNoSellLogs" />
+                  <span>매도 0건 로그 표시</span>
+                </label>
+                <button class="panel-toggle" type="button" data-collapse-target="logs" aria-expanded="true">
+                  접기
+                </button>
+              </div>
             </div>
             <div class="log-stream" id="logRows"></div>
           </article>
@@ -381,6 +388,6 @@
       </main>
     </div>
     <script src="./runtime-controls.js?v=2"></script>
-    <script src="./app.js?v=47"></script>
+    <script src="./app.js?v=54"></script>
   </body>
 </html>
