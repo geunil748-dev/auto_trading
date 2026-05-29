@@ -522,11 +522,16 @@ td strong,
 }
 
 .history-log-filter {
+  display: none;
   min-height: 38px;
   padding-inline: 10px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: #10171d;
+}
+
+body[data-page="activity"] .history-log-filter {
+  display: inline-flex;
 }
 
 .panel-toggle {
