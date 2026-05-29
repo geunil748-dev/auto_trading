@@ -248,6 +248,19 @@ def test_sql_repository_writes_daily_run_summary() -> None:
     assert cursor.calls[1][1][3:9] == (12.5, 3.4, 2, 1, 4, 3)
 
 
+def test_sql_monitor_run_summaries_ignore_history_date() -> None:
+    cursor = Cursor()
+    repository = SqlServerMonitorRepository(lambda: Connection(cursor))
+
+    repository.history_run_summaries(date(2026, 5, 22))
+
+    sql, params = cursor.calls[-1]
+    assert "daily_run_summary" in sql
+    assert "WHERE is_mock = 1" in sql
+    assert "trade_date = ?" not in sql
+    assert params == (20,)
+
+
 def test_sql_repository_writes_holding_snapshot() -> None:
     cursors: list[Cursor] = []
 

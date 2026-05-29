@@ -1527,11 +1527,10 @@ class SqlServerMonitorRepository:
                        cancelled_order_count, buy_fill_count, sell_fill_count,
                        updated_at
                 FROM daily_run_summary
-                WHERE trade_date = ?
-                  AND is_mock = 1
-                ORDER BY updated_at DESC, id DESC
+                WHERE is_mock = 1
+                ORDER BY trade_date DESC, updated_at DESC, id DESC
                 """,
-                (limit, trade_date),
+                (limit,),
             )
         except Exception:
             return []
