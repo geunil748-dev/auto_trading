@@ -201,7 +201,7 @@ def test_sql_repository_writes_daily_rows_and_logs() -> None:
         (date(2026, 5, 22), "AAA", "", 12, 0.0, 0.0, 180.0, 4.0)
     ]
     assert cursors[3].calls[0][1] == [(date(2026, 5, 22), "AAA", 95, 80, 81.5, True)]
-    assert cursors[5].calls[0][1][1:] == ("INFO", "test", "stored")
+    assert cursors[5].calls[0][1][1:4] == ("INFO", "test", "stored")
     assert cursors[9].calls[0][1] == [
         (
             date(2026, 5, 22),
@@ -221,6 +221,16 @@ def test_sql_repository_writes_daily_rows_and_logs() -> None:
             None,
             None,
             True,
+            "REQUESTED",
+            0,
+            2,
+            None,
+            None,
+            None,
+            "",
+            None,
+            None,
+            None,
         )
     ]
     assert all(connection.closed for connection in connections)
@@ -376,6 +386,12 @@ def test_sql_repository_writes_account_and_order_snapshots() -> None:
             0,
             "1001",
             True,
+            "FILLED",
+            2,
+            2,
+            0,
+            12.5,
+            "22:40:10",
         )
     ]
 

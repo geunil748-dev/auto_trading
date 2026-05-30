@@ -1,6 +1,8 @@
+from datetime import datetime, timedelta
+
 from trading_bot.config import KisSettings, TradingSettings
 from trading_bot.models import AccountState, BuyIntent, PositionState, ScoreRecord, SellIntent
-from trading_bot.scheduled_tasks import live_mock_tasks
+from trading_bot.scheduled_tasks import _apply_stop_loss_entry_guards, live_mock_tasks
 
 
 class Accounts:
@@ -53,6 +55,26 @@ class RecordingExecutor:
     def execute(self, intents: list[SellIntent]) -> list[object]:
         self.calls.append(intents)
         return [object() for _ in intents]
+
+
+class RiskRepository:
+    def __init__(
+        self,
+        last_stop_loss_at=None,
+        consecutive_stop_loss_count: int = 0,
+    ) -> None:
+        self.last_value = last_stop_loss_at
+        self.count = consecutive_stop_loss_count
+        self.logs = []
+
+    def last_stop_loss_at(self, trade_date, ticker):
+        return self.last_value
+
+    def consecutive_stop_loss_count(self, trade_date):
+        return self.count
+
+    def save_log(self, log):
+        self.logs.append(log)
 
 
 class RecheckAccounts:
@@ -111,7 +133,7 @@ def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> N
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_mock_sell_executor",
-        lambda kis_settings, repository: executor,
+        lambda kis_settings, repository, settings=None: executor,
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks._write_live_state",
@@ -188,6 +210,32 @@ def test_cancel_unfilled_submits_cancellations_and_refreshes_monitor(
     assert calls == ["refresh"]
 
 
+def test_stop_loss_cooldown_blocks_same_symbol_entry() -> None:
+    repository = RiskRepository(last_stop_loss_at=datetime.now() - timedelta(minutes=5))
+
+    intents = _apply_stop_loss_entry_guards(
+        [BuyIntent("AAA", 1, 10, 10, 0.01)],
+        repository,
+        TradingSettings(stop_loss_cooldown_minutes=30),
+    )
+
+    assert intents == []
+    assert repository.logs[0].reject_reason == "STOP_LOSS_COOLDOWN"
+
+
+def test_consecutive_stop_loss_limit_blocks_all_new_entries() -> None:
+    repository = RiskRepository(consecutive_stop_loss_count=3)
+
+    intents = _apply_stop_loss_entry_guards(
+        [BuyIntent("AAA", 1, 10, 10, 0.01)],
+        repository,
+        TradingSettings(max_consecutive_stop_loss_count=3),
+    )
+
+    assert intents == []
+    assert repository.logs[0].reject_reason == "CONSECUTIVE_STOP_LOSS_LIMIT"
+
+
 def test_market_closed_skips_scheduled_trading_and_writes_monitor_state(tmp_path) -> None:
     state_path = tmp_path / "state.json"
     tasks = live_mock_tasks(
@@ -213,7 +261,7 @@ def test_intraday_watch_submits_one_exit_and_remembers_pending_sells(
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_mock_sell_executor",
-        lambda kis_settings, repository: executor,
+        lambda kis_settings, repository, settings=None: executor,
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks._write_live_state",
@@ -240,7 +288,7 @@ def test_intraday_recheck_screens_and_limits_additional_buys(monkeypatch, tmp_pa
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_mock_buy_executor",
-        lambda kis_settings, repository: executor,
+        lambda kis_settings, repository, settings=None: executor,
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks._unfilled_order_tickers",
@@ -300,7 +348,7 @@ def test_intraday_recheck_can_reuse_fixed_watchlist(monkeypatch, tmp_path) -> No
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_mock_buy_executor",
-        lambda kis_settings, repository: executor,
+        lambda kis_settings, repository, settings=None: executor,
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks._unfilled_order_tickers",
@@ -352,7 +400,7 @@ def test_fixed_watchlist_waits_for_next_opening_collection(monkeypatch, tmp_path
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_mock_buy_executor",
-        lambda kis_settings, repository: RecordingExecutor(),
+        lambda kis_settings, repository, settings=None: RecordingExecutor(),
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks._unfilled_order_tickers",
@@ -411,7 +459,7 @@ def test_intraday_recheck_hybrid_merges_opening_and_refresh_candidates(monkeypat
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_mock_buy_executor",
-        lambda kis_settings, repository: executor,
+        lambda kis_settings, repository, settings=None: executor,
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks._unfilled_order_tickers",
@@ -463,7 +511,7 @@ def test_intraday_recheck_blocks_add_on_when_order_is_unfilled(
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_mock_buy_executor",
-        lambda kis_settings, repository: executor,
+        lambda kis_settings, repository, settings=None: executor,
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.state_from_dry_run",

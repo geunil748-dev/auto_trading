@@ -30,6 +30,14 @@ RUNTIME_SETTING_KEYS = {
     "require_5m_volume_increase",
     "require_vwap_or_ma20",
     "require_pullback_rebreak",
+    "stop_loss_cooldown_minutes",
+    "max_consecutive_stop_loss_count",
+    "max_bid_ask_spread_rate",
+    "max_expected_fill_price_gap_rate",
+    "max_order_retry_count",
+    "order_retry_delay_seconds",
+    "partial_fill_policy",
+    "unfilled_cancel_after_seconds",
 }
 
 CANDIDATE_MODE_REFRESH = "refresh"
@@ -40,6 +48,9 @@ CANDIDATE_SELECTION_MODES = {
     CANDIDATE_MODE_FIXED,
     CANDIDATE_MODE_HYBRID,
 }
+PARTIAL_FILL_POLICY_KEEP = "KEEP_REMAINING"
+PARTIAL_FILL_POLICY_CANCEL = "CANCEL_REMAINING"
+PARTIAL_FILL_POLICIES = {PARTIAL_FILL_POLICY_KEEP, PARTIAL_FILL_POLICY_CANCEL}
 
 
 @dataclass(frozen=True)
@@ -81,6 +92,14 @@ class TradingSettings:
     mock_unfilled_reorder_minutes: int = 2
     mock_unfilled_reorder_limit: int = 1
     real_unfilled_reorder_minutes: int = 1
+    stop_loss_cooldown_minutes: int = 30
+    max_consecutive_stop_loss_count: int = 3
+    max_bid_ask_spread_rate: float = 1.0
+    max_expected_fill_price_gap_rate: float = 1.0
+    max_order_retry_count: int = 2
+    order_retry_delay_seconds: int = 3
+    partial_fill_policy: str = PARTIAL_FILL_POLICY_KEEP
+    unfilled_cancel_after_seconds: int = 60
     news_cache_ttl_minutes: int = 30
     real_trading_enabled: bool = False
     real_max_order_krw: int = 100000
@@ -152,6 +171,14 @@ def load_settings() -> TradingSettings:
         mock_unfilled_reorder_minutes=_int_env("MOCK_UNFILLED_REORDER_MINUTES", 2),
         mock_unfilled_reorder_limit=_int_env("MOCK_UNFILLED_REORDER_LIMIT", 1),
         real_unfilled_reorder_minutes=_int_env("REAL_UNFILLED_REORDER_MINUTES", 1),
+        stop_loss_cooldown_minutes=_int_env("STOP_LOSS_COOLDOWN_MINUTES", 30),
+        max_consecutive_stop_loss_count=_int_env("MAX_CONSECUTIVE_STOP_LOSS_COUNT", 3),
+        max_bid_ask_spread_rate=_float_env("MAX_BID_ASK_SPREAD_RATE", 1.0),
+        max_expected_fill_price_gap_rate=_float_env("MAX_EXPECTED_FILL_PRICE_GAP_RATE", 1.0),
+        max_order_retry_count=_int_env("MAX_ORDER_RETRY_COUNT", 2),
+        order_retry_delay_seconds=_int_env("ORDER_RETRY_DELAY_SECONDS", 3),
+        partial_fill_policy=_partial_fill_policy_env(),
+        unfilled_cancel_after_seconds=_int_env("UNFILLED_CANCEL_AFTER_SECONDS", 60),
         news_cache_ttl_minutes=_int_env("NEWS_CACHE_TTL_MINUTES", 30),
         take_profit_rate=_float_env("TAKE_PROFIT_RATE", 0.05),
         partial_take_profit_enabled=_bool_env("PARTIAL_TAKE_PROFIT_ENABLED", True),
@@ -190,6 +217,14 @@ def runtime_risk_settings_payload(
         "require5mVolumeIncrease": bool(current.require_5m_volume_increase),
         "requireVwapOrMa20": bool(current.require_vwap_or_ma20),
         "requirePullbackRebreak": bool(current.require_pullback_rebreak),
+        "stopLossCooldownMinutes": current.stop_loss_cooldown_minutes,
+        "maxConsecutiveStopLossCount": current.max_consecutive_stop_loss_count,
+        "maxBidAskSpreadRate": current.max_bid_ask_spread_rate,
+        "maxExpectedFillPriceGapRate": current.max_expected_fill_price_gap_rate,
+        "maxOrderRetryCount": current.max_order_retry_count,
+        "orderRetryDelaySeconds": current.order_retry_delay_seconds,
+        "partialFillPolicy": current.partial_fill_policy,
+        "unfilledCancelAfterSeconds": current.unfilled_cancel_after_seconds,
     }
 
 
@@ -212,6 +247,14 @@ def save_runtime_risk_settings(
     require_5m_volume_increase: bool | None = None,
     require_vwap_or_ma20: bool | None = None,
     require_pullback_rebreak: bool | None = None,
+    stop_loss_cooldown_minutes: float | None = None,
+    max_consecutive_stop_loss_count: float | None = None,
+    max_bid_ask_spread_rate: float | None = None,
+    max_expected_fill_price_gap_rate: float | None = None,
+    max_order_retry_count: float | None = None,
+    order_retry_delay_seconds: float | None = None,
+    partial_fill_policy: str | None = None,
+    unfilled_cancel_after_seconds: float | None = None,
     path: Path = RUNTIME_SETTINGS_PATH,
 ) -> dict[str, float]:
     stop = _validate_percent(stop_loss_percent, "손절 비율")
@@ -270,6 +313,43 @@ def save_runtime_risk_settings(
         payload["require_vwap_or_ma20"] = 1.0 if require_vwap_or_ma20 else 0.0
     if require_pullback_rebreak is not None:
         payload["require_pullback_rebreak"] = 1.0 if require_pullback_rebreak else 0.0
+    if stop_loss_cooldown_minutes is not None:
+        payload["stop_loss_cooldown_minutes"] = _validate_minutes(
+            stop_loss_cooldown_minutes,
+            "손절 후 재진입 제한 시간",
+        )
+    if max_consecutive_stop_loss_count is not None:
+        payload["max_consecutive_stop_loss_count"] = _validate_count(
+            max_consecutive_stop_loss_count,
+            "연속 손절 제한 횟수",
+            10,
+        )
+    if max_bid_ask_spread_rate is not None:
+        payload["max_bid_ask_spread_rate"] = _validate_percent_range(
+            max_bid_ask_spread_rate,
+            "호가 스프레드 제한",
+        )
+    if max_expected_fill_price_gap_rate is not None:
+        payload["max_expected_fill_price_gap_rate"] = _validate_percent_range(
+            max_expected_fill_price_gap_rate,
+            "예상 체결가 괴리 제한",
+        )
+    if max_order_retry_count is not None:
+        payload["max_order_retry_count"] = _validate_count(max_order_retry_count, "주문 재시도 횟수", 10)
+    if order_retry_delay_seconds is not None:
+        payload["order_retry_delay_seconds"] = _validate_count(
+            order_retry_delay_seconds,
+            "주문 재시도 대기 시간",
+            60,
+        )
+    if partial_fill_policy is not None:
+        payload["partial_fill_policy"] = _partial_fill_policy_to_float(partial_fill_policy)
+    if unfilled_cancel_after_seconds is not None:
+        payload["unfilled_cancel_after_seconds"] = _validate_count(
+            unfilled_cancel_after_seconds,
+            "미체결 취소 대기 시간",
+            3600,
+        )
     if not _save_runtime_settings_to_db(payload):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -337,6 +417,47 @@ def save_runtime_risk_settings(
                 payload.get(
                     "require_pullback_rebreak",
                     float(current.require_pullback_rebreak),
+                )
+            ),
+            stop_loss_cooldown_minutes=int(
+                payload.get(
+                    "stop_loss_cooldown_minutes",
+                    current.stop_loss_cooldown_minutes,
+                )
+            ),
+            max_consecutive_stop_loss_count=int(
+                payload.get(
+                    "max_consecutive_stop_loss_count",
+                    current.max_consecutive_stop_loss_count,
+                )
+            ),
+            max_bid_ask_spread_rate=payload.get(
+                "max_bid_ask_spread_rate",
+                current.max_bid_ask_spread_rate,
+            ),
+            max_expected_fill_price_gap_rate=payload.get(
+                "max_expected_fill_price_gap_rate",
+                current.max_expected_fill_price_gap_rate,
+            ),
+            max_order_retry_count=int(
+                payload.get("max_order_retry_count", current.max_order_retry_count)
+            ),
+            order_retry_delay_seconds=int(
+                payload.get(
+                    "order_retry_delay_seconds",
+                    current.order_retry_delay_seconds,
+                )
+            ),
+            partial_fill_policy=_partial_fill_policy_from_float(
+                payload.get(
+                    "partial_fill_policy",
+                    _partial_fill_policy_to_float(current.partial_fill_policy),
+                )
+            ),
+            unfilled_cancel_after_seconds=int(
+                payload.get(
+                    "unfilled_cancel_after_seconds",
+                    current.unfilled_cancel_after_seconds,
                 )
             ),
         )
@@ -432,6 +553,10 @@ def _candidate_mode_env() -> str:
     return CANDIDATE_MODE_REFRESH if _bool_env("REFRESH_INTRADAY_CANDIDATES", True) else CANDIDATE_MODE_FIXED
 
 
+def _partial_fill_policy_env() -> str:
+    return _validate_partial_fill_policy(os.getenv("PARTIAL_FILL_POLICY", PARTIAL_FILL_POLICY_KEEP))
+
+
 def _required_env(name: str) -> str:
     raw = os.getenv(name)
     if not raw:
@@ -458,6 +583,19 @@ def _apply_runtime_settings(settings: TradingSettings) -> TradingSettings:
         overrides["candidate_selection_mode"] = _candidate_mode_from_float(
             overrides["candidate_selection_mode"]
         )
+    if "partial_fill_policy" in overrides:
+        overrides["partial_fill_policy"] = _partial_fill_policy_from_float(
+            overrides["partial_fill_policy"]
+        )
+    for key in (
+        "stop_loss_cooldown_minutes",
+        "max_consecutive_stop_loss_count",
+        "max_order_retry_count",
+        "order_retry_delay_seconds",
+        "unfilled_cancel_after_seconds",
+    ):
+        if key in overrides:
+            overrides[key] = int(overrides[key])
     return _normalize_candidate_mode(replace(settings, **overrides))
 
 
@@ -491,6 +629,14 @@ def _runtime_settings_from_settings(settings: TradingSettings) -> dict[str, floa
         "require_5m_volume_increase": 1.0 if settings.require_5m_volume_increase else 0.0,
         "require_vwap_or_ma20": 1.0 if settings.require_vwap_or_ma20 else 0.0,
         "require_pullback_rebreak": 1.0 if settings.require_pullback_rebreak else 0.0,
+        "stop_loss_cooldown_minutes": float(settings.stop_loss_cooldown_minutes),
+        "max_consecutive_stop_loss_count": float(settings.max_consecutive_stop_loss_count),
+        "max_bid_ask_spread_rate": settings.max_bid_ask_spread_rate,
+        "max_expected_fill_price_gap_rate": settings.max_expected_fill_price_gap_rate,
+        "max_order_retry_count": float(settings.max_order_retry_count),
+        "order_retry_delay_seconds": float(settings.order_retry_delay_seconds),
+        "partial_fill_policy": _partial_fill_policy_to_float(settings.partial_fill_policy),
+        "unfilled_cancel_after_seconds": float(settings.unfilled_cancel_after_seconds),
     }
 
 
@@ -594,6 +740,21 @@ def _candidate_mode_from_float(value: float) -> str:
     return CANDIDATE_MODE_REFRESH
 
 
+def _validate_partial_fill_policy(value: str) -> str:
+    policy = str(value).strip().upper()
+    if policy not in PARTIAL_FILL_POLICIES:
+        raise ValueError("부분 체결 정책은 KEEP_REMAINING 또는 CANCEL_REMAINING 중 하나여야 합니다.")
+    return policy
+
+
+def _partial_fill_policy_to_float(policy: str) -> float:
+    return 2.0 if _validate_partial_fill_policy(policy) == PARTIAL_FILL_POLICY_CANCEL else 1.0
+
+
+def _partial_fill_policy_from_float(value: float) -> str:
+    return PARTIAL_FILL_POLICY_CANCEL if int(float(value)) == 2 else PARTIAL_FILL_POLICY_KEEP
+
+
 def _validate_price_range(
     min_value: float | None,
     max_value: float | None,
@@ -628,3 +789,10 @@ def _validate_minutes(value: float, label: str) -> float:
     if minutes < 0 or minutes > 60:
         raise ValueError(f"{label}은 0 이상 60 이하로 입력해 주세요.")
     return minutes
+
+
+def _validate_count(value: float, label: str, max_value: int) -> int:
+    count = int(float(value))
+    if count < 0 or count > max_value:
+        raise ValueError(f"{label}은 0 이상 {max_value} 이하로 입력해 주세요.")
+    return count

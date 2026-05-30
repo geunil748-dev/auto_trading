@@ -1,5 +1,6 @@
 from datetime import date
 
+from trading_bot.config import TradingSettings
 from trading_bot.models import BotLog, BuyIntent, TradeRecord
 from trading_bot.order_execution import BuyIntentExecutor
 
@@ -38,6 +39,10 @@ def test_buy_intent_executor_submits_and_records_mock_orders() -> None:
             2,
             entry_reason="OPENING_BREAKOUT",
             entry_reason_detail="",
+            order_status="SUCCESS",
+            order_qty=2,
+            filled_qty=0,
+            remaining_qty=2,
         )
     ]
     assert repository.trades == trades
@@ -80,6 +85,7 @@ def test_buy_intent_executor_records_failures_and_continues() -> None:
         submit_order=submit_order,
         repository=repository,
         today=lambda: date(2026, 5, 22),
+        settings=TradingSettings(max_order_retry_count=0),
     ).execute(
         [
             BuyIntent("FAIL", 1, 9.1, 9.1, 0.01),
@@ -91,6 +97,48 @@ def test_buy_intent_executor_records_failures_and_continues() -> None:
     assert repository.trades == trades
     assert repository.logs[0].level == "ERROR"
     assert "FAIL" in repository.logs[0].message
-    assert repository.logs[1].level == "INFO"
-    assert "OK" in repository.logs[1].message
-    assert "FAIL" not in repository.logs[1].message
+    assert repository.logs[1].reject_reason == "ORDER_FAILED"
+    assert repository.logs[2].level == "INFO"
+    assert "OK" in repository.logs[2].message
+    assert "FAIL" not in repository.logs[2].message
+
+
+def test_buy_intent_executor_retries_temporary_api_errors() -> None:
+    repository = Repository()
+    calls = 0
+
+    def submit_order(intent: BuyIntent) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("temporary")
+        return {"ok": True}
+
+    trades = BuyIntentExecutor(
+        submit_order=submit_order,
+        repository=repository,
+        today=lambda: date(2026, 5, 22),
+        settings=TradingSettings(max_order_retry_count=2, order_retry_delay_seconds=0),
+        retry_sleep=lambda _: None,
+    ).execute([BuyIntent("AAA", 1, 10, 10, 0.01)])
+
+    assert calls == 2
+    assert trades[0].retry_count == 1
+    assert [item.reject_reason for item in repository.logs[:2]] == ["API_ERROR", "RETRY"]
+
+
+def test_buy_intent_executor_blocks_wide_bid_ask_spread() -> None:
+    submitted: list[BuyIntent] = []
+    repository = Repository()
+
+    trades = BuyIntentExecutor(
+        submit_order=lambda intent: submitted.append(intent) or {"ok": True},
+        repository=repository,
+        today=lambda: date(2026, 5, 22),
+        settings=TradingSettings(max_bid_ask_spread_rate=1.0),
+        quote_reader=lambda _: {"bid": "9.00", "ask": "10.50", "last": "10.00"},
+    ).execute([BuyIntent("AAA", 1, 10, 10, 0.01)])
+
+    assert submitted == []
+    assert trades == []
+    assert repository.logs[0].reject_reason == "BID_ASK_SPREAD_TOO_WIDE"

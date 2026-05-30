@@ -59,11 +59,18 @@ def build_live_dry_run(
 def build_mock_buy_executor(
     kis_settings: KisSettings,
     repository: DailyRepository,
+    settings: TradingSettings | None = None,
 ) -> BuyIntentExecutor:
     kis = KisOverseasClient(KisJsonClient(kis_settings))
     submitter = KisMockBuySubmitter(kis, kis_settings)
     clock = SystemClock()
-    return BuyIntentExecutor(submitter.submit, repository, clock.today)
+    return BuyIntentExecutor(
+        submitter.submit,
+        repository,
+        clock.today,
+        settings=settings,
+        quote_reader=kis.quote,
+    )
 
 
 def collect_mock_list_intents(
@@ -96,8 +103,9 @@ def build_live_exit_poll(
 def build_mock_sell_executor(
     kis_settings: KisSettings,
     repository: DailyRepository,
+    settings: TradingSettings | None = None,
 ) -> SellIntentExecutor:
     kis = KisOverseasClient(KisJsonClient(kis_settings))
     submitter = KisMockSellSubmitter(kis, kis_settings)
     clock = SystemClock()
-    return SellIntentExecutor(submitter.submit, repository, clock.today)
+    return SellIntentExecutor(submitter.submit, repository, clock.today, settings=settings)

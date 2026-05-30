@@ -83,3 +83,32 @@ def test_stale_unfilled_buy_cancel_requests_waits_for_age_and_retry_limit() -> N
             "appointed_order_no": "",
         }
     ]
+
+
+def test_stale_unfilled_buy_cancel_requests_can_use_seconds_policy() -> None:
+    now = datetime(2026, 5, 29, 23, 10, 30, tzinfo=ZoneInfo("Asia/Seoul"))
+    rows = [
+        {
+            "pdno": "AAA",
+            "odno": "111",
+            "nccs_qty": "2",
+            "ord_tmd": "230000",
+            "sll_buy_dvsn_cd_name": "매수",
+        },
+        {
+            "pdno": "BBB",
+            "odno": "222",
+            "nccs_qty": "1",
+            "ord_tmd": "231000",
+            "sll_buy_dvsn_cd_name": "매수",
+        },
+    ]
+
+    requests = stale_unfilled_buy_cancel_requests(
+        rows,
+        max_age_minutes=99,
+        max_age_seconds=60,
+        now=now,
+    )
+
+    assert [item["ticker"] for item in requests] == ["AAA"]

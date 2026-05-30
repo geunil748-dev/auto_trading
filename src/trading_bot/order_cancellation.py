@@ -49,9 +49,11 @@ def stale_unfilled_buy_cancel_requests(
     max_age_minutes: int,
     retried_tickers: Iterable[str] = (),
     now: datetime | None = None,
+    max_age_seconds: int | None = None,
 ) -> list[dict[str, object]]:
     current = now or datetime.now(KST)
     retried = {_ticker(item) for item in retried_tickers}
+    max_age = timedelta(seconds=max_age_seconds) if max_age_seconds is not None else timedelta(minutes=max_age_minutes)
     requests: list[dict[str, object]] = []
     for row in rows:
         ticker = _first_text(row, "pdno", "PDNO")
@@ -66,7 +68,7 @@ def stale_unfilled_buy_cancel_requests(
         ordered_at = _ordered_at(row, current)
         if ordered_at is None:
             continue
-        if current - ordered_at < timedelta(minutes=max_age_minutes):
+        if current - ordered_at < max_age:
             continue
         requests.append(
             {

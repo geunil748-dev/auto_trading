@@ -127,6 +127,11 @@ class BotLog:
     level: str
     module: str
     message: str
+    symbol: str = ""
+    name: str = ""
+    reject_reason: str = ""
+    actual_value: float | None = None
+    threshold_value: float | None = None
 
 
 @dataclass(frozen=True)
@@ -168,6 +173,16 @@ class TradeRecord:
     max_price_after_buy: float | None = None
     is_mock: bool = True
     ticker_name: str = ""
+    order_status: str = "REQUESTED"
+    retry_count: int = 0
+    order_qty: int | None = None
+    filled_qty: int | None = None
+    remaining_qty: int | None = None
+    avg_fill_price_usd: float | None = None
+    last_fill_time: str = ""
+    reject_reason: str | None = None
+    actual_value: float | None = None
+    threshold_value: float | None = None
 
 
 @dataclass(frozen=True)

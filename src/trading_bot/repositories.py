@@ -226,18 +226,7 @@ class SqlServerDailyRepository:
         is_mock: bool = True,
     ) -> None:
         rows = [
-            (
-                trade_date,
-                _text(item.get("time")),
-                _text(item.get("ticker")),
-                _text(item.get("name")),
-                _text(item.get("side")),
-                int(_number(item.get("quantity"))),
-                _number(item.get("price")),
-                int(_number(item.get("unfilled"))),
-                _text(item.get("orderNo")),
-                is_mock,
-            )
+            _order_snapshot_row(item, trade_date, is_mock)
             for item in orders
             if _text(item.get("ticker"))
         ]
@@ -253,10 +242,11 @@ class SqlServerDailyRepository:
             """
             INSERT INTO order_snapshot
                 (trade_date, order_date, order_time, ticker, ticker_name, side, quantity,
-                 order_price, unfilled_quantity, order_no, is_mock)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 order_price, unfilled_quantity, order_no, is_mock, order_status, order_qty,
+                 filled_qty, remaining_qty, avg_fill_price, last_fill_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            [(row[0], *row) for row in rows],
+            rows,
         )
 
     def save_daily_scores(self, scores: Iterable[DailyScore]) -> None:
@@ -284,10 +274,22 @@ class SqlServerDailyRepository:
         self._ensure_bot_log_table()
         self._execute(
             """
-            INSERT INTO bot_log (trade_date, log_level, module, message)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO bot_log
+                (trade_date, log_level, module, message, symbol, ticker_name,
+                 reject_reason, actual_value, threshold_value)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (current_trade_date(), log.level, log.module, log.message),
+            (
+                current_trade_date(),
+                log.level,
+                log.module,
+                log.message,
+                log.symbol,
+                log.name,
+                log.reject_reason,
+                log.actual_value,
+                log.threshold_value,
+            ),
         )
 
     def save_daily_run_summary(
@@ -373,6 +375,16 @@ class SqlServerDailyRepository:
                 item.entry_reason,
                 item.entry_reason_detail,
                 item.is_mock,
+                item.order_status,
+                item.retry_count,
+                item.order_qty if item.order_qty is not None else item.quantity,
+                item.filled_qty,
+                item.remaining_qty,
+                item.avg_fill_price_usd,
+                item.last_fill_time,
+                item.reject_reason,
+                item.actual_value,
+                item.threshold_value,
             )
             for item in trade_items
         ]
@@ -382,8 +394,10 @@ class SqlServerDailyRepository:
             INSERT INTO trade_history
                 (trade_date, ticker, ticker_name, order_type, order_price, exec_price,
                  entry_price, max_price_after_buy, quantity, usd_krw_rate, profit_usd,
-                 profit_krw, profit_rate, exit_reason, entry_reason, entry_reason_detail, is_mock)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 profit_krw, profit_rate, exit_reason, entry_reason, entry_reason_detail, is_mock,
+                 order_status, retry_count, order_qty, filled_qty, remaining_qty, avg_fill_price,
+                 last_fill_time, reject_reason, actual_value, threshold_value)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
@@ -532,6 +546,45 @@ class SqlServerDailyRepository:
         )
         return {_text(ticker).upper() for (ticker,) in rows if _text(ticker)}
 
+    def last_stop_loss_at(self, trade_date: date, ticker: str):
+        self._ensure_trade_history_columns()
+        rows = self._query(
+            """
+            SELECT TOP (1) created_at
+            FROM trade_history
+            WHERE trade_date = ?
+              AND ticker = ?
+              AND order_type = 'SELL'
+              AND exit_reason = 'STOP_LOSS'
+            ORDER BY created_at DESC, id DESC
+            """,
+            (trade_date, _text(ticker).upper()),
+        )
+        return rows[0][0] if rows else None
+
+    def consecutive_stop_loss_count(self, trade_date: date) -> int:
+        self._ensure_trade_history_columns()
+        rows = self._query(
+            """
+            SELECT TOP (50) exit_reason
+            FROM trade_history
+            WHERE trade_date = ?
+              AND order_type = 'SELL'
+              AND exit_reason IS NOT NULL
+            ORDER BY created_at DESC, id DESC
+            """,
+            (trade_date,),
+        )
+        count = 0
+        for (reason,) in rows:
+            value = _text(reason).upper()
+            if value == "STOP_LOSS":
+                count += 1
+                continue
+            if value in {"TAKE_PROFIT", "PARTIAL_TAKE_PROFIT"}:
+                break
+        return count
+
     def _ensure_trade_history_columns(self) -> None:
         self._execute_statement(
             """
@@ -546,6 +599,36 @@ class SqlServerDailyRepository:
 
             IF COL_LENGTH('dbo.trade_history', 'entry_reason_detail') IS NULL
                 ALTER TABLE dbo.trade_history ADD entry_reason_detail NVARCHAR(500) NULL
+
+            IF COL_LENGTH('dbo.trade_history', 'order_status') IS NULL
+                ALTER TABLE dbo.trade_history ADD order_status VARCHAR(40) NULL
+
+            IF COL_LENGTH('dbo.trade_history', 'retry_count') IS NULL
+                ALTER TABLE dbo.trade_history ADD retry_count INT NULL
+
+            IF COL_LENGTH('dbo.trade_history', 'order_qty') IS NULL
+                ALTER TABLE dbo.trade_history ADD order_qty INT NULL
+
+            IF COL_LENGTH('dbo.trade_history', 'filled_qty') IS NULL
+                ALTER TABLE dbo.trade_history ADD filled_qty INT NULL
+
+            IF COL_LENGTH('dbo.trade_history', 'remaining_qty') IS NULL
+                ALTER TABLE dbo.trade_history ADD remaining_qty INT NULL
+
+            IF COL_LENGTH('dbo.trade_history', 'avg_fill_price') IS NULL
+                ALTER TABLE dbo.trade_history ADD avg_fill_price DECIMAL(10, 2) NULL
+
+            IF COL_LENGTH('dbo.trade_history', 'last_fill_time') IS NULL
+                ALTER TABLE dbo.trade_history ADD last_fill_time VARCHAR(20) NULL
+
+            IF COL_LENGTH('dbo.trade_history', 'reject_reason') IS NULL
+                ALTER TABLE dbo.trade_history ADD reject_reason VARCHAR(80) NULL
+
+            IF COL_LENGTH('dbo.trade_history', 'actual_value') IS NULL
+                ALTER TABLE dbo.trade_history ADD actual_value FLOAT NULL
+
+            IF COL_LENGTH('dbo.trade_history', 'threshold_value') IS NULL
+                ALTER TABLE dbo.trade_history ADD threshold_value FLOAT NULL
             """,
         )
         self._execute_statement(
@@ -857,12 +940,36 @@ class SqlServerDailyRepository:
                     unfilled_quantity INT,
                     order_no VARCHAR(30),
                     is_mock BIT DEFAULT 1,
+                    order_status VARCHAR(40),
+                    order_qty INT,
+                    filled_qty INT,
+                    remaining_qty INT,
+                    avg_fill_price DECIMAL(12, 2),
+                    last_fill_time VARCHAR(20),
                     created_at DATETIME DEFAULT GETDATE()
                 );
             END
 
             IF COL_LENGTH('dbo.order_snapshot', 'trade_date') IS NULL
                 ALTER TABLE dbo.order_snapshot ADD trade_date DATE NULL
+
+            IF COL_LENGTH('dbo.order_snapshot', 'order_status') IS NULL
+                ALTER TABLE dbo.order_snapshot ADD order_status VARCHAR(40) NULL
+
+            IF COL_LENGTH('dbo.order_snapshot', 'order_qty') IS NULL
+                ALTER TABLE dbo.order_snapshot ADD order_qty INT NULL
+
+            IF COL_LENGTH('dbo.order_snapshot', 'filled_qty') IS NULL
+                ALTER TABLE dbo.order_snapshot ADD filled_qty INT NULL
+
+            IF COL_LENGTH('dbo.order_snapshot', 'remaining_qty') IS NULL
+                ALTER TABLE dbo.order_snapshot ADD remaining_qty INT NULL
+
+            IF COL_LENGTH('dbo.order_snapshot', 'avg_fill_price') IS NULL
+                ALTER TABLE dbo.order_snapshot ADD avg_fill_price DECIMAL(12, 2) NULL
+
+            IF COL_LENGTH('dbo.order_snapshot', 'last_fill_time') IS NULL
+                ALTER TABLE dbo.order_snapshot ADD last_fill_time VARCHAR(20) NULL
 
             EXEC(N'
             UPDATE dbo.order_snapshot
@@ -883,12 +990,32 @@ class SqlServerDailyRepository:
                     log_level VARCHAR(10),
                     module VARCHAR(50),
                     message NVARCHAR(500),
+                    symbol VARCHAR(10),
+                    ticker_name NVARCHAR(100),
+                    reject_reason VARCHAR(80),
+                    actual_value FLOAT,
+                    threshold_value FLOAT,
                     created_at DATETIME DEFAULT GETDATE()
                 );
             END
 
             IF COL_LENGTH('dbo.bot_log', 'trade_date') IS NULL
                 ALTER TABLE dbo.bot_log ADD trade_date DATE NULL
+
+            IF COL_LENGTH('dbo.bot_log', 'symbol') IS NULL
+                ALTER TABLE dbo.bot_log ADD symbol VARCHAR(10) NULL
+
+            IF COL_LENGTH('dbo.bot_log', 'ticker_name') IS NULL
+                ALTER TABLE dbo.bot_log ADD ticker_name NVARCHAR(100) NULL
+
+            IF COL_LENGTH('dbo.bot_log', 'reject_reason') IS NULL
+                ALTER TABLE dbo.bot_log ADD reject_reason VARCHAR(80) NULL
+
+            IF COL_LENGTH('dbo.bot_log', 'actual_value') IS NULL
+                ALTER TABLE dbo.bot_log ADD actual_value FLOAT NULL
+
+            IF COL_LENGTH('dbo.bot_log', 'threshold_value') IS NULL
+                ALTER TABLE dbo.bot_log ADD threshold_value FLOAT NULL
 
             EXEC(N'
             UPDATE dbo.bot_log
@@ -1681,6 +1808,40 @@ class SqlServerMonitorRepository:
         return profit / cost_basis * 100
 
 
+def _order_snapshot_row(
+    item: dict[str, str],
+    trade_date: date,
+    is_mock: bool,
+) -> tuple[Any, ...]:
+    quantity = int(_number(item.get("quantity")))
+    unfilled = int(_number(item.get("unfilled")))
+    filled = max(0, quantity - unfilled)
+    status = "FILLED" if quantity > 0 and unfilled == 0 else "REQUESTED"
+    if filled > 0 and unfilled > 0:
+        status = "PARTIALLY_FILLED"
+    price = _number(item.get("price"))
+    time_text = _text(item.get("time"))
+    return (
+        trade_date,
+        trade_date,
+        time_text,
+        _text(item.get("ticker")),
+        _text(item.get("name")),
+        _text(item.get("side")),
+        quantity,
+        price,
+        unfilled,
+        _text(item.get("orderNo")),
+        is_mock,
+        status,
+        quantity,
+        filled,
+        unfilled,
+        price if filled > 0 else None,
+        time_text if filled > 0 else "",
+    )
+
+
 def _number(value: Any) -> float:
     if value is None:
         return 0.0
@@ -1721,4 +1882,12 @@ def _settings_snapshot(settings: TradingSettings) -> dict[str, object]:
         "openingFixedCandidateLimit": settings.opening_fixed_candidate_limit,
         "intradayRefreshCandidateLimit": settings.intraday_refresh_candidate_limit,
         "hybridCandidateLimit": settings.hybrid_candidate_limit,
+        "stopLossCooldownMinutes": settings.stop_loss_cooldown_minutes,
+        "maxConsecutiveStopLossCount": settings.max_consecutive_stop_loss_count,
+        "maxBidAskSpreadRate": settings.max_bid_ask_spread_rate,
+        "maxExpectedFillPriceGapRate": settings.max_expected_fill_price_gap_rate,
+        "maxOrderRetryCount": settings.max_order_retry_count,
+        "orderRetryDelaySeconds": settings.order_retry_delay_seconds,
+        "partialFillPolicy": settings.partial_fill_policy,
+        "unfilledCancelAfterSeconds": settings.unfilled_cancel_after_seconds,
     }

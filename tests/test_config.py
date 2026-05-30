@@ -61,6 +61,37 @@ def test_load_settings_reads_unfilled_reorder_policies(monkeypatch) -> None:
     assert settings.real_unfilled_reorder_minutes == 1
 
 
+def test_load_settings_reads_p1_stability_settings(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in (
+        "MSSQL_DSN",
+        "MSSQL_HOST",
+        "MSSQL_DATABASE",
+        "MSSQL_USERNAME",
+        "MSSQL_PASSWORD",
+    ):
+        monkeypatch.setenv(name, "")
+    monkeypatch.setenv("STOP_LOSS_COOLDOWN_MINUTES", "45")
+    monkeypatch.setenv("MAX_CONSECUTIVE_STOP_LOSS_COUNT", "4")
+    monkeypatch.setenv("MAX_BID_ASK_SPREAD_RATE", "1.5")
+    monkeypatch.setenv("MAX_EXPECTED_FILL_PRICE_GAP_RATE", "2.5")
+    monkeypatch.setenv("MAX_ORDER_RETRY_COUNT", "3")
+    monkeypatch.setenv("ORDER_RETRY_DELAY_SECONDS", "5")
+    monkeypatch.setenv("PARTIAL_FILL_POLICY", "CANCEL_REMAINING")
+    monkeypatch.setenv("UNFILLED_CANCEL_AFTER_SECONDS", "90")
+
+    settings = load_settings()
+
+    assert settings.stop_loss_cooldown_minutes == 45
+    assert settings.max_consecutive_stop_loss_count == 4
+    assert settings.max_bid_ask_spread_rate == 1.5
+    assert settings.max_expected_fill_price_gap_rate == 2.5
+    assert settings.max_order_retry_count == 3
+    assert settings.order_retry_delay_seconds == 5
+    assert settings.partial_fill_policy == "CANCEL_REMAINING"
+    assert settings.unfilled_cancel_after_seconds == 90
+
+
 def test_load_notification_settings_reads_optional_alert_channels(monkeypatch) -> None:
     monkeypatch.setenv("ALERT_DISCORD_WEBHOOK_URL", "https://discord.example")
     monkeypatch.setenv("ALERT_TELEGRAM_BOT_TOKEN", "telegram-token")
