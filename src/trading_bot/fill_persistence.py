@@ -10,10 +10,12 @@ from trading_bot.models import FillRecord
 def fill_records_from_monitor_rows(
     fills: Iterable[Mapping[str, Any]],
     entry_prices: Mapping[str, float] | None = None,
+    entry_reasons: Mapping[str, tuple[str, str]] | None = None,
     is_mock: bool = True,
 ) -> list[FillRecord]:
     records: list[FillRecord] = []
     entries = {key.upper(): (0, value) for key, value in (entry_prices or {}).items()}
+    reasons = {key.upper(): value for key, value in (entry_reasons or {}).items()}
     rows = sorted(fills, key=_sort_key)
     for row in rows:
         ticker = _text(row.get("ticker")).upper()
@@ -29,6 +31,7 @@ def fill_records_from_monitor_rows(
         profit_usd, profit_rate = _realized_profit(side, fill_price, quantity, entry_price)
         if _is_sell(side):
             entries[ticker] = _remaining_entry(entries.get(ticker), quantity)
+        entry_reason, entry_reason_detail = reasons.get(ticker, (None, None))
         records.append(
             FillRecord(
                 trade_date=trade_date,
@@ -42,6 +45,8 @@ def fill_records_from_monitor_rows(
                 order_no=_text(row.get("orderNo")),
                 profit_usd=profit_usd,
                 profit_rate=profit_rate,
+                entry_reason=entry_reason,
+                entry_reason_detail=entry_reason_detail,
                 is_mock=is_mock,
             )
         )

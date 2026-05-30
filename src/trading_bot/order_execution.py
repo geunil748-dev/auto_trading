@@ -48,6 +48,8 @@ class BuyIntentExecutor:
                     order_price_usd=intent.limit_price_usd,
                     exec_price_usd=None,
                     quantity=intent.quantity,
+                    entry_reason=intent.entry_reason,
+                    entry_reason_detail=intent.entry_reason_detail,
                     is_mock=self.mock,
                 )
             )
@@ -62,7 +64,8 @@ def _buy_log(intents: list[BuyIntent]) -> str:
     details = [
         (
             f"{item.ticker} {item.quantity}주 @ ${item.limit_price_usd:,.2f} "
-            f"(주문금액 ${item.order_value_usd:,.2f}, 배분 {item.allocation_fraction:.1%})"
+            f"(주문금액 ${item.order_value_usd:,.2f}, 배분 {item.allocation_fraction:.1%}, "
+            f"사유 {item.entry_reason})"
         )
         for item in intents
     ]

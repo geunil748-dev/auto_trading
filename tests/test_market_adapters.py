@@ -160,7 +160,14 @@ def test_kis_breakout_history_combines_quote_and_previous_daily_range() -> None:
             assert ticker == "AAA"
             return [{"high": "12.00", "low": "8.00"}]
 
-    assert KisBreakoutHistory(Kis()).breakout_input("AAA") == (12.5, 11, 12, 8)
+    result = KisBreakoutHistory(Kis()).breakout_input("AAA")
+
+    assert (
+        result.last_price_usd,
+        result.open_price_usd,
+        result.previous_high_usd,
+        result.previous_low_usd,
+    ) == (12.5, 11, 12, 8)
 
 
 def test_kis_breakout_history_uses_daily_open_when_quote_has_no_open() -> None:
@@ -174,4 +181,11 @@ def test_kis_breakout_history_uses_daily_open_when_quote_has_no_open() -> None:
                 {"open": "10.00", "high": "12.00", "low": "8.00"},
             ]
 
-    assert KisBreakoutHistory(Kis()).breakout_input("AAA") == (12.5, 11, 12, 8)
+    result = KisBreakoutHistory(Kis()).breakout_input("AAA")
+
+    assert (
+        result.last_price_usd,
+        result.open_price_usd,
+        result.previous_high_usd,
+        result.previous_low_usd,
+    ) == (12.5, 11, 12, 8)

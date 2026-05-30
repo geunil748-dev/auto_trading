@@ -370,6 +370,8 @@ class SqlServerDailyRepository:
                 item.profit_krw,
                 item.profit_rate,
                 item.exit_reason,
+                item.entry_reason,
+                item.entry_reason_detail,
                 item.is_mock,
             )
             for item in trade_items
@@ -380,8 +382,8 @@ class SqlServerDailyRepository:
             INSERT INTO trade_history
                 (trade_date, ticker, ticker_name, order_type, order_price, exec_price,
                  entry_price, max_price_after_buy, quantity, usd_krw_rate, profit_usd,
-                 profit_krw, profit_rate, exit_reason, is_mock)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 profit_krw, profit_rate, exit_reason, entry_reason, entry_reason_detail, is_mock)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
@@ -400,6 +402,8 @@ class SqlServerDailyRepository:
                 item.profit_usd,
                 item.profit_rate,
                 item.order_no,
+                item.entry_reason,
+                item.entry_reason_detail,
                 item.is_mock,
             )
             for item in fills
@@ -423,7 +427,10 @@ class SqlServerDailyRepository:
                 )
                 BEGIN
                     UPDATE fill_history
-                    SET profit_usd = ?, profit_rate = ?
+                    SET profit_usd = ?,
+                        profit_rate = ?,
+                        entry_reason = COALESCE(entry_reason, ?),
+                        entry_reason_detail = COALESCE(entry_reason_detail, ?)
                     WHERE trade_date = ?
                       AND ISNULL(fill_time, '') = ?
                       AND ticker = ?
@@ -436,8 +443,9 @@ class SqlServerDailyRepository:
                 BEGIN
                     INSERT INTO fill_history
                         (trade_date, fill_date, fill_time, ticker, ticker_name, side, quantity,
-                         fill_price, fill_amount, profit_usd, profit_rate, order_no, is_mock)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         fill_price, fill_amount, profit_usd, profit_rate, order_no,
+                         entry_reason, entry_reason_detail, is_mock)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 END
                 """,
                 (
@@ -447,16 +455,18 @@ class SqlServerDailyRepository:
                     row[4],
                     row[5],
                     row[6],
-                    row[11],
+                    row[13],
                     row[8],
                     row[9],
+                    row[11],
+                    row[12],
                     row[0],
                     row[1],
                     row[2],
                     row[4],
                     row[5],
                     row[6],
-                    row[11],
+                    row[13],
                     row[0],
                     *row,
                 ),
@@ -482,6 +492,46 @@ class SqlServerDailyRepository:
                 prices[key] = _number(entry_price)
         return prices
 
+    def entry_reasons(self, trade_date: date) -> dict[str, tuple[str, str]]:
+        self._ensure_trade_history_columns()
+        rows = self._query(
+            """
+            SELECT ticker, entry_reason, entry_reason_detail
+            FROM (
+                SELECT ticker, entry_reason, entry_reason_detail,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY ticker ORDER BY created_at DESC, id DESC
+                       ) AS rn
+                FROM trade_history
+                WHERE trade_date = ?
+                  AND order_type = 'BUY'
+                  AND entry_reason IS NOT NULL
+            ) latest
+            WHERE rn = 1
+            """,
+            (trade_date,),
+        )
+        reasons: dict[str, tuple[str, str]] = {}
+        for ticker, reason, detail in rows:
+            key = _text(ticker).upper()
+            if key and reason:
+                reasons[key] = (_text(reason), _text(detail))
+        return reasons
+
+    def partial_take_profit_tickers(self, trade_date: date) -> set[str]:
+        self._ensure_trade_history_columns()
+        rows = self._query(
+            """
+            SELECT DISTINCT ticker
+            FROM trade_history
+            WHERE trade_date = ?
+              AND order_type = 'SELL'
+              AND exit_reason = 'PARTIAL_TAKE_PROFIT'
+            """,
+            (trade_date,),
+        )
+        return {_text(ticker).upper() for (ticker,) in rows if _text(ticker)}
+
     def _ensure_trade_history_columns(self) -> None:
         self._execute_statement(
             """
@@ -490,6 +540,12 @@ class SqlServerDailyRepository:
 
             IF COL_LENGTH('dbo.trade_history', 'ticker_name') IS NULL
                 ALTER TABLE dbo.trade_history ADD ticker_name NVARCHAR(100) NULL
+
+            IF COL_LENGTH('dbo.trade_history', 'entry_reason') IS NULL
+                ALTER TABLE dbo.trade_history ADD entry_reason VARCHAR(80) NULL
+
+            IF COL_LENGTH('dbo.trade_history', 'entry_reason_detail') IS NULL
+                ALTER TABLE dbo.trade_history ADD entry_reason_detail NVARCHAR(500) NULL
             """,
         )
         self._execute_statement(
@@ -600,6 +656,8 @@ class SqlServerDailyRepository:
                     profit_usd DECIMAL(10, 2),
                     profit_rate DECIMAL(8, 4),
                     order_no VARCHAR(30),
+                    entry_reason VARCHAR(80),
+                    entry_reason_detail NVARCHAR(500),
                     is_mock BIT DEFAULT 1,
                     created_at DATETIME DEFAULT GETDATE()
                 );
@@ -613,6 +671,12 @@ class SqlServerDailyRepository:
 
             IF COL_LENGTH('dbo.fill_history', 'trade_date') IS NULL
                 ALTER TABLE dbo.fill_history ADD trade_date DATE NULL
+
+            IF COL_LENGTH('dbo.fill_history', 'entry_reason') IS NULL
+                ALTER TABLE dbo.fill_history ADD entry_reason VARCHAR(80) NULL
+
+            IF COL_LENGTH('dbo.fill_history', 'entry_reason_detail') IS NULL
+                ALTER TABLE dbo.fill_history ADD entry_reason_detail NVARCHAR(500) NULL
 
             EXEC(N'
             UPDATE dbo.fill_history
@@ -1224,7 +1288,7 @@ class SqlServerMonitorRepository:
             """
             SELECT TOP (?) trade_date, created_at, ticker, ticker_name,
                    order_type, order_price, quantity, exit_reason,
-                   profit_usd, profit_rate
+                   profit_usd, profit_rate, entry_reason, entry_reason_detail
             FROM trade_history
             WHERE trade_date = ?
             ORDER BY created_at DESC
@@ -1262,7 +1326,8 @@ class SqlServerMonitorRepository:
             return self._query(
                 """
                 SELECT TOP (?) fill_date, fill_time, ticker, ticker_name, side,
-                       quantity, fill_price, fill_amount, profit_usd, profit_rate
+                       quantity, fill_price, fill_amount, profit_usd, profit_rate,
+                       entry_reason, entry_reason_detail
                 FROM fill_history
                 WHERE trade_date = ?
                 ORDER BY created_at DESC
@@ -1507,6 +1572,52 @@ class SqlServerMonitorRepository:
         except Exception:
             return []
 
+    def entry_reason_performance(self, limit: int = 50) -> list[tuple[Any, ...]]:
+        try:
+            rows = self._query(
+                """
+                SELECT entry_reason, profit_usd, profit_rate
+                FROM fill_history
+                WHERE profit_usd IS NOT NULL
+                  AND entry_reason IS NOT NULL
+                  AND entry_reason <> ''
+                  AND (side LIKE N'%매도%' OR UPPER(side) IN ('SELL', 'S'))
+                ORDER BY created_at DESC
+                """,
+                (),
+            )
+        except Exception:
+            return []
+        stats: dict[str, dict[str, float]] = {}
+        for reason, profit_usd, profit_rate in rows:
+            tokens = [item.strip() for item in str(reason or "").split("+") if item.strip()]
+            for token in tokens:
+                item = stats.setdefault(
+                    token,
+                    {"count": 0.0, "profit": 0.0, "rate": 0.0, "wins": 0.0},
+                )
+                profit = _number(profit_usd)
+                item["count"] += 1
+                item["profit"] += profit
+                item["rate"] += _number(profit_rate)
+                if profit > 0:
+                    item["wins"] += 1
+        ranked = sorted(
+            stats.items(),
+            key=lambda pair: (pair[1]["profit"], pair[1]["rate"]),
+            reverse=True,
+        )
+        return [
+            (
+                reason,
+                int(item["count"]),
+                item["profit"],
+                item["rate"] / item["count"] if item["count"] else 0.0,
+                item["wins"] / item["count"] if item["count"] else 0.0,
+            )
+            for reason, item in ranked[:limit]
+        ]
+
     def history_logs(self, trade_date: date, limit: int = 200) -> list[tuple[Any, ...]]:
         return self._query(
             """
@@ -1600,6 +1711,7 @@ def _settings_snapshot(settings: TradingSettings) -> dict[str, object]:
         "candidateSelectionMode": settings.candidate_selection_mode,
         "stopLossPercent": abs(settings.max_position_loss * 100),
         "takeProfitPercent": settings.take_profit_rate * 100,
+        "partialTakeProfitEnabled": settings.partial_take_profit_enabled,
         "minTotalScore": settings.min_total_score,
         "minPriceUsd": settings.min_price_usd,
         "maxPriceUsd": settings.max_price_usd,

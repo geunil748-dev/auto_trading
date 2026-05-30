@@ -273,6 +273,8 @@ BEGIN
         profit_krw DECIMAL(12, 2),
         profit_rate DECIMAL(6, 2),
         exit_reason VARCHAR(20),
+        entry_reason VARCHAR(80),
+        entry_reason_detail NVARCHAR(500),
         is_mock BIT DEFAULT 1,
         created_at DATETIME DEFAULT GETDATE()
     );
@@ -286,6 +288,16 @@ END;
 IF COL_LENGTH('dbo.trade_history', 'ticker_name') IS NULL
 BEGIN
     ALTER TABLE dbo.trade_history ADD ticker_name NVARCHAR(100) NULL;
+END;
+
+IF COL_LENGTH('dbo.trade_history', 'entry_reason') IS NULL
+BEGIN
+    ALTER TABLE dbo.trade_history ADD entry_reason VARCHAR(80) NULL;
+END;
+
+IF COL_LENGTH('dbo.trade_history', 'entry_reason_detail') IS NULL
+BEGIN
+    ALTER TABLE dbo.trade_history ADD entry_reason_detail NVARCHAR(500) NULL;
 END;
 
 IF OBJECT_ID(N'dbo.fill_history', N'U') IS NULL
@@ -304,6 +316,8 @@ BEGIN
         profit_usd DECIMAL(10, 2),
         profit_rate DECIMAL(8, 4),
         order_no VARCHAR(30),
+        entry_reason VARCHAR(80),
+        entry_reason_detail NVARCHAR(500),
         is_mock BIT DEFAULT 1,
         created_at DATETIME DEFAULT GETDATE()
     );
@@ -328,6 +342,16 @@ END;
 IF COL_LENGTH('dbo.fill_history', 'profit_rate') IS NULL
 BEGIN
     ALTER TABLE dbo.fill_history ADD profit_rate DECIMAL(8, 4) NULL;
+END;
+
+IF COL_LENGTH('dbo.fill_history', 'entry_reason') IS NULL
+BEGIN
+    ALTER TABLE dbo.fill_history ADD entry_reason VARCHAR(80) NULL;
+END;
+
+IF COL_LENGTH('dbo.fill_history', 'entry_reason_detail') IS NULL
+BEGIN
+    ALTER TABLE dbo.fill_history ADD entry_reason_detail NVARCHAR(500) NULL;
 END;
 
 EXEC(N'

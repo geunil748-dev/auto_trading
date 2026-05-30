@@ -36,6 +36,10 @@ class SqlMonitorStateSource:
             ],
             "logs": [_log(row) for row in self.repository.latest_logs()],
             "trades": [_trade(row) for row in self.repository.latest_trades()],
+            "entryReasonStats": [
+                _entry_reason_stat(row)
+                for row in self.repository.entry_reason_performance()
+            ],
             "summary": _summary(realized_profit),
             "chart": {"closes": [], "movingAverage": []},
         }
@@ -60,6 +64,10 @@ class SqlMonitorStateSource:
             "runSummaries": [
                 _run_summary(row)
                 for row in self.repository.history_run_summaries(trade_date)
+            ],
+            "entryReasonStats": [
+                _entry_reason_stat(row)
+                for row in self.repository.entry_reason_performance()
             ],
             "summary": _summary(realized_profit),
         }
@@ -176,23 +184,36 @@ def _log(row: tuple[Any, ...]) -> list[str]:
 
 
 def _trade(row: tuple[Any, ...]) -> dict[str, str]:
-    if len(row) >= 10:
+    if len(row) >= 12:
         trade_date, created_at, ticker, ticker_name, order_type, order_price, quantity, exit_reason = row[:8]
         profit_usd = row[8]
         profit_rate = row[9]
+        entry_reason = row[10]
+        entry_reason_detail = row[11]
+    elif len(row) >= 10:
+        trade_date, created_at, ticker, ticker_name, order_type, order_price, quantity, exit_reason = row[:8]
+        profit_usd = row[8]
+        profit_rate = row[9]
+        entry_reason = None
+        entry_reason_detail = None
     elif len(row) >= 9:
         trade_date, created_at, ticker, order_type, order_price, quantity, exit_reason = row[:7]
         ticker_name = ""
         profit_usd = row[7]
         profit_rate = row[8]
+        entry_reason = None
+        entry_reason_detail = None
     else:
         trade_date, created_at = None, None
         ticker, order_type, order_price, quantity, exit_reason = row[:5]
         ticker_name = ""
         profit_usd = row[5] if len(row) > 5 else None
         profit_rate = row[6] if len(row) > 6 else None
+        entry_reason = None
+        entry_reason_detail = None
     date_text = _date_text(trade_date) if trade_date is not None else ""
     time_text = _time_text(created_at)
+    reason = entry_reason if _side_text(order_type) == "매수" else exit_reason
     return {
         "date": date_text,
         "time": time_text,
@@ -202,7 +223,9 @@ def _trade(row: tuple[Any, ...]) -> dict[str, str]:
         "type": _side_text(order_type),
         "price": f"${_number(order_price):.2f}",
         "quantity": str(quantity),
-        "exitReason": "" if exit_reason is None else _reason_text(str(exit_reason)),
+        "exitReason": "" if reason is None else _reason_text(str(reason)),
+        "entryReason": "" if entry_reason is None else _reason_text(str(entry_reason)),
+        "entryReasonDetail": "" if entry_reason_detail is None else str(entry_reason_detail),
         "profitUsd": "" if profit_usd is None else _signed_usd(_number(profit_usd)),
         "profitRate": "" if profit_rate is None else f"{_number(profit_rate) * 100:+.2f}%",
     }
@@ -212,6 +235,8 @@ def _fill(row: tuple[Any, ...]) -> dict[str, str]:
     fill_date, fill_time, ticker, ticker_name, side, quantity, fill_price, fill_amount = row[:8]
     profit_usd = row[8] if len(row) > 8 else None
     profit_rate = row[9] if len(row) > 9 else None
+    entry_reason = row[10] if len(row) > 10 else None
+    entry_reason_detail = row[11] if len(row) > 11 else None
     date_text = _date_text(fill_date)
     time_text = "" if fill_time is None else str(fill_time)
     return {
@@ -226,6 +251,8 @@ def _fill(row: tuple[Any, ...]) -> dict[str, str]:
         "total": f"${_number(fill_amount):,.2f}",
         "profitUsd": "" if profit_usd is None else _signed_usd(_number(profit_usd)),
         "profitRate": "" if profit_rate is None else f"{_number(profit_rate) * 100:+.2f}%",
+        "entryReason": "" if entry_reason is None else _reason_text(str(entry_reason)),
+        "entryReasonDetail": "" if entry_reason_detail is None else str(entry_reason_detail),
     }
 
 
@@ -240,12 +267,20 @@ def _run_summary(row: tuple[Any, ...]) -> dict[str, str]:
     buy_fill_count = row[7] if len(row) > 8 else 0
     sell_fill_count = row[8] if len(row) > 8 else 0
     updated_at = row[9] if len(row) > 8 else row[7]
-    settings = _settings_text(settings_json)
+    settings = _settings_summary(settings_json)
     return {
         "date": _date_text(trade_date),
         "updatedAt": _time_text(updated_at),
         "mode": _mode_text(mode),
-        "settings": settings,
+        "settings": settings["text"],
+        "stopLossPercent": settings["stopLossPercent"],
+        "takeProfitPercent": settings["takeProfitPercent"],
+        "partialTakeProfit": settings["partialTakeProfit"],
+        "minTotalScore": settings["minTotalScore"],
+        "priceRange": settings["priceRange"],
+        "minOpeningPriceChangePercent": settings["minOpeningPriceChangePercent"],
+        "minVolumeRatio": settings["minVolumeRatio"],
+        "maxOpeningGapPercent": settings["maxOpeningGapPercent"],
         "profitUsd": _signed_usd(_number(realized_profit)),
         "profitRate": f"{_number(realized_rate):+.2f}%",
         "eodSellCount": str(int(_number(eod_sell_count))),
@@ -255,11 +290,22 @@ def _run_summary(row: tuple[Any, ...]) -> dict[str, str]:
     }
 
 
-def _settings_text(settings_json: Any) -> str:
+def _entry_reason_stat(row: tuple[Any, ...]) -> dict[str, str]:
+    reason, count, total_profit, average_rate, win_rate = row[:5]
+    return {
+        "reason": _reason_text(str(reason)),
+        "count": str(int(_number(count))),
+        "totalProfitUsd": _signed_usd(_number(total_profit)),
+        "averageProfitRate": f"{_number(average_rate) * 100:+.2f}%",
+        "winRate": f"{_number(win_rate) * 100:.1f}%",
+    }
+
+
+def _settings_summary(settings_json: Any) -> dict[str, str]:
     try:
         settings = json.loads(str(settings_json or "{}"))
     except json.JSONDecodeError:
-        return "-"
+        return _empty_settings_summary()
     labels = [
         ("손절", "stopLossPercent", "%"),
         ("익절", "takeProfitPercent", "%"),
@@ -282,7 +328,56 @@ def _settings_text(settings_json: Any) -> str:
             continue
         else:
             parts.append(f"{label} {_compact_number(value)}{suffix}")
-    return " · ".join(parts) or "-"
+    if "partialTakeProfitEnabled" in settings:
+        state = "사용" if settings["partialTakeProfitEnabled"] else "미사용"
+        parts.append(f"분할익절 {state}")
+    return {
+        "text": " · ".join(parts) or "-",
+        "stopLossPercent": _setting_value(settings, "stopLossPercent", "%"),
+        "takeProfitPercent": _setting_value(settings, "takeProfitPercent", "%"),
+        "partialTakeProfit": _partial_take_profit_text(settings),
+        "minTotalScore": _setting_value(settings, "minTotalScore", "점"),
+        "priceRange": _price_range_text(settings),
+        "minOpeningPriceChangePercent": _setting_value(
+            settings,
+            "minOpeningPriceChangePercent",
+            "%",
+        ),
+        "minVolumeRatio": _setting_value(settings, "minVolumeRatio", "배"),
+        "maxOpeningGapPercent": _setting_value(settings, "maxOpeningGapPercent", "%"),
+    }
+
+
+def _empty_settings_summary() -> dict[str, str]:
+    return {
+        "text": "-",
+        "stopLossPercent": "-",
+        "takeProfitPercent": "-",
+        "partialTakeProfit": "-",
+        "minTotalScore": "-",
+        "priceRange": "-",
+        "minOpeningPriceChangePercent": "-",
+        "minVolumeRatio": "-",
+        "maxOpeningGapPercent": "-",
+    }
+
+
+def _setting_value(settings: dict[str, Any], key: str, suffix: str) -> str:
+    if key not in settings:
+        return "-"
+    return f"{_compact_number(settings[key])}{suffix}"
+
+
+def _price_range_text(settings: dict[str, Any]) -> str:
+    if "minPriceUsd" not in settings:
+        return "-"
+    return f"${_compact_number(settings['minPriceUsd'])}~${_compact_number(settings.get('maxPriceUsd'))}"
+
+
+def _partial_take_profit_text(settings: dict[str, Any]) -> str:
+    if "partialTakeProfitEnabled" not in settings:
+        return "-"
+    return "사용" if settings["partialTakeProfitEnabled"] else "미사용"
 
 
 def _compact_number(value: Any) -> str:
@@ -421,7 +516,10 @@ def _replace_known_tokens(text: str) -> str:
 
 
 def _reason_text(reason: str) -> str:
-    return _REASON_TEXT.get(reason.strip(), reason.strip())
+    raw = reason.strip()
+    if "+" in raw:
+        return " + ".join(_reason_text(part) for part in raw.split("+") if part.strip())
+    return _REASON_TEXT.get(raw, raw)
 
 
 def _mode_text(mode: Any) -> str:
@@ -440,17 +538,27 @@ _REASON_TEXT = {
     "FX_VOLATILITY": "환율 변동성 초과",
     "INVALID_ACCOUNT_EQUITY": "계좌 평가금액 확인 불가",
     "INVALID_ORDER_VALUE": "주문 금액 오류",
+    "CHART_POSITIVE": "차트 조건 양호",
+    "HYBRID_CANDIDATE": "장초반+15분 후보",
+    "INTRADAY_RECHECK": "15분 재평가",
     "LOW_OPENING_CHANGE": "장초반 상승률 부족",
     "LOW_OPENING_VOLUME": "장초반 거래량 부족",
     "MARKET_BELOW_MA20": "나스닥 20일선 하회",
     "MANUAL_SELL": "수동 매도",
     "MANUAL_SELL_ALL": "전량 수동 매도",
     "MISSING_SNAPSHOT": "시세 스냅샷 없음",
+    "NEWS_POSITIVE": "뉴스 긍정",
+    "OPENING_BREAKOUT": "장초반 돌파",
+    "OPENING_FIXED": "장초반 고정 후보",
     "OPENING_GAP": "시가 갭 과다",
+    "PARTIAL_TAKE_PROFIT": "분할 익절",
     "OPEN_POSITION_LIMIT": "최대 보유 종목 수 초과",
     "PENNY_STOCK": "가격 하한 미달",
     "POSITION_EXPOSURE_LIMIT": "종목별 투자비중 초과",
     "PRICE_CAP": "가격 상한 초과",
+    "PYRAMIDING": "불타기 추가매수",
+    "RANKED_LIST": "랭킹 후보",
+    "REFRESH_CANDIDATE": "15분 신규 후보",
     "STOP_LOSS": "손절",
     "TAKE_PROFIT": "익절",
     "TRAILING_STOP": "트레일링 스탑",

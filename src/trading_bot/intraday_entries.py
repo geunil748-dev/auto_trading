@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import replace
 
 from trading_bot.config import TradingSettings
 from trading_bot.models import BuyIntent, PositionState
@@ -29,12 +30,17 @@ def limited_intraday_buy_intents(
         ticker = _ticker(intent.ticker)
         if ticker in unfilled:
             continue
+        reason = "INTRADAY_RECHECK"
+        detail = "15분 재평가 후보"
         if ticker in held:
-            if not _pyramiding_allowed(held[ticker], ticker, added, settings):
+            position = held[ticker]
+            if not _pyramiding_allowed(position, ticker, added, settings):
                 continue
+            reason = "PYRAMIDING"
+            detail = f"보유 종목 수익률 {position.profit_rate:.2%} 이상 추세 확인 후 추가 매수"
         elif ticker in submitted:
             continue
-        accepted.append(intent)
+        accepted.append(_append_entry_reason(intent, reason, detail))
         submitted.add(ticker)
     return accepted
 
@@ -53,3 +59,11 @@ def _pyramiding_allowed(
         position.profit_rate >= settings.min_pyramiding_profit_rate
         and ticker not in add_on_tickers
     )
+
+
+def _append_entry_reason(intent: BuyIntent, reason: str, detail: str) -> BuyIntent:
+    reasons = [item for item in intent.entry_reason.split("+") if item]
+    if reason not in reasons:
+        reasons.append(reason)
+    detail_text = "; ".join(item for item in (intent.entry_reason_detail, detail) if item)
+    return replace(intent, entry_reason="+".join(reasons), entry_reason_detail=detail_text)

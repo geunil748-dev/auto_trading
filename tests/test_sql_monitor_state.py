@@ -81,7 +81,8 @@ class Repository:
             (
                 "2026-05-22",
                 "hybrid",
-                '{"stopLossPercent":5,"takeProfitPercent":10,"minTotalScore":40,'
+                '{"stopLossPercent":5,"takeProfitPercent":10,"partialTakeProfitEnabled":true,'
+                '"minTotalScore":40,'
                 '"minPriceUsd":1,"maxPriceUsd":150,"minOpeningPriceChangePercent":0,'
                 '"minVolumeRatio":0.5,"maxOpeningGapPercent":50}',
                 15.5,
@@ -93,6 +94,9 @@ class Repository:
                 "2026-05-23 05:00:00",
             )
         ]
+
+    def entry_reason_performance(self) -> list[tuple[object, ...]]:
+        return [("OPENING_BREAKOUT+NEWS_POSITIVE", 2, 15.5, 0.062, 0.5)]
 
     def history_realized_profit(self, trade_date) -> float:
         return self.today_realized_profit()
@@ -149,11 +153,13 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
             "name": "Alpha",
             "type": "매도",
             "price": "$12.50",
-            "quantity": "2",
-            "exitReason": "장마감 매도",
-            "profitUsd": "",
-            "profitRate": "",
-        }
+                "quantity": "2",
+                "exitReason": "장마감 매도",
+                "entryReason": "",
+                "entryReasonDetail": "",
+                "profitUsd": "",
+                "profitRate": "",
+            }
     ]
     assert state["fills"] == [
         {
@@ -168,6 +174,8 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
             "total": "$25.00",
             "profitUsd": "",
             "profitRate": "",
+            "entryReason": "",
+            "entryReasonDetail": "",
         }
     ]
     assert state["logs"] == [
@@ -177,6 +185,15 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
         ["22:43:00", "정보", "후보 수집 범위를 상위 5위까지 확대했습니다. (10종목)"],
     ]
     assert state["summary"] == {"realizedProfitUsd": "+$15.50"}
+    assert state["entryReasonStats"] == [
+        {
+            "reason": "장초반 돌파 + 뉴스 긍정",
+            "count": "2",
+            "totalProfitUsd": "+$15.50",
+            "averageProfitRate": "+6.20%",
+            "winRate": "50.0%",
+        }
+    ]
 
 
 def test_sql_monitor_history_includes_daily_run_summary() -> None:
@@ -189,8 +206,16 @@ def test_sql_monitor_history_includes_daily_run_summary() -> None:
             "mode": "장초반+15분 새로운 종목 수집",
             "settings": (
                 "손절 5% · 익절 10% · 선정점수 40점 · 가격 $1~$150 · "
-                "상승률 0% · 거래량 0.5배 · 갭 50%"
+                "상승률 0% · 거래량 0.5배 · 갭 50% · 분할익절 사용"
             ),
+            "stopLossPercent": "5%",
+            "takeProfitPercent": "10%",
+            "partialTakeProfit": "사용",
+            "minTotalScore": "40점",
+            "priceRange": "$1~$150",
+            "minOpeningPriceChangePercent": "0%",
+            "minVolumeRatio": "0.5배",
+            "maxOpeningGapPercent": "50%",
             "profitUsd": "+$15.50",
             "profitRate": "+6.20%",
             "eodSellCount": "3",
@@ -232,6 +257,7 @@ def test_sql_monitor_state_translates_exit_reasons() -> None:
                 ("CCC", "SELL", 10, 1, "TRAILING_STOP"),
                 ("DDD", "SELL", 10, 1, "MANUAL_SELL"),
                 ("EEE", "SELL", 10, 1, "MANUAL_SELL_ALL"),
+                ("FFF", "SELL", 10, 1, "PARTIAL_TAKE_PROFIT"),
             ]
 
     state = SqlMonitorStateSource(ExitRepository()).read()
@@ -242,4 +268,5 @@ def test_sql_monitor_state_translates_exit_reasons() -> None:
         "트레일링 스탑",
         "수동 매도",
         "전량 수동 매도",
+        "분할 익절",
     ]

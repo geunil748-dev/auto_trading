@@ -49,6 +49,18 @@ def test_load_settings_reads_real_trading_safety_limits(monkeypatch) -> None:
     assert settings.real_max_daily_order_krw == 150000
 
 
+def test_load_settings_reads_unfilled_reorder_policies(monkeypatch) -> None:
+    monkeypatch.setenv("MOCK_UNFILLED_REORDER_MINUTES", "2")
+    monkeypatch.setenv("MOCK_UNFILLED_REORDER_LIMIT", "1")
+    monkeypatch.setenv("REAL_UNFILLED_REORDER_MINUTES", "1")
+
+    settings = load_settings()
+
+    assert settings.mock_unfilled_reorder_minutes == 2
+    assert settings.mock_unfilled_reorder_limit == 1
+    assert settings.real_unfilled_reorder_minutes == 1
+
+
 def test_load_notification_settings_reads_optional_alert_channels(monkeypatch) -> None:
     monkeypatch.setenv("ALERT_DISCORD_WEBHOOK_URL", "https://discord.example")
     monkeypatch.setenv("ALERT_TELEGRAM_BOT_TOKEN", "telegram-token")
@@ -71,7 +83,26 @@ def test_runtime_risk_settings_override_env_values(tmp_path, monkeypatch) -> Non
         "MSSQL_PASSWORD",
     ):
         monkeypatch.setenv(name, "")
-    save_runtime_risk_settings(7.5, 12.0, 40, 2, 120, 1.5, 0.8, 25, False, "hybrid")
+    save_runtime_risk_settings(
+        7.5,
+        12.0,
+        40,
+        2,
+        120,
+        1.5,
+        0.8,
+        25,
+        False,
+        "hybrid",
+        False,
+        4,
+        22,
+        3,
+        True,
+        True,
+        True,
+        True,
+    )
 
     settings = load_settings()
 
@@ -83,6 +114,8 @@ def test_runtime_risk_settings_override_env_values(tmp_path, monkeypatch) -> Non
     assert settings.min_opening_price_change == 0.015
     assert settings.min_volume_ratio == 0.8
     assert settings.max_opening_gap == 0.25
+    assert settings.partial_take_profit_enabled is False
+    assert settings.trailing_stop_activation_rate == 0.04
     assert settings.refresh_intraday_candidates is True
     assert settings.candidate_selection_mode == "hybrid"
     assert runtime_risk_settings_payload(settings)["stopLossPercent"] == 7.5
@@ -91,3 +124,11 @@ def test_runtime_risk_settings_override_env_values(tmp_path, monkeypatch) -> Non
     assert runtime_risk_settings_payload(settings)["maxOpeningGapPercent"] == 25
     assert runtime_risk_settings_payload(settings)["refreshIntradayCandidates"] is True
     assert runtime_risk_settings_payload(settings)["candidateSelectionMode"] == "hybrid"
+    assert runtime_risk_settings_payload(settings)["partialTakeProfitEnabled"] is False
+    assert runtime_risk_settings_payload(settings)["trailingStopActivationPercent"] == 4
+    assert runtime_risk_settings_payload(settings)["maxEntryPriceChangePercent"] == 22
+    assert runtime_risk_settings_payload(settings)["breakoutHoldMinutes"] == 3
+    assert runtime_risk_settings_payload(settings)["require5mCloseAboveBreakout"] is True
+    assert runtime_risk_settings_payload(settings)["require5mVolumeIncrease"] is True
+    assert runtime_risk_settings_payload(settings)["requireVwapOrMa20"] is True
+    assert runtime_risk_settings_payload(settings)["requirePullbackRebreak"] is True

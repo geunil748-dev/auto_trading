@@ -4,6 +4,7 @@ from trading_bot.entry_planner import plan_buy_intents
 from trading_bot.exit_planner import plan_position_exits
 from trading_bot.models import (
     AccountState,
+    BreakoutInput,
     CandidateSnapshot,
     PositionState,
     RankedStock,
@@ -193,8 +194,10 @@ def test_breakout_threshold_and_trailing_stop() -> None:
 
     position = PositionState("AAA", 10, 10, 12, 12)
     pulled_back = update_high(position, 11.63)
+    early_pullback = PositionState("EARLY", 10, 10, 9.9, 10.2)
 
     assert trailing_stop_triggered(pulled_back, SETTINGS)
+    assert not trailing_stop_triggered(early_pullback, SETTINGS)
 
 
 def test_exposure_and_loss_stops() -> None:
@@ -225,7 +228,75 @@ def test_entry_planner_requires_breakout_and_reserves_exposure() -> None:
     assert [item.order_value_usd for item in intents] == [2000, 1000]
 
 
-def test_exit_planner_prioritizes_eod_hard_stop_take_profit_and_trailing_stop() -> None:
+def test_entry_planner_blocks_overheated_intraday_entry() -> None:
+    intents = plan_buy_intents(
+        [ScoreRecord("HOT", 95, 90)],
+        {
+            "HOT": BreakoutInput(
+                last_price_usd=13,
+                open_price_usd=10,
+                previous_high_usd=11,
+                previous_low_usd=9,
+            ),
+        },
+        account(),
+        TradingSettings(max_entry_price_change=0.25),
+    )
+
+    assert intents == []
+
+
+def test_entry_planner_can_require_extra_intraday_confirmation() -> None:
+    settings = TradingSettings(
+        breakout_hold_minutes=2,
+        require_5m_close_above_breakout=True,
+        require_5m_volume_increase=True,
+        require_vwap_or_ma20=True,
+        require_pullback_rebreak=True,
+    )
+    confirmed = BreakoutInput(
+        last_price_usd=12.5,
+        open_price_usd=10,
+        previous_high_usd=12,
+        previous_low_usd=8,
+        minutes_above_breakout=3,
+        recent_5m_close_usd=12.2,
+        current_5m_volume=1200,
+        previous_5m_average_volume=800,
+        vwap_usd=12.0,
+        pulled_back_after_breakout=True,
+    )
+
+    intents = plan_buy_intents(
+        [ScoreRecord("OK", 95, 90)],
+        {"OK": confirmed},
+        account(),
+        settings,
+    )
+
+    assert [item.ticker for item in intents] == ["OK"]
+
+
+def test_entry_planner_ignores_unavailable_intraday_confirmation_data() -> None:
+    settings = TradingSettings(
+        breakout_hold_minutes=2,
+        require_5m_close_above_breakout=True,
+        require_5m_volume_increase=True,
+        require_vwap_or_ma20=True,
+        require_pullback_rebreak=True,
+    )
+
+    intents = plan_buy_intents(
+        [ScoreRecord("LEGACY", 95, 90)],
+        {"LEGACY": (12.5, 10, 12, 8)},
+        account(),
+        settings,
+    )
+
+    assert [item.ticker for item in intents] == ["LEGACY"]
+
+
+def test_exit_planner_prioritizes_eod_hard_stop_partial_profit_and_trailing_stop() -> None:
     positions = [
         PositionState("LOSS", 10, 2, 9.4, 11),
         PositionState("PROFIT", 10, 2, 10.5, 10.5),
@@ -238,8 +309,30 @@ def test_exit_planner_prioritizes_eod_hard_stop_take_profit_and_trailing_stop() 
 
     assert [(item.ticker, item.exit_reason) for item in regular] == [
         ("LOSS", "STOP_LOSS"),
-        ("PROFIT", "TAKE_PROFIT"),
+        ("PROFIT", "PARTIAL_TAKE_PROFIT"),
         ("TRAIL", "TRAILING_STOP"),
     ]
+    assert regular[1].quantity == 1
     assert regular[0].entry_price_usd == 10
     assert [item.exit_reason for item in eod] == ["EOD", "EOD", "EOD", "EOD"]
+
+
+def test_exit_planner_does_not_repeat_partial_take_profit() -> None:
+    exits = plan_position_exits(
+        [PositionState("PROFIT", 10, 2, 10.5, 10.5)],
+        SETTINGS,
+        partial_take_profit_tickers={"PROFIT"},
+    )
+
+    assert exits == []
+
+
+def test_exit_planner_uses_full_take_profit_when_partial_profit_is_disabled() -> None:
+    exits = plan_position_exits(
+        [PositionState("PROFIT", 10, 2, 10.5, 10.5)],
+        TradingSettings(partial_take_profit_enabled=False),
+    )
+
+    assert [(item.ticker, item.exit_reason, item.quantity) for item in exits] == [
+        ("PROFIT", "TAKE_PROFIT", 2)
+    ]

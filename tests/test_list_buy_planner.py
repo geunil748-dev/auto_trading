@@ -20,6 +20,6 @@ def test_ranked_list_collector_uses_price_range_and_small_mock_allocations() -> 
     )
 
     assert intents == [
-        BuyIntent("AAA", 4, 25, 100, 0.01),
-        BuyIntent("BBB", 10, 10, 100, 0.01),
+        BuyIntent("AAA", 4, 25, 100, 0.01, "RANKED_LIST", "랭킹 2위 기반 수동/리스트 매수 후보"),
+        BuyIntent("BBB", 10, 10, 100, 0.01, "RANKED_LIST", "랭킹 3위 기반 수동/리스트 매수 후보"),
     ]

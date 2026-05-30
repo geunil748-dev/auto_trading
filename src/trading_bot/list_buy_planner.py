@@ -45,6 +45,8 @@ def collect_ranked_buy_intents(
                 limit_price_usd=last,
                 order_value_usd=filled_value,
                 allocation_fraction=LIST_ALLOCATION_FRACTION,
+                entry_reason="RANKED_LIST",
+                entry_reason_detail=f"랭킹 {item.rank}위 기반 수동/리스트 매수 후보",
             )
         )
         cash -= filled_value

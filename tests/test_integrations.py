@@ -200,7 +200,7 @@ def test_sql_repository_writes_daily_rows_and_logs() -> None:
     assert cursors[2].calls[0][1] == [
         (date(2026, 5, 22), "AAA", "", 12, 0.0, 0.0, 180.0, 4.0)
     ]
-    assert cursors[3].calls[0][1] == [(date(2026, 5, 22), "AAA", 95, 80, 87.5, True)]
+    assert cursors[3].calls[0][1] == [(date(2026, 5, 22), "AAA", 95, 80, 81.5, True)]
     assert cursors[5].calls[0][1][1:] == ("INFO", "test", "stored")
     assert cursors[9].calls[0][1] == [
         (
@@ -213,6 +213,8 @@ def test_sql_repository_writes_daily_rows_and_logs() -> None:
             None,
             None,
             2,
+            None,
+            None,
             None,
             None,
             None,
@@ -539,17 +541,19 @@ def test_sql_repository_writes_fill_rows_without_duplicates() -> None:
         True,
         None,
         None,
+        None,
+        None,
         date(2026, 5, 22),
         "22:41:10",
         "AAA",
         "매수",
         2,
         12.5,
-            True,
-            date(2026, 5, 22),
-            date(2026, 5, 22),
-            "22:41:10",
-            "AAA",
+        True,
+        date(2026, 5, 22),
+        date(2026, 5, 22),
+        "22:41:10",
+        "AAA",
         "Alpha",
         "매수",
         2,
@@ -558,6 +562,8 @@ def test_sql_repository_writes_fill_rows_without_duplicates() -> None:
         None,
         None,
         "1001",
+        None,
+        None,
         True,
     )
 

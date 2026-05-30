@@ -15,6 +15,7 @@ const emptyAccount = {
   holdings: [],
   orders: [],
   fills: [],
+  entryReasonStats: [],
   logs: [],
   trades: [],
 };
@@ -39,7 +40,20 @@ const fallbackState = {
 };
 
 let currentState = fallbackState;
-let historyState = { targets: [], orders: [], fills: [], logs: [], trades: [], runSummaries: [] };
+let historyState = {
+  targets: [],
+  orders: [],
+  fills: [],
+  logs: [],
+  trades: [],
+  runSummaries: [],
+  entryReasonStats: [],
+};
+let backtestState = {
+  tickers: [],
+  results: [],
+  message: "아직 실행하지 않았습니다.",
+};
 let activeAccount = "mock";
 let activePage = "dashboard";
 let historyDateTouched = false;
@@ -50,19 +64,21 @@ const refreshButton = document.querySelector("#refreshState");
 const manualScreeningButton = document.querySelector("#manualScreening");
 const tabButtons = document.querySelectorAll(".tab-button");
 const navButtons = document.querySelectorAll(".nav-item");
-const sideNav = document.querySelector("#sideNav");
-const sideScrim = document.querySelector("#sideScrim");
-const toggleSideNavButton = document.querySelector("#toggleSideNav");
 const tokenInput = document.querySelector("#monitorToken");
 const saveTokenButton = document.querySelector("#saveMonitorToken");
 const authStatus = document.querySelector("#authStatus");
 const securityBar = document.querySelector(".security-bar");
 const historyDateInput = document.querySelector("#historyDate");
 const refreshHistoryButton = document.querySelector("#refreshHistory");
+const runBacktestButton = document.querySelector("#runBacktest");
+const backtestTickerInput = document.querySelector("#backtestTicker");
+const customBacktestTickerInput = document.querySelector("#customBacktestTicker");
 const riskSettingsForm = document.querySelector("#riskSettingsForm");
 const filterSettingsForm = document.querySelector("#filterSettingsForm");
 const stopLossInput = document.querySelector("#stopLossPercent");
 const takeProfitInput = document.querySelector("#takeProfitPercent");
+const partialTakeProfitInput = document.querySelector("#partialTakeProfitEnabled");
+const trailingStopActivationInput = document.querySelector("#trailingStopActivationPercent");
 const minTotalScoreInput = document.querySelector("#minTotalScore");
 const minPriceUsdInput = document.querySelector("#minPriceUsd");
 const maxPriceUsdInput = document.querySelector("#maxPriceUsd");
@@ -70,6 +86,12 @@ const minOpeningPriceChangeInput = document.querySelector("#minOpeningPriceChang
 const minVolumeRatioInput = document.querySelector("#minVolumeRatio");
 const maxOpeningGapInput = document.querySelector("#maxOpeningGapPercent");
 const intradayCandidateModeInput = document.querySelector("#intradayCandidateMode");
+const maxEntryPriceChangeInput = document.querySelector("#maxEntryPriceChangePercent");
+const breakoutHoldMinutesInput = document.querySelector("#breakoutHoldMinutes");
+const require5mCloseInput = document.querySelector("#require5mCloseAboveBreakout");
+const require5mVolumeInput = document.querySelector("#require5mVolumeIncrease");
+const requireVwapOrMa20Input = document.querySelector("#requireVwapOrMa20");
+const requirePullbackRebreakInput = document.querySelector("#requirePullbackRebreak");
 const riskSettingsStatus = document.querySelector("#riskSettingsStatus");
 const filterSettingsStatus = document.querySelector("#filterSettingsStatus");
 const sellAllButton = document.querySelector("#sellAllPositions");
@@ -86,6 +108,14 @@ tokenInput?.addEventListener("keydown", (event) => {
 });
 refreshButton?.addEventListener("click", loadState);
 manualScreeningButton?.addEventListener("click", submitManualScreening);
+runBacktestButton?.addEventListener("click", loadBacktest);
+backtestTickerInput?.addEventListener("change", () => {
+  if (customBacktestTickerInput) customBacktestTickerInput.value = "";
+  loadBacktest();
+});
+customBacktestTickerInput?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") loadBacktest();
+});
 refreshHistoryButton?.addEventListener("click", loadHistory);
 showNoSellLogsInput?.addEventListener("change", () => {
   render(currentState);
@@ -111,16 +141,17 @@ tabButtons.forEach((button) => {
 navButtons.forEach((button) => {
   button.addEventListener("click", () => {
     activePage = button.dataset.page || "dashboard";
-    setSideNavOpen(false);
     renderPage();
-    if (activePage === "activity" || activePage === "candidateHistory" || activePage === "runSummary") loadHistory();
+    if (
+      activePage === "activity"
+      || activePage === "candidateHistory"
+      || activePage === "runSummary"
+      || activePage === "entryReasonStats"
+      || activePage === "backtest"
+    ) loadHistory();
     if (activePage === "settings") loadRiskSettings();
   });
 });
-toggleSideNavButton?.addEventListener("click", () => {
-  setSideNavOpen(sideNav?.classList.contains("is-collapsed"));
-});
-sideScrim?.addEventListener("click", () => setSideNavOpen(false));
 document.addEventListener("click", (event) => {
   const button = event.target.closest(".manual-sell-button");
   if (button) submitManualSell(button);
@@ -160,12 +191,56 @@ async function loadHistory() {
     historyState = normalizeHistoryState(await fetchHistory());
     candidateHistoryMessage = "";
   } catch {
-    historyState = { targets: [], orders: [], fills: [], logs: [], trades: [] };
+    historyState = {
+      targets: [],
+      orders: [],
+      fills: [],
+      logs: [],
+      trades: [],
+      runSummaries: [],
+      entryReasonStats: [],
+    };
     setAuthStatus("DB 기록을 불러오지 못했습니다.");
   } finally {
     setButtonLoading(refreshHistoryButton, false);
   }
   render(currentState);
+}
+
+async function loadBacktest() {
+  setButtonLoading(runBacktestButton, true);
+  setBacktestStatus("과거 차트 데이터를 불러와 백테스트를 실행하는 중입니다.");
+  try {
+    const ticker = encodeURIComponent(backtestTickerValue());
+    const date = encodeURIComponent(selectedHistoryDate());
+    const response = await fetch(
+      `/api/backtest?ts=${Date.now()}&date=${date}&ticker=${ticker}`,
+      fetchOptions("/api/backtest"),
+    );
+    const payload = await response.json();
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.error || payload.message || "백테스트 실행에 실패했습니다.");
+    }
+    backtestState = {
+      tickers: payload.tickers || [],
+      results: payload.results || [],
+      message: payload.message || "백테스트를 완료했습니다.",
+    };
+  } catch (error) {
+    backtestState = {
+      tickers: [],
+      results: [],
+      message: error.message || "백테스트 실행에 실패했습니다.",
+    };
+  } finally {
+    setButtonLoading(runBacktestButton, false);
+  }
+  renderBacktest();
+}
+
+function backtestTickerValue() {
+  const custom = (customBacktestTickerInput?.value || "").trim().toUpperCase();
+  return custom || backtestTickerInput?.value || "ALL";
 }
 
 async function submitManualScreening() {
@@ -269,9 +344,17 @@ async function saveRiskSettings(event) {
     const payload = await postTradingSettings({
       stopLossPercent: Number(stopLossInput?.value || 0),
       takeProfitPercent: Number(takeProfitInput?.value || 0),
+      partialTakeProfitEnabled: Boolean(partialTakeProfitInput?.checked),
+      trailingStopActivationPercent: Number(trailingStopActivationInput?.value || 0),
+      maxEntryPriceChangePercent: Number(maxEntryPriceChangeInput?.value || 0),
+      breakoutHoldMinutes: Number(breakoutHoldMinutesInput?.value || 0),
+      require5mCloseAboveBreakout: Boolean(require5mCloseInput?.checked),
+      require5mVolumeIncrease: Boolean(require5mVolumeInput?.checked),
+      requireVwapOrMa20: Boolean(requireVwapOrMa20Input?.checked),
+      requirePullbackRebreak: Boolean(requirePullbackRebreakInput?.checked),
     });
     applyRiskSettings(payload.settings || {});
-    setRiskSettingsStatus("손익절 설정을 저장했습니다. 다음 감시 루프부터 반영됩니다.");
+    setRiskSettingsStatus("매수/매도 조건을 저장했습니다. 다음 감시 루프부터 반영됩니다.");
   } catch (error) {
     setRiskSettingsStatus(error.message || "설정 저장에 실패했습니다.");
   } finally {
@@ -295,7 +378,7 @@ async function saveFilterSettings(event) {
       candidateSelectionMode: intradayCandidateModeInput?.value || "refresh",
     });
     applyRiskSettings(payload.settings || {});
-    setFilterSettingsStatus("필수값 세팅을 저장했습니다. 다음 리스트업부터 반영됩니다.");
+    setFilterSettingsStatus("종목 수집 조건을 저장했습니다. 다음 리스트업부터 반영됩니다.");
   } catch (error) {
     setFilterSettingsStatus(error.message || "필수값 저장에 실패했습니다.");
   } finally {
@@ -446,6 +529,12 @@ function applyRiskSettings(settings) {
   if (takeProfitInput && settings.takeProfitPercent != null) {
     takeProfitInput.value = formatPercentInput(settings.takeProfitPercent);
   }
+  if (partialTakeProfitInput && settings.partialTakeProfitEnabled != null) {
+    partialTakeProfitInput.checked = Boolean(settings.partialTakeProfitEnabled);
+  }
+  if (trailingStopActivationInput && settings.trailingStopActivationPercent != null) {
+    trailingStopActivationInput.value = formatPercentInput(settings.trailingStopActivationPercent);
+  }
   if (minTotalScoreInput && settings.minTotalScore != null) {
     minTotalScoreInput.value = formatScoreInput(settings.minTotalScore);
   }
@@ -467,6 +556,24 @@ function applyRiskSettings(settings) {
   if (intradayCandidateModeInput) {
     intradayCandidateModeInput.value = settings.candidateSelectionMode
       || (settings.refreshIntradayCandidates ? "refresh" : "fixed");
+  }
+  if (maxEntryPriceChangeInput && settings.maxEntryPriceChangePercent != null) {
+    maxEntryPriceChangeInput.value = formatPercentInput(settings.maxEntryPriceChangePercent);
+  }
+  if (breakoutHoldMinutesInput && settings.breakoutHoldMinutes != null) {
+    breakoutHoldMinutesInput.value = formatScoreInput(settings.breakoutHoldMinutes);
+  }
+  if (require5mCloseInput && settings.require5mCloseAboveBreakout != null) {
+    require5mCloseInput.checked = Boolean(settings.require5mCloseAboveBreakout);
+  }
+  if (require5mVolumeInput && settings.require5mVolumeIncrease != null) {
+    require5mVolumeInput.checked = Boolean(settings.require5mVolumeIncrease);
+  }
+  if (requireVwapOrMa20Input && settings.requireVwapOrMa20 != null) {
+    requireVwapOrMa20Input.checked = Boolean(settings.requireVwapOrMa20);
+  }
+  if (requirePullbackRebreakInput && settings.requirePullbackRebreak != null) {
+    requirePullbackRebreakInput.checked = Boolean(settings.requirePullbackRebreak);
   }
 }
 
@@ -495,12 +602,6 @@ function todayText() {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }
 
-function setSideNavOpen(open) {
-  sideNav?.classList.toggle("is-collapsed", !open);
-  document.body.classList.toggle("side-collapsed", !open);
-  toggleSideNavButton?.setAttribute("aria-label", open ? "왼쪽 메뉴 닫기" : "왼쪽 메뉴 열기");
-}
-
 function normalizeState(state) {
   if (state.accounts) return state;
   return {
@@ -520,6 +621,7 @@ function normalizeHistoryState(state) {
     logs: state.logs || [],
     trades: state.trades || [],
     runSummaries: state.runSummaries || [],
+    entryReasonStats: state.entryReasonStats || [],
   };
 }
 
@@ -538,6 +640,9 @@ function renderPage() {
 
 function renderRuntime(runtime) {
   window.runtimeControls?.render(runtime);
+  const isRealMode = runtime.activeMode === "real";
+  document.querySelector(".runtime")?.classList.toggle("is-real", isRealMode);
+  document.querySelector("#accountStatus")?.classList.toggle("is-real", isRealMode);
 }
 
 function renderSummary(accountState) {
@@ -581,7 +686,16 @@ function renderTables(accountState) {
   renderList("#orderRows", orders, renderOrderRow, "주문 내역이 없습니다");
   const fills = activePage === "activity" ? historyState.fills : accountState.fills;
   renderList("#fillRows", fills, renderFillRow, "체결 내역이 없습니다");
-  renderList("#runSummaryRows", historyState.runSummaries, renderRunSummaryRow, "저장된 운용 결과가 없습니다");
+  renderList("#runSummaryRows", historyState.runSummaries, renderRunSummaryRow, "저장된 일별 운용 결과가 없습니다");
+  renderRows(
+    "#entryReasonRows",
+    historyState.entryReasonStats,
+    renderEntryReasonRow,
+    5,
+    "매수 조건별 성과 기록이 없습니다",
+  );
+  renderBacktestTickerOptions();
+  renderBacktest();
 }
 
 function renderRows(selector, rows, renderer, colspan, emptyText) {
@@ -659,7 +773,7 @@ function renderOrderRow(order) {
 
 function renderFillRow(fill) {
   const filledAt = fill.filledAt || [fill.date, fill.time].filter(Boolean).join(" ");
-  const result = fill.profitUsd ? `${fill.total} / ${fill.profitUsd}` : fill.total;
+  const result = [fill.total, fill.profitUsd, fill.entryReason].filter(Boolean).join(" / ");
   return `<section class="trade-row fill-row">
     <time>${escapeHtml(filledAt || "-")}</time><strong>${escapeHtml(fill.name || "-")}</strong>
     <span>${escapeHtml(fill.ticker)}</span><span>${escapeHtml(fill.side)}</span>
@@ -671,13 +785,104 @@ function renderFillRow(fill) {
 function renderRunSummaryRow(summary) {
   return `<section class="trade-row run-summary-row">
     <time>${escapeHtml(summary.date || "-")}</time><strong>${escapeHtml(summary.mode || "-")}</strong>
-    <em>${escapeHtml(summary.settings || "-")}</em><b>${escapeHtml(summary.profitUsd || "$0.00")}</b>
+    <span>${escapeHtml(summary.stopLossPercent || "-")}</span>
+    <span>${escapeHtml(summary.takeProfitPercent || "-")}</span>
+    <span>${escapeHtml(summary.partialTakeProfit || "-")}</span>
+    <span>${escapeHtml(summary.minTotalScore || "-")}</span>
+    <span>${escapeHtml(summary.priceRange || "-")}</span>
+    <span>${escapeHtml(summary.minOpeningPriceChangePercent || "-")}</span>
+    <span>${escapeHtml(summary.minVolumeRatio || "-")}</span>
+    <span>${escapeHtml(summary.maxOpeningGapPercent || "-")}</span>
+    <b>${escapeHtml(summary.profitUsd || "$0.00")}</b>
     <span>${escapeHtml(summary.profitRate || "0.00%")}</span>
     <small>${escapeHtml(summary.buyFillCount || "0")}건</small>
     <small>${escapeHtml(summary.sellFillCount || "0")}건</small>
-    <small>${escapeHtml(summary.eodSellCount || "0")}건</small>
-    <small>${escapeHtml(summary.cancelledOrderCount || "0")}건</small>
   </section>`;
+}
+
+function renderEntryReasonRow(item) {
+  return `<tr>
+    <td><strong>${escapeHtml(item.reason || "-")}</strong></td>
+    <td>${escapeHtml(item.count || "0")}건</td>
+    <td>${escapeHtml(item.totalProfitUsd || "$0.00")}</td>
+    <td>${escapeHtml(item.averageProfitRate || "0.00%")}</td>
+    <td>${escapeHtml(item.winRate || "0.0%")}</td>
+  </tr>`;
+}
+
+function renderBacktest() {
+  setBacktestStatus(backtestState.message || "아직 실행하지 않았습니다.");
+  renderRows(
+    "#backtestRows",
+    backtestState.results,
+    renderBacktestRow,
+    9,
+    "백테스트 결과가 없습니다",
+  );
+}
+
+function renderBacktestTickerOptions() {
+  if (!backtestTickerInput) return;
+  const previous = backtestTickerInput.value || "ALL";
+  const candidates = candidateOptionsFromHistory();
+  const options = [
+    `<option value="ALL">후보 전체</option>`,
+    ...candidates.map((item) => {
+      const label = item.name && item.name !== "-"
+        ? `${item.ticker} · ${item.name}`
+        : item.ticker;
+      return `<option value="${escapeHtml(item.ticker)}">${escapeHtml(label)}</option>`;
+    }),
+  ];
+  backtestTickerInput.innerHTML = options.join("");
+  const values = new Set(["ALL", ...candidates.map((item) => item.ticker)]);
+  backtestTickerInput.value = values.has(previous) ? previous : "ALL";
+}
+
+function candidateOptionsFromHistory() {
+  const rows = historyState.targets?.length ? historyState.targets : currentState.accounts?.mock?.targets || [];
+  const seen = new Set();
+  const candidates = [];
+  for (const row of rows) {
+    const ticker = targetTicker(row);
+    if (!ticker || seen.has(ticker)) continue;
+    candidates.push({ ticker, name: targetName(row) });
+    seen.add(ticker);
+  }
+  return candidates;
+}
+
+function targetTicker(row) {
+  if (row && typeof row === "object" && !Array.isArray(row)) {
+    return String(row.ticker || "").trim().toUpperCase();
+  }
+  return Array.isArray(row) ? String(row[0] || "").trim().toUpperCase() : "";
+}
+
+function targetName(row) {
+  if (row && typeof row === "object" && !Array.isArray(row)) {
+    return String(row.name || "").trim();
+  }
+  return Array.isArray(row) ? String(row[1] || "").trim() : "";
+}
+
+function renderBacktestRow(item) {
+  return `<tr>
+    <td>${escapeHtml(item.years)}년</td>
+    <td>${escapeHtml(item.tickers)}</td>
+    <td>${escapeHtml(item.trades)}</td>
+    <td>${escapeHtml(item.winRate)}</td>
+    <td class="score">${escapeHtml(item.returnRate)}</td>
+    <td>${escapeHtml(item.profitUsd)}</td>
+    <td>${escapeHtml(item.endingEquityUsd)}</td>
+    <td>${escapeHtml(item.averageTradeReturn)}</td>
+    <td>${escapeHtml(item.maxDrawdown)}</td>
+  </tr>`;
+}
+
+function setBacktestStatus(message) {
+  const status = document.querySelector("#backtestStatus");
+  if (status) status.textContent = message;
 }
 
 function tickerNames(accountState) {

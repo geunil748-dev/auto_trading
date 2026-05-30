@@ -14,6 +14,7 @@ from trading_bot.config import (
     runtime_risk_settings_payload,
     save_runtime_risk_settings,
 )
+from trading_bot.backtest_service import run_backtest_from_monitor_state
 from trading_bot.database import mssql_dsn_from_env, pyodbc_connect_factory
 from trading_bot.manual_sell import submit_manual_mock_sell, submit_manual_mock_sell_all
 from trading_bot.manual_screening import ManualScreeningRunner
@@ -167,6 +168,9 @@ def _handler(reader: Any, monitor_dir: Path, manual_screening: ManualScreeningRu
             if path == "/api/manual-screening":
                 self._write_manual_screening_status()
                 return
+            if path == "/api/backtest":
+                self._write_backtest()
+                return
             if path == "/":
                 self.path = "/index.html"
             super().do_GET()
@@ -264,6 +268,22 @@ def _handler(reader: Any, monitor_dir: Path, manual_screening: ManualScreeningRu
                 return
             self._write_json({"ok": True, "status": manual_screening.status()})
 
+        def _write_backtest(self) -> None:
+            if not self._authorize_api():
+                return
+            try:
+                trade_date = _query_date(self.path)
+                tickers = _query_tickers(self.path)
+                state = _read_history_state(reader, trade_date)
+                self._write_json(
+                    run_backtest_from_monitor_state(
+                        state,
+                        selected_tickers=tickers,
+                    )
+                )
+            except Exception as exc:
+                self._write_json({"ok": False, "error": str(exc)}, status=500)
+
         def _save_trading_settings(self) -> None:
             if not self._authorize_api():
                 return
@@ -281,6 +301,14 @@ def _handler(reader: Any, monitor_dir: Path, manual_screening: ManualScreeningRu
                     _optional_float(body.get("maxOpeningGapPercent")),
                     _optional_bool(body.get("refreshIntradayCandidates")),
                     _optional_text(body.get("candidateSelectionMode")),
+                    _optional_bool(body.get("partialTakeProfitEnabled")),
+                    _optional_float(body.get("trailingStopActivationPercent")),
+                    _optional_float(body.get("maxEntryPriceChangePercent")),
+                    _optional_float(body.get("breakoutHoldMinutes")),
+                    _optional_bool(body.get("require5mCloseAboveBreakout")),
+                    _optional_bool(body.get("require5mVolumeIncrease")),
+                    _optional_bool(body.get("requireVwapOrMa20")),
+                    _optional_bool(body.get("requirePullbackRebreak")),
                 )
             except Exception as exc:
                 self._write_json({"ok": False, "error": str(exc)}, status=400)
@@ -337,6 +365,7 @@ def _read_history_state(reader: Any, trade_date: date) -> dict[str, object]:
         "fills": [],
         "logs": [],
         "trades": [],
+        "entryReasonStats": [],
     }
 
 
@@ -348,6 +377,13 @@ def _query_date(path: str) -> date:
         except ValueError:
             pass
     return current_trade_date()
+
+
+def _query_tickers(path: str) -> list[str] | None:
+    raw = parse_qs(urlparse(path).query).get("ticker", [""])[0].strip()
+    if not raw or raw.upper() == "ALL":
+        return None
+    return [item.strip().upper() for item in raw.split(",") if item.strip()]
 
 
 def _optional_int(value: Any) -> int | None:

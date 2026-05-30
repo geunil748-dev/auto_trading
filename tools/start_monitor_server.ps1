@@ -1,10 +1,26 @@
 $workspace = Split-Path -Parent $PSScriptRoot
 $defaultPython = "C:\Users\admin\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
 $venvPython = Join-Path $workspace ".venv\Scripts\python.exe"
+
+function Test-PythonModules {
+    param(
+        [string]$PythonPath,
+        [string[]]$Modules
+    )
+
+    if (-not (Test-Path -LiteralPath $PythonPath)) {
+        return $false
+    }
+
+    $script = "import importlib.util, sys; missing=[name for name in sys.argv[1:] if importlib.util.find_spec(name) is None]; raise SystemExit(1 if missing else 0)"
+    & $PythonPath -c $script @Modules *> $null
+    return $LASTEXITCODE -eq 0
+}
+
 $python = if ($env:AUTO_TRADING_PYTHON) {
     $env:AUTO_TRADING_PYTHON
 }
-elseif (Test-Path -LiteralPath $venvPython) {
+elseif (Test-PythonModules -PythonPath $venvPython -Modules @("pyodbc", "yfinance", "tzdata")) {
     $venvPython
 }
 elseif (Test-Path -LiteralPath $defaultPython) {
@@ -22,7 +38,12 @@ function Write-StartupLog {
     param([string]$Message)
 
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Add-Content -LiteralPath $logPath -Encoding UTF8 -Value "[$timestamp] $Message"
+    try {
+        Add-Content -LiteralPath $logPath -Encoding UTF8 -Value "[$timestamp] $Message" -ErrorAction Stop
+    }
+    catch {
+        # 로그 파일 권한이나 잠금 문제가 있어도 모니터 서버 실행 자체는 계속 진행한다.
+    }
 }
 
 # Windows PowerShell 5 reads UTF-8 without BOM inconsistently, so log text stays ASCII.

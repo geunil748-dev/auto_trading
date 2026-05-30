@@ -35,7 +35,12 @@ class IntradayMonitor:
     def __init__(self) -> None:
         self.highs: list[float] = []
 
-    def poll(self, positions: list[PositionState], end_of_day: bool = False):
+    def poll(
+        self,
+        positions: list[PositionState],
+        end_of_day: bool = False,
+        partial_take_profit_tickers=None,
+    ):
         self.highs.append(positions[0].high_price_usd)
         refreshed = [PositionState("AAA", 10, 2, 9.6, 10.5)]
         return refreshed, [SellIntent("AAA", 2, 9.6, "STOP_LOSS")]
@@ -99,6 +104,7 @@ class RecheckRuntime:
 def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> None:
     monitor = Monitor()
     executor = Executor()
+    notice_calls = []
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_live_exit_poll",
         lambda settings, kis_settings: (Accounts(), monitor, "repository"),
@@ -120,6 +126,10 @@ def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> N
         lambda report_dir, trade_day, state, cancelled_orders, eod_sell_count: tmp_path
         / "report.json",
     )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._send_market_close_notice",
+        lambda: notice_calls.append("sent"),
+    )
 
     tasks = live_mock_tasks(
         TradingSettings(),
@@ -132,6 +142,7 @@ def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> N
     assert "Submitted 1 end-of-day mock sell orders" in tasks.close_session()
     assert monitor.calls == [(["holding"], True)]
     assert executor.intents == [SellIntent("AAA", 2, 10.5, "EOD")]
+    assert notice_calls == ["sent"]
 
 
 def test_close_session_skips_after_regular_session(monkeypatch, tmp_path) -> None:
@@ -256,7 +267,20 @@ def test_intraday_recheck_screens_and_limits_additional_buys(monkeypatch, tmp_pa
 
     assert "submitted 1 mock buy orders" in tasks.intraday_recheck()
     assert "submitted 0 mock buy orders" in tasks.intraday_recheck()
-    assert executor.calls == [[BuyIntent("AAA", 1, 10, 10, 0.01)], []]
+    assert executor.calls == [
+        [
+            BuyIntent(
+                "AAA",
+                1,
+                10,
+                10,
+                0.01,
+                "OPENING_BREAKOUT+INTRADAY_RECHECK+REFRESH_CANDIDATE",
+                "15분 재평가 후보; 15분마다 신규 후보 재수집",
+            )
+        ],
+        [],
+    ]
 
 
 def test_intraday_recheck_can_reuse_fixed_watchlist(monkeypatch, tmp_path) -> None:

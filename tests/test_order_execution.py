@@ -28,13 +28,24 @@ def test_buy_intent_executor_submits_and_records_mock_orders() -> None:
     trades = executor.execute([BuyIntent("AAA", 2, 10.5, 21, 0.05)])
 
     assert submitted == [BuyIntent("AAA", 2, 10.5, 21, 0.05)]
-    assert trades == [TradeRecord(date(2026, 5, 22), "AAA", "BUY", 10.5, None, 2)]
+    assert trades == [
+        TradeRecord(
+            date(2026, 5, 22),
+            "AAA",
+            "BUY",
+            10.5,
+            None,
+            2,
+            entry_reason="OPENING_BREAKOUT",
+            entry_reason_detail="",
+        )
+    ]
     assert repository.trades == trades
     assert repository.logs == [
         BotLog(
             "INFO",
             "execution",
-            "매수 주문 1건: AAA 2주 @ $10.50 (주문금액 $21.00, 배분 5.0%)",
+            "매수 주문 1건: AAA 2주 @ $10.50 (주문금액 $21.00, 배분 5.0%, 사유 OPENING_BREAKOUT)",
         )
     ]
 

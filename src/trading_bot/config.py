@@ -14,6 +14,8 @@ RUNTIME_SETTINGS_PATH = Path("monitor/trading_settings.json")
 RUNTIME_SETTING_KEYS = {
     "max_position_loss",
     "take_profit_rate",
+    "partial_take_profit_enabled",
+    "trailing_stop_activation_rate",
     "min_total_score",
     "min_price_usd",
     "max_price_usd",
@@ -22,6 +24,12 @@ RUNTIME_SETTING_KEYS = {
     "max_opening_gap",
     "refresh_intraday_candidates",
     "candidate_selection_mode",
+    "max_entry_price_change",
+    "breakout_hold_minutes",
+    "require_5m_close_above_breakout",
+    "require_5m_volume_increase",
+    "require_vwap_or_ma20",
+    "require_pullback_rebreak",
 }
 
 CANDIDATE_MODE_REFRESH = "refresh"
@@ -46,6 +54,8 @@ class TradingSettings:
     max_position_exposure: float = 0.20
     max_position_loss: float = -0.05
     take_profit_rate: float = 0.05
+    partial_take_profit_enabled: bool = True
+    trailing_stop_activation_rate: float = 0.03
     max_daily_account_loss: float = -0.03
     max_fx_change: float = 0.02
     max_opening_gap: float = 0.20
@@ -62,6 +72,15 @@ class TradingSettings:
     intraday_refresh_candidate_limit: int = 3
     hybrid_candidate_limit: int = 8
     min_pyramiding_profit_rate: float = 0.03
+    max_entry_price_change: float = 0.25
+    breakout_hold_minutes: float = 0.0
+    require_5m_close_above_breakout: bool = False
+    require_5m_volume_increase: bool = False
+    require_vwap_or_ma20: bool = False
+    require_pullback_rebreak: bool = False
+    mock_unfilled_reorder_minutes: int = 2
+    mock_unfilled_reorder_limit: int = 1
+    real_unfilled_reorder_minutes: int = 1
     news_cache_ttl_minutes: int = 30
     real_trading_enabled: bool = False
     real_max_order_krw: int = 100000
@@ -124,8 +143,19 @@ def load_settings() -> TradingSettings:
         intraday_refresh_candidate_limit=_int_env("INTRADAY_REFRESH_CANDIDATE_LIMIT", 3),
         hybrid_candidate_limit=_int_env("HYBRID_CANDIDATE_LIMIT", 8),
         min_pyramiding_profit_rate=_float_env("MIN_PYRAMIDING_PROFIT_RATE", 0.03),
+        max_entry_price_change=_float_env("MAX_ENTRY_PRICE_CHANGE", 0.25),
+        breakout_hold_minutes=_float_env("BREAKOUT_HOLD_MINUTES", 0.0),
+        require_5m_close_above_breakout=_bool_env("REQUIRE_5M_CLOSE_ABOVE_BREAKOUT", False),
+        require_5m_volume_increase=_bool_env("REQUIRE_5M_VOLUME_INCREASE", False),
+        require_vwap_or_ma20=_bool_env("REQUIRE_VWAP_OR_MA20", False),
+        require_pullback_rebreak=_bool_env("REQUIRE_PULLBACK_REBREAK", False),
+        mock_unfilled_reorder_minutes=_int_env("MOCK_UNFILLED_REORDER_MINUTES", 2),
+        mock_unfilled_reorder_limit=_int_env("MOCK_UNFILLED_REORDER_LIMIT", 1),
+        real_unfilled_reorder_minutes=_int_env("REAL_UNFILLED_REORDER_MINUTES", 1),
         news_cache_ttl_minutes=_int_env("NEWS_CACHE_TTL_MINUTES", 30),
         take_profit_rate=_float_env("TAKE_PROFIT_RATE", 0.05),
+        partial_take_profit_enabled=_bool_env("PARTIAL_TAKE_PROFIT_ENABLED", True),
+        trailing_stop_activation_rate=_float_env("TRAILING_STOP_ACTIVATION_RATE", 0.03),
         real_trading_enabled=_bool_env("REAL_TRADING_ENABLED", False),
         real_max_order_krw=_int_env("REAL_MAX_ORDER_KRW", 100000),
         real_max_daily_order_krw=_int_env("REAL_MAX_DAILY_ORDER_KRW", 300000),
@@ -143,6 +173,9 @@ def runtime_risk_settings_payload(
         "stopLossPercent": abs(current.max_position_loss * 100),
         "takeProfitRate": current.take_profit_rate,
         "takeProfitPercent": current.take_profit_rate * 100,
+        "partialTakeProfitEnabled": bool(current.partial_take_profit_enabled),
+        "trailingStopActivationRate": current.trailing_stop_activation_rate,
+        "trailingStopActivationPercent": current.trailing_stop_activation_rate * 100,
         "minTotalScore": current.min_total_score,
         "minPriceUsd": current.min_price_usd,
         "maxPriceUsd": current.max_price_usd,
@@ -151,6 +184,12 @@ def runtime_risk_settings_payload(
         "maxOpeningGapPercent": current.max_opening_gap * 100,
         "refreshIntradayCandidates": bool(current.refresh_intraday_candidates),
         "candidateSelectionMode": current.candidate_selection_mode,
+        "maxEntryPriceChangePercent": current.max_entry_price_change * 100,
+        "breakoutHoldMinutes": current.breakout_hold_minutes,
+        "require5mCloseAboveBreakout": bool(current.require_5m_close_above_breakout),
+        "require5mVolumeIncrease": bool(current.require_5m_volume_increase),
+        "requireVwapOrMa20": bool(current.require_vwap_or_ma20),
+        "requirePullbackRebreak": bool(current.require_pullback_rebreak),
     }
 
 
@@ -165,6 +204,14 @@ def save_runtime_risk_settings(
     max_opening_gap_percent: float | None = None,
     refresh_intraday_candidates: bool | None = None,
     candidate_selection_mode: str | None = None,
+    partial_take_profit_enabled: bool | None = None,
+    trailing_stop_activation_percent: float | None = None,
+    max_entry_price_change_percent: float | None = None,
+    breakout_hold_minutes: float | None = None,
+    require_5m_close_above_breakout: bool | None = None,
+    require_5m_volume_increase: bool | None = None,
+    require_vwap_or_ma20: bool | None = None,
+    require_pullback_rebreak: bool | None = None,
     path: Path = RUNTIME_SETTINGS_PATH,
 ) -> dict[str, float]:
     stop = _validate_percent(stop_loss_percent, "손절 비율")
@@ -198,6 +245,31 @@ def save_runtime_risk_settings(
         mode = _validate_candidate_mode(candidate_selection_mode)
         payload["candidate_selection_mode"] = _candidate_mode_to_float(mode)
         payload["refresh_intraday_candidates"] = 0.0 if mode == CANDIDATE_MODE_FIXED else 1.0
+    if partial_take_profit_enabled is not None:
+        payload["partial_take_profit_enabled"] = 1.0 if partial_take_profit_enabled else 0.0
+    if trailing_stop_activation_percent is not None:
+        payload["trailing_stop_activation_rate"] = (
+            _validate_percent_range(trailing_stop_activation_percent, "트레일링 시작 수익률") / 100
+        )
+    if max_entry_price_change_percent is not None:
+        payload["max_entry_price_change"] = (
+            _validate_percent_range(max_entry_price_change_percent, "매수 과열 상한") / 100
+        )
+    if breakout_hold_minutes is not None:
+        payload["breakout_hold_minutes"] = _validate_minutes(
+            breakout_hold_minutes,
+            "돌파 유지 시간",
+        )
+    if require_5m_close_above_breakout is not None:
+        payload["require_5m_close_above_breakout"] = (
+            1.0 if require_5m_close_above_breakout else 0.0
+        )
+    if require_5m_volume_increase is not None:
+        payload["require_5m_volume_increase"] = 1.0 if require_5m_volume_increase else 0.0
+    if require_vwap_or_ma20 is not None:
+        payload["require_vwap_or_ma20"] = 1.0 if require_vwap_or_ma20 else 0.0
+    if require_pullback_rebreak is not None:
+        payload["require_pullback_rebreak"] = 1.0 if require_pullback_rebreak else 0.0
     if not _save_runtime_settings_to_db(payload):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -226,6 +298,45 @@ def save_runtime_risk_settings(
                 payload.get(
                     "candidate_selection_mode",
                     _candidate_mode_to_float(current.candidate_selection_mode),
+                )
+            ),
+            partial_take_profit_enabled=bool(
+                payload.get(
+                    "partial_take_profit_enabled",
+                    float(current.partial_take_profit_enabled),
+                )
+            ),
+            trailing_stop_activation_rate=payload.get(
+                "trailing_stop_activation_rate",
+                current.trailing_stop_activation_rate,
+            ),
+            max_entry_price_change=payload.get(
+                "max_entry_price_change",
+                current.max_entry_price_change,
+            ),
+            breakout_hold_minutes=payload.get(
+                "breakout_hold_minutes",
+                current.breakout_hold_minutes,
+            ),
+            require_5m_close_above_breakout=bool(
+                payload.get(
+                    "require_5m_close_above_breakout",
+                    float(current.require_5m_close_above_breakout),
+                )
+            ),
+            require_5m_volume_increase=bool(
+                payload.get(
+                    "require_5m_volume_increase",
+                    float(current.require_5m_volume_increase),
+                )
+            ),
+            require_vwap_or_ma20=bool(
+                payload.get("require_vwap_or_ma20", float(current.require_vwap_or_ma20))
+            ),
+            require_pullback_rebreak=bool(
+                payload.get(
+                    "require_pullback_rebreak",
+                    float(current.require_pullback_rebreak),
                 )
             ),
         )
@@ -333,6 +444,16 @@ def _apply_runtime_settings(settings: TradingSettings) -> TradingSettings:
     overrides = _complete_runtime_settings(settings, overrides)
     if "refresh_intraday_candidates" in overrides:
         overrides["refresh_intraday_candidates"] = bool(overrides["refresh_intraday_candidates"])
+    if "partial_take_profit_enabled" in overrides:
+        overrides["partial_take_profit_enabled"] = bool(overrides["partial_take_profit_enabled"])
+    for key in (
+        "require_5m_close_above_breakout",
+        "require_5m_volume_increase",
+        "require_vwap_or_ma20",
+        "require_pullback_rebreak",
+    ):
+        if key in overrides:
+            overrides[key] = bool(overrides[key])
     if "candidate_selection_mode" in overrides:
         overrides["candidate_selection_mode"] = _candidate_mode_from_float(
             overrides["candidate_selection_mode"]
@@ -352,6 +473,8 @@ def _runtime_settings_from_settings(settings: TradingSettings) -> dict[str, floa
     return {
         "max_position_loss": settings.max_position_loss,
         "take_profit_rate": settings.take_profit_rate,
+        "partial_take_profit_enabled": 1.0 if settings.partial_take_profit_enabled else 0.0,
+        "trailing_stop_activation_rate": settings.trailing_stop_activation_rate,
         "min_total_score": settings.min_total_score,
         "min_price_usd": settings.min_price_usd,
         "max_price_usd": settings.max_price_usd,
@@ -360,6 +483,14 @@ def _runtime_settings_from_settings(settings: TradingSettings) -> dict[str, floa
         "max_opening_gap": settings.max_opening_gap,
         "refresh_intraday_candidates": 1.0 if settings.refresh_intraday_candidates else 0.0,
         "candidate_selection_mode": _candidate_mode_to_float(settings.candidate_selection_mode),
+        "max_entry_price_change": settings.max_entry_price_change,
+        "breakout_hold_minutes": settings.breakout_hold_minutes,
+        "require_5m_close_above_breakout": (
+            1.0 if settings.require_5m_close_above_breakout else 0.0
+        ),
+        "require_5m_volume_increase": 1.0 if settings.require_5m_volume_increase else 0.0,
+        "require_vwap_or_ma20": 1.0 if settings.require_vwap_or_ma20 else 0.0,
+        "require_pullback_rebreak": 1.0 if settings.require_pullback_rebreak else 0.0,
     }
 
 
@@ -490,3 +621,10 @@ def _validate_volume_ratio(value: float, label: str) -> float:
     if ratio <= 0 or ratio > 100:
         raise ValueError(f"{label}은 0보다 크고 100 이하로 입력해 주세요.")
     return ratio
+
+
+def _validate_minutes(value: float, label: str) -> float:
+    minutes = float(value)
+    if minutes < 0 or minutes > 60:
+        raise ValueError(f"{label}은 0 이상 60 이하로 입력해 주세요.")
+    return minutes

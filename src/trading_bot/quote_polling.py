@@ -19,6 +19,7 @@ class PollingExitMonitor:
         self,
         positions: Iterable[PositionState],
         end_of_day: bool = False,
+        partial_take_profit_tickers: Iterable[str] = (),
     ) -> tuple[list[PositionState], list[SellIntent]]:
         refreshed: list[PositionState] = []
         for position in positions:
@@ -26,4 +27,9 @@ class PollingExitMonitor:
                 refreshed.append(update_high(position, self.price_reader(position.ticker)))
             except Exception:
                 refreshed.append(position)
-        return refreshed, plan_position_exits(refreshed, self.settings, end_of_day)
+        return refreshed, plan_position_exits(
+            refreshed,
+            self.settings,
+            end_of_day,
+            partial_take_profit_tickers,
+        )

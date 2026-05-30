@@ -30,7 +30,7 @@ window.runtimeControls = (() => {
     const modeLabel = runtime.modeLabel || (ordersUnlocked ? "실투자 대기" : "모의투자");
     const status = orderStatusText(realTrading);
     document.querySelector("#operatingMode").textContent = modeLabel;
-    document.querySelector("#realOrderStatus").textContent = status;
+    document.querySelector("#realOrderStatus").textContent = ordersUnlocked ? status : "";
     if (securityBar) {
       securityBar.hidden = monitorAuth.localBypass === true;
     }

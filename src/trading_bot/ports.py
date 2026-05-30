@@ -15,6 +15,7 @@ from trading_bot.models import (
     RankedStock,
     ScoreRecord,
     TradeRecord,
+    BreakoutInput,
 )
 
 
@@ -37,7 +38,7 @@ class CandidateHistorySource(Protocol):
 
 
 class BreakoutSource(Protocol):
-    def breakout_input(self, ticker: str) -> tuple[float, float, float, float]: ...
+    def breakout_input(self, ticker: str) -> BreakoutInput | tuple[float, float, float, float]: ...
 
 
 class ScoringProvider(Protocol):

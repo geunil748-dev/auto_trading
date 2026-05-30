@@ -26,4 +26,15 @@ def trailing_stop_triggered(
     position: PositionState,
     settings: TradingSettings,
 ) -> bool:
-    return position.last_price_usd <= trailing_stop_price(position, settings)
+    return trailing_stop_activated(position, settings) and (
+        position.last_price_usd <= trailing_stop_price(position, settings)
+    )
+
+
+def trailing_stop_activated(position: PositionState, settings: TradingSettings) -> bool:
+    if settings.trailing_stop_activation_rate <= 0:
+        return True
+    if position.entry_price_usd <= 0:
+        return False
+    high_profit_rate = (position.high_price_usd - position.entry_price_usd) / position.entry_price_usd
+    return high_profit_rate >= settings.trailing_stop_activation_rate

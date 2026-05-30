@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 from trading_bot.adapters.kis_account import KisAccountReader
@@ -14,7 +15,12 @@ from trading_bot.composition import (
     build_mock_buy_executor,
     build_mock_sell_executor,
 )
-from trading_bot.config import KisSettings, TradingSettings, load_settings
+from trading_bot.config import (
+    KisSettings,
+    TradingSettings,
+    load_notification_settings,
+    load_settings,
+)
 from trading_bot.daily_report import write_daily_report
 from trading_bot.database import pyodbc_connect_factory
 from trading_bot.fill_persistence import fill_records_from_monitor_rows
@@ -25,9 +31,13 @@ from trading_bot.market_calendar import (
     is_current_us_regular_session,
     is_current_us_trading_day,
 )
-from trading_bot.models import PositionState
+from trading_bot.models import BuyIntent, PositionState
 from trading_bot.monitor_state import state_from_dry_run
-from trading_bot.order_cancellation import cancel_unfilled_orders
+from trading_bot.notifications import send_market_close_done
+from trading_bot.order_cancellation import (
+    cancel_unfilled_orders,
+    stale_unfilled_buy_cancel_requests,
+)
 from trading_bot.entry_planner import plan_buy_intents
 from trading_bot.repositories import SqlServerDailyRepository, SqlServerMonitorRepository
 from trading_bot.runtime import DryRunResult
@@ -96,22 +106,37 @@ def live_mock_tasks(
         current_settings = _current_settings(settings)
         accounts, monitor, repository = build_live_exit_poll(current_settings, kis_settings)
         positions = _remembered_highs(accounts.positions(), latest.highs)
-        refreshed, exits = monitor.poll(positions)
+        partial_done = latest.partial_take_profit_tickers | _saved_partial_take_profit_tickers(repository)
+        refreshed, exits = monitor.poll(
+            positions,
+            partial_take_profit_tickers=partial_done,
+        )
         latest.highs.update({item.ticker: item.high_price_usd for item in refreshed})
         latest.pending_exits.intersection_update(item.ticker for item in refreshed)
         # 같은 보유 종목에 미체결 매도 주문을 중복 제출하지 않도록 보호한다.
         executable = [item for item in exits if item.ticker not in latest.pending_exits]
         trades = build_mock_sell_executor(kis_settings, repository).execute(executable)
-        latest.pending_exits.update(item.ticker for item in executable)
+        latest.partial_take_profit_tickers.update(
+            item.ticker for item in executable if item.exit_reason == "PARTIAL_TAKE_PROFIT"
+        )
+        latest.pending_exits.update(
+            item.ticker for item in executable if item.exit_reason != "PARTIAL_TAKE_PROFIT"
+        )
+        retry_state, retry_logs = _retry_stale_mock_buy_orders(
+            current_settings,
+            kis_settings,
+            latest,
+        )
         _write_live_state(
             monitor_state,
             kis_settings,
+            screening_state=retry_state,
             extra_logs=[
                 log_row(
                     "1분 감시",
                     watch_message(refreshed, exits, executable, latest.pending_exits),
                 )
-            ],
+            ] + retry_logs,
         )
         return f"Intraday watch submitted {len(trades)} mock sell orders."
 
@@ -133,7 +158,17 @@ def live_mock_tasks(
             latest.result = runtime.run()
         latest.repository = repository
         positions = runtime.accounts.positions()
-        unfilled = _unfilled_order_tickers(kis_settings)
+        cancelled = _cancel_stale_mock_buy_orders(
+            kis_settings,
+            current_settings.mock_unfilled_reorder_minutes,
+            latest.retried_buy_tickers,
+            current_settings.mock_unfilled_reorder_limit,
+        )
+        latest.cancelled_orders.extend(cancelled)
+        _release_cancelled_buy_tickers(latest, cancelled)
+        unfilled = _unfilled_order_tickers(kis_settings) - {
+            _ticker(str(item.get("ticker", ""))) for item in cancelled
+        }
         # 재평가 매수는 미체결/이미 진입한 종목/일일 라운드 제한을 한 번 더 통과해야 한다.
         intents = limited_intraday_buy_intents(
             latest.result.buy_intents,
@@ -144,6 +179,7 @@ def live_mock_tasks(
             latest.intraday_entry_rounds,
             current_settings,
         )
+        intents = _tag_mode_intents(intents, mode)
         trades = build_mock_buy_executor(kis_settings, repository).execute(intents)
         if trades:
             latest.intraday_entry_rounds += 1
@@ -168,7 +204,7 @@ def live_mock_tasks(
                         current_settings,
                     ),
                 )
-            ],
+            ] + _cancel_logs(cancelled, current_settings.mock_unfilled_reorder_minutes),
         )
         return (
             f"Intraday recheck selected {len(latest.result.scoring.selected)} scores "
@@ -209,6 +245,7 @@ def live_mock_tasks(
             latest.cancelled_orders,
             len(trades),
         )
+        _send_market_close_notice()
         return (
             f"Submitted {len(trades)} end-of-day mock sell orders "
             f"and wrote {report_path}."
@@ -251,6 +288,22 @@ def _save_daily_run_summary(
         return
 
 
+def _send_market_close_notice() -> None:
+    try:
+        send_market_close_done(load_notification_settings())
+    except Exception:
+        return
+
+
+def _saved_partial_take_profit_tickers(repository) -> set[str]:
+    try:
+        if hasattr(repository, "partial_take_profit_tickers"):
+            return set(repository.partial_take_profit_tickers(current_trade_date()))
+    except Exception:
+        return set()
+    return set()
+
+
 def _candidate_mode(settings: TradingSettings) -> str:
     if settings.candidate_selection_mode != "refresh":
         return settings.candidate_selection_mode
@@ -263,8 +316,10 @@ class _LatestRunState:
         self.repository = None
         self.highs: dict[str, float] = {}
         self.pending_exits: set[str] = set()
+        self.partial_take_profit_tickers: set[str] = set()
         self.buy_tickers: set[str] = set()
         self.add_on_tickers: set[str] = set()
+        self.retried_buy_tickers: set[str] = set()
         self.intraday_entry_rounds = 0
         self.cancelled_orders: list[dict[str, object]] = []
         self.opening_result = None
@@ -336,6 +391,26 @@ def _hybrid_selected_scores(
     return tuple(ranked[: settings.hybrid_candidate_limit])
 
 
+def _tag_mode_intents(intents: list[BuyIntent], mode: str) -> list[BuyIntent]:
+    reason = {
+        "fixed": "OPENING_FIXED",
+        "hybrid": "HYBRID_CANDIDATE",
+    }.get(mode, "REFRESH_CANDIDATE")
+    detail = {
+        "fixed": "장초반 고정 후보 재평가",
+        "hybrid": "장초반 고정 후보와 15분 신규 후보 결합",
+    }.get(mode, "15분마다 신규 후보 재수집")
+    return [_append_entry_reason(intent, reason, detail) for intent in intents]
+
+
+def _append_entry_reason(intent: BuyIntent, reason: str, detail: str) -> BuyIntent:
+    reasons = [item for item in intent.entry_reason.split("+") if item]
+    if reason not in reasons:
+        reasons.append(reason)
+    detail_text = "; ".join(item for item in (intent.entry_reason_detail, detail) if item)
+    return replace(intent, entry_reason="+".join(reasons), entry_reason_detail=detail_text)
+
+
 def _write_live_state(
     monitor_state: Path,
     kis_settings: KisSettings,
@@ -377,7 +452,8 @@ def _persist_live_snapshot(live_state: dict[str, object]) -> str:
             repository.save_holdings(holdings, trade_date)
         if isinstance(fills, list):
             entry_prices = repository.sell_entry_prices(trade_date)
-            records = fill_records_from_monitor_rows(fills, entry_prices)
+            entry_reasons = repository.entry_reasons(trade_date)
+            records = fill_records_from_monitor_rows(fills, entry_prices, entry_reasons)
             if records:
                 repository.save_fills(records)
                 if any(item.profit_usd is not None for item in records):
@@ -416,13 +492,126 @@ def _write_closed_state(monitor_state: Path) -> None:
     )
 
 
+def _retry_stale_mock_buy_orders(
+    settings: TradingSettings,
+    kis_settings: KisSettings,
+    latest: _LatestRunState,
+) -> tuple[dict[str, object] | None, list[list[str]]]:
+    cancelled = _cancel_stale_mock_buy_orders(
+        kis_settings,
+        settings.mock_unfilled_reorder_minutes,
+        latest.retried_buy_tickers,
+        settings.mock_unfilled_reorder_limit,
+    )
+    if not cancelled:
+        return None, []
+    latest.cancelled_orders.extend(cancelled)
+    _release_cancelled_buy_tickers(latest, cancelled)
+
+    runtime, repository = build_live_dry_run(settings, kis_settings)
+    latest.result = runtime.run()
+    latest.repository = repository
+    positions = runtime.accounts.positions()
+    cancelled_tickers = {_ticker(str(item.get("ticker", ""))) for item in cancelled}
+    unfilled = _unfilled_order_tickers(kis_settings) - cancelled_tickers
+    intents = limited_intraday_buy_intents(
+        latest.result.buy_intents,
+        positions,
+        latest.buy_tickers,
+        latest.add_on_tickers,
+        unfilled,
+        latest.intraday_entry_rounds,
+        settings,
+    )
+    intents = [
+        _append_entry_reason(
+            intent,
+            "UNFILLED_REORDER",
+            f"미체결 {settings.mock_unfilled_reorder_minutes}분 경과 후 1회 재주문",
+        )
+        for intent in intents
+    ]
+    trades = build_mock_buy_executor(kis_settings, repository).execute(intents)
+    if trades:
+        latest.intraday_entry_rounds += 1
+        latest.buy_tickers.update(item.ticker for item in intents)
+    return (
+        state_from_dry_run(latest.result),
+        [
+            log_row(
+                "미체결 재주문",
+                f"{settings.mock_unfilled_reorder_minutes}분 지난 미체결 매수 "
+                f"{len(cancelled)}건 취소, 재주문 {len(trades)}건",
+            )
+        ],
+    )
+
+
+def _cancel_stale_mock_buy_orders(
+    kis_settings: KisSettings,
+    max_age_minutes: int,
+    retried_tickers: set[str],
+    retry_limit: int = 1,
+) -> list[dict[str, object]]:
+    if retry_limit <= 0:
+        return []
+    try:
+        rows = _mock_order_rows(kis_settings)
+    except Exception:
+        return []
+    requests = stale_unfilled_buy_cancel_requests(
+        rows,
+        max_age_minutes=max_age_minutes,
+        retried_tickers=retried_tickers,
+    )
+    if not requests:
+        return []
+    canceller = KisMockOrderCanceller(
+        KisOverseasClient(KisJsonClient(kis_settings)),
+        kis_settings,
+    )
+    cancelled = []
+    for request in requests:
+        canceller.cancel(request)
+        cancelled.append(request)
+    retried_tickers.update(_ticker(str(item.get("ticker", ""))) for item in cancelled)
+    return cancelled
+
+
+def _release_cancelled_buy_tickers(
+    latest: _LatestRunState,
+    cancelled: list[dict[str, object]],
+) -> None:
+    for item in cancelled:
+        ticker = _ticker(str(item.get("ticker", "")))
+        latest.buy_tickers.discard(ticker)
+        latest.add_on_tickers.discard(ticker)
+
+
+def _cancel_logs(
+    cancelled: list[dict[str, object]],
+    minutes: int,
+) -> list[list[str]]:
+    if not cancelled:
+        return []
+    tickers = ", ".join(_ticker(str(item.get("ticker", ""))) for item in cancelled)
+    return [log_row("미체결 취소", f"{minutes}분 지난 미체결 매수 취소: {tickers}")]
+
+
 def _unfilled_order_tickers(kis_settings: KisSettings) -> set[str]:
+    return _unfilled_order_tickers_from_rows(_mock_order_rows(kis_settings))
+
+
+def _mock_order_rows(kis_settings: KisSettings) -> list[dict[str, object]]:
     kis = KisOverseasClient(KisJsonClient(kis_settings))
-    rows = kis.mock_order_history(
+    return kis.mock_order_history(
         kis_settings.account_no,
         kis_settings.account_product,
         current_us_market_date().strftime("%Y%m%d"),
     )
+
+
+def _unfilled_order_tickers_from_rows(rows: list[dict[str, object]]) -> set[str]:
     return {
         ticker
         for row in rows

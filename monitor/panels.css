@@ -10,6 +10,8 @@ body[data-page="dashboard"] .orders,
 body[data-page="dashboard"] .fills,
 body[data-page="dashboard"] .candidate-history,
 body[data-page="dashboard"] .run-summary,
+body[data-page="dashboard"] .entry-reason-stats,
+body[data-page="dashboard"] .backtest-panel,
 body[data-page="dashboard"] .settings-panel {
   display: none;
 }
@@ -24,6 +26,8 @@ body[data-page="activity"] .candidates,
 body[data-page="activity"] .holdings,
 body[data-page="activity"] .candidate-history,
 body[data-page="activity"] .run-summary,
+body[data-page="activity"] .entry-reason-stats,
+body[data-page="activity"] .backtest-panel,
 body[data-page="activity"] .settings-panel {
   display: none;
 }
@@ -46,6 +50,8 @@ body[data-page="candidateHistory"] .logs,
 body[data-page="candidateHistory"] .orders,
 body[data-page="candidateHistory"] .fills,
 body[data-page="candidateHistory"] .run-summary,
+body[data-page="candidateHistory"] .entry-reason-stats,
+body[data-page="candidateHistory"] .backtest-panel,
 body[data-page="candidateHistory"] .settings-panel {
   display: none;
 }
@@ -66,6 +72,8 @@ body[data-page="runSummary"] .candidate-history,
 body[data-page="runSummary"] .logs,
 body[data-page="runSummary"] .orders,
 body[data-page="runSummary"] .fills,
+body[data-page="runSummary"] .entry-reason-stats,
+body[data-page="runSummary"] .backtest-panel,
 body[data-page="runSummary"] .settings-panel {
   display: none;
 }
@@ -78,6 +86,29 @@ body[data-page="runSummary"] .run-summary {
   min-height: 250px;
 }
 
+body[data-page="entryReasonStats"] .account-summary,
+body[data-page="entryReasonStats"] .account-error,
+body[data-page="entryReasonStats"] .history-bar,
+body[data-page="entryReasonStats"] .candidates,
+body[data-page="entryReasonStats"] .holdings,
+body[data-page="entryReasonStats"] .candidate-history,
+body[data-page="entryReasonStats"] .run-summary,
+body[data-page="entryReasonStats"] .logs,
+body[data-page="entryReasonStats"] .orders,
+body[data-page="entryReasonStats"] .fills,
+body[data-page="entryReasonStats"] .backtest-panel,
+body[data-page="entryReasonStats"] .settings-panel {
+  display: none;
+}
+
+body[data-page="entryReasonStats"] .work-grid {
+  grid-template-columns: minmax(320px, 1fr);
+}
+
+body[data-page="entryReasonStats"] .entry-reason-stats {
+  min-height: 250px;
+}
+
 body[data-page="settings"] .account-summary,
 body[data-page="settings"] .account-error,
 body[data-page="settings"] .history-bar,
@@ -85,6 +116,8 @@ body[data-page="settings"] .candidates,
 body[data-page="settings"] .holdings,
 body[data-page="settings"] .candidate-history,
 body[data-page="settings"] .run-summary,
+body[data-page="settings"] .entry-reason-stats,
+body[data-page="settings"] .backtest-panel,
 body[data-page="settings"] .logs,
 body[data-page="settings"] .orders,
 body[data-page="settings"] .fills {
@@ -95,13 +128,63 @@ body[data-page="settings"] .work-grid {
   grid-template-columns: minmax(320px, 1180px);
 }
 
+body[data-page="backtest"] .account-summary,
+body[data-page="backtest"] .account-error,
+body[data-page="backtest"] .candidates,
+body[data-page="backtest"] .holdings,
+body[data-page="backtest"] .candidate-history,
+body[data-page="backtest"] .run-summary,
+body[data-page="backtest"] .entry-reason-stats,
+body[data-page="backtest"] .settings-panel,
+body[data-page="backtest"] .logs,
+body[data-page="backtest"] .orders,
+body[data-page="backtest"] .fills {
+  display: none;
+}
+
+body[data-page="backtest"] .work-grid {
+  grid-template-columns: minmax(320px, 1fr);
+}
+
+.backtest-panel {
+  min-height: 250px;
+}
+
+.backtest-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.backtest-controls label {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.backtest-controls select,
+.backtest-controls input {
+  min-width: 260px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #101c27;
+  color: var(--text);
+}
+
+.backtest-controls input {
+  min-width: 150px;
+}
+
 .settings-panel {
   min-height: 220px;
 }
 
 .settings-stack {
   display: grid;
-  grid-template-columns: minmax(260px, 0.82fr) minmax(420px, 1.18fr);
+  grid-template-columns: minmax(280px, 0.78fr) minmax(520px, 1.22fr);
   align-items: start;
   max-width: none;
   gap: 18px;
@@ -116,12 +199,33 @@ body[data-page="settings"] .work-grid {
   background: rgb(10 20 30 / 22%);
 }
 
-#filterSettingsForm {
+.filter-settings-form {
+  gap: 16px;
+}
+
+.buy-sell-settings-form {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-#filterSettingsForm .settings-group-head,
-#filterSettingsForm .setting-wide,
+.buy-sell-settings-form .settings-group-head,
+.buy-sell-settings-form .setting-wide,
+.buy-sell-settings-form button,
+.buy-sell-settings-form .settings-status {
+  grid-column: 1 / -1;
+}
+
+.settings-section {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid rgb(88 199 213 / 16%);
+  border-radius: 8px;
+  background: rgb(7 15 23 / 20%);
+}
+
+.settings-section .settings-group-head,
+.settings-section .setting-wide,
 #filterSettingsForm button,
 #filterSettingsForm .settings-status {
   grid-column: 1 / -1;
@@ -147,6 +251,20 @@ body[data-page="settings"] .work-grid {
   gap: 8px;
   color: var(--muted);
   font-size: 0.86rem;
+}
+
+.settings-form label.check-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  color: var(--text);
+}
+
+.check-input input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--teal);
 }
 
 .percent-input {
@@ -205,6 +323,12 @@ body[data-page="settings"] .work-grid {
   border-color: rgb(255 106 114 / 42%);
   background: rgb(255 106 114 / 10%);
   color: #ffb1b6;
+}
+
+.status-badge.is-real {
+  border-color: rgb(255 106 114 / 50%);
+  background: rgb(255 106 114 / 14%);
+  color: #ff8f96;
 }
 
 .account-tabs {
@@ -306,6 +430,17 @@ body[data-page="settings"] .work-grid {
   min-width: 0;
 }
 
+.panel-help {
+  margin: -6px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid rgb(88 199 213 / 22%);
+  border-radius: 7px;
+  background: rgb(88 199 213 / 7%);
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
 .table-wrap {
   overflow-x: auto;
   border: 1px solid var(--line);
@@ -314,7 +449,8 @@ body[data-page="settings"] .work-grid {
 }
 
 .candidates table,
-.candidate-history table {
+.candidate-history table,
+.backtest-panel table {
   min-width: 100%;
   table-layout: auto;
 }
@@ -622,7 +758,12 @@ body[data-page="activity"] .logs.is-collapsed {
 
 .run-summary-head,
 .run-summary-row {
-  grid-template-columns: 116px minmax(150px, 0.8fr) minmax(320px, 1.7fr) 96px 82px 72px 72px 58px 58px;
+  grid-template-columns: 116px minmax(170px, 1.1fr) repeat(8, 86px) 96px 82px 72px 72px;
+  min-width: 1300px;
+}
+
+.run-summary .trade-list-box {
+  overflow-x: auto;
 }
 
 .run-summary-row em {

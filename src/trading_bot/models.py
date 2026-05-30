@@ -66,7 +66,8 @@ class ScoreRecord:
 
     @property
     def total_score(self) -> float:
-        return (self.news_score + self.chart_score) / 2
+        # 뉴스는 느리거나 없을 수 있으므로 보조 점수로만 반영하고, 차트 판단을 중심으로 둔다.
+        return self.chart_score * 0.9 + self.news_score * 0.1
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,21 @@ class PositionState:
 
 
 @dataclass(frozen=True)
+class BreakoutInput:
+    last_price_usd: float
+    open_price_usd: float
+    previous_high_usd: float
+    previous_low_usd: float
+    minutes_above_breakout: float = 0.0
+    recent_5m_close_usd: float | None = None
+    current_5m_volume: float | None = None
+    previous_5m_average_volume: float | None = None
+    vwap_usd: float | None = None
+    intraday_ma20_usd: float | None = None
+    pulled_back_after_breakout: bool | None = None
+
+
+@dataclass(frozen=True)
 class BotLog:
     level: str
     module: str
@@ -120,6 +136,8 @@ class BuyIntent:
     limit_price_usd: float
     order_value_usd: float
     allocation_fraction: float
+    entry_reason: str = "OPENING_BREAKOUT"
+    entry_reason_detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -145,6 +163,8 @@ class TradeRecord:
     profit_krw: float | None = None
     profit_rate: float | None = None
     exit_reason: str | None = None
+    entry_reason: str | None = None
+    entry_reason_detail: str | None = None
     max_price_after_buy: float | None = None
     is_mock: bool = True
     ticker_name: str = ""
@@ -163,4 +183,6 @@ class FillRecord:
     order_no: str = ""
     profit_usd: float | None = None
     profit_rate: float | None = None
+    entry_reason: str | None = None
+    entry_reason_detail: str | None = None
     is_mock: bool = True
