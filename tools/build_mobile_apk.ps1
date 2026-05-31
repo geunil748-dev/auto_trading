@@ -2,8 +2,8 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 $sourceDir = Join-Path $root "mobile\stock_monitor_app"
-$buildDir = "C:\Users\admin\develop\stock_monitor_app_build"
-$apiUrl = if ($args.Count -gt 0) { $args[0] } else { "http://10.0.2.2:4174/api/state" }
+$buildDir = Join-Path $env:TEMP "stock_monitor_app_build"
+$apiUrl = if ($args.Count -gt 0) { $args[0] } else { "http://100.103.149.101:4174/api/state" }
 $envPath = Join-Path $root ".env"
 
 function Read-DotEnvValue {
@@ -29,8 +29,8 @@ function Read-DotEnvValue {
 
 $monitorBearerToken = Read-DotEnvValue -Path $envPath -Key "MONITOR_BEARER_TOKEN"
 
-$defaultJavaHome = "C:\Users\admin\develop\jdk-17"
-$defaultAndroidHome = "C:\Users\admin\develop\android-sdk"
+$defaultJavaHome = Join-Path $env:USERPROFILE "develop\jdk-17"
+$defaultAndroidHome = Join-Path $env:USERPROFILE "develop\android-sdk"
 if (-not $env:JAVA_HOME -and (Test-Path -LiteralPath $defaultJavaHome)) {
     $env:JAVA_HOME = $defaultJavaHome
 }
@@ -56,7 +56,7 @@ function Resolve-Flutter {
         return $command.Source
     }
 
-    $defaultPath = "C:\Users\admin\develop\flutter\bin\flutter.bat"
+    $defaultPath = Join-Path $env:USERPROFILE "develop\flutter\bin\flutter.bat"
     if (Test-Path -LiteralPath $defaultPath) {
         return $defaultPath
     }

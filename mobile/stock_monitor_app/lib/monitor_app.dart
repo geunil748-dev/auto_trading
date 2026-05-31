@@ -9,7 +9,7 @@ import 'monitor_widgets.dart';
 
 const defaultMonitorApiUrl = String.fromEnvironment(
   'MONITOR_API_URL',
-  defaultValue: 'http://192.168.0.7:4174/api/state',
+  defaultValue: 'http://100.103.149.101:4174/api/state',
 );
 
 const monitorBearerToken = String.fromEnvironment(
