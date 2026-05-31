@@ -32,7 +32,8 @@ window.runtimeControls = (() => {
     document.querySelector("#operatingMode").textContent = modeLabel;
     document.querySelector("#realOrderStatus").textContent = ordersUnlocked ? status : "";
     if (securityBar) {
-      securityBar.hidden = monitorAuth.localBypass === true;
+      securityBar.hidden =
+        monitorAuth.localBypass === true || monitorAuth.tokenConfigured !== true;
     }
     if (toggleButton) {
       toggleButton.textContent = realTrading.manualEnabled
