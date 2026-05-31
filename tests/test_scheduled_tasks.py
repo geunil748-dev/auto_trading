@@ -1,8 +1,13 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from trading_bot.config import KisSettings, TradingSettings
-from trading_bot.models import AccountState, BuyIntent, PositionState, ScoreRecord, SellIntent
-from trading_bot.scheduled_tasks import _apply_stop_loss_entry_guards, live_mock_tasks
+from trading_bot.models import AccountState, BuyIntent, FillRecord, PositionState, ScoreRecord, SellIntent
+from trading_bot.scheduled_tasks import (
+    _apply_stop_loss_entry_guards,
+    _entry_profit_snapshots_from_fills,
+    _holding_prices,
+    live_mock_tasks,
+)
 
 
 class Accounts:
@@ -221,6 +226,51 @@ def test_stop_loss_cooldown_blocks_same_symbol_entry() -> None:
 
     assert intents == []
     assert repository.logs[0].reject_reason == "STOP_LOSS_COOLDOWN"
+
+
+def test_entry_profit_snapshots_are_created_from_buy_fills() -> None:
+    snapshots = _entry_profit_snapshots_from_fills(
+        [
+            FillRecord(
+                trade_date=date(2026, 5, 29),
+                ticker="AAA",
+                ticker_name="Alpha",
+                side="BUY",
+                quantity=3,
+                fill_price_usd=10.5,
+                fill_amount_usd=31.5,
+                fill_time="22:35:00",
+                strategy_version="STRICT_FIXED",
+            ),
+            FillRecord(
+                trade_date=date(2026, 5, 29),
+                ticker="AAA",
+                side="SELL",
+                quantity=3,
+                fill_price_usd=11.0,
+                fill_amount_usd=33.0,
+                fill_time="22:45:00",
+            ),
+        ]
+    )
+
+    assert len(snapshots) == 1
+    assert snapshots[0].ticker == "AAA"
+    assert snapshots[0].entry_time == "22:35:00"
+    assert snapshots[0].entry_price_usd == 10.5
+    assert snapshots[0].strategy_version == "STRICT_FIXED"
+
+
+def test_holding_prices_parse_current_price_fields() -> None:
+    prices = _holding_prices(
+        [
+            {"ticker": " aaa ", "closePrice": "$12.34"},
+            {"ticker": "BBB", "lastPrice": "9.87"},
+            {"ticker": "", "closePrice": "$1.00"},
+        ]
+    )
+
+    assert prices == {"AAA": 12.34, "BBB": 9.87}
 
 
 def test_consecutive_stop_loss_limit_blocks_all_new_entries() -> None:

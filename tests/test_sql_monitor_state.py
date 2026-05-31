@@ -27,6 +27,15 @@ class Repository:
             ("22:43:00", "INFO", "Expanded screening universe to top 5 (10 tickers)."),
         ]
 
+    def candidate_snapshot_status(self) -> tuple[object, ...]:
+        return (
+            4,
+            "2026-05-29",
+            56,
+            "INFO",
+            "CANDIDATE_SNAPSHOT_SAVED: 후보 56건을 DB에 저장했습니다.",
+        )
+
     def latest_trades(self) -> list[tuple[object, ...]]:
         return [
             (
@@ -70,6 +79,45 @@ class Repository:
     def history_fills(self, trade_date) -> list[tuple[object, ...]]:
         return self.latest_fills()
 
+    def latest_entry_profit_snapshots(self) -> list[tuple[object, ...]]:
+        return [
+            (
+                "2026-05-22",
+                "AAA",
+                "Alpha",
+                "22:41:10",
+                12.5,
+                -0.01,
+                0.02,
+                0.03,
+                0.04,
+                0.05,
+                None,
+                "TAKE_PROFIT",
+                0.062,
+                "STRICT_V1",
+            ),
+            (
+                "2026-05-22",
+                "BBB",
+                "Beta",
+                "22:45:10",
+                10.0,
+                -0.02,
+                -0.01,
+                -0.005,
+                -0.003,
+                None,
+                None,
+                "STOP_LOSS",
+                -0.025,
+                "STRICT_V1",
+            ),
+        ]
+
+    def history_entry_profit_snapshots(self, trade_date) -> list[tuple[object, ...]]:
+        return self.latest_entry_profit_snapshots()
+
     def history_logs(self, trade_date) -> list[tuple[object, ...]]:
         return self.latest_logs()
 
@@ -98,6 +146,34 @@ class Repository:
     def entry_reason_performance(self) -> list[tuple[object, ...]]:
         return [("OPENING_BREAKOUT+NEWS_POSITIVE", 2, 15.5, 0.062, 0.5)]
 
+    def closed_trade_analysis(self) -> list[tuple[object, ...]]:
+        return [
+            (
+                "2026-05-22 22:40:00",
+                "2026-05-22 23:10:00",
+                "AAA",
+                "Alpha",
+                "OPENING_BREAKOUT+NEWS_POSITIVE+CHART_POSITIVE",
+                "총점 87.5",
+                "TAKE_PROFIT",
+                30,
+                0.062,
+                15.5,
+            ),
+            (
+                "2026-05-23 22:45:00",
+                "2026-05-23 23:00:00",
+                "BBB",
+                "Beta",
+                "OPENING_BREAKOUT+INTRADAY_RECHECK+CHART_POSITIVE",
+                "15분 재평가 후보",
+                "STOP_LOSS",
+                15,
+                -0.025,
+                -5.0,
+            ),
+        ]
+
     def history_realized_profit(self, trade_date) -> float:
         return self.today_realized_profit()
 
@@ -121,6 +197,21 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
         }
     ]
     assert state["targets"][0][7]
+    assert state["candidateSnapshot"] == {
+        "candidate_snapshot_days": 4,
+        "latest_candidate_snapshot_date": "2026-05-29",
+        "latest_candidate_snapshot_count": 56,
+        "sample_sufficient": False,
+        "minimum_required_candidate_days": 10,
+        "minimum_required_trade_count": 30,
+        "last_candidate_snapshot_status": "정보",
+        "last_candidate_snapshot_message": "CANDIDATE_SNAPSHOT_SAVED: 후보 56건을 DB에 저장했습니다.",
+        "sample_warning": (
+            "INSUFFICIENT_SAMPLE_FOR_STRATEGY_DECISION: "
+            "후보 기준일 또는 거래 수가 부족하여 전략 성과 판단에 사용할 수 없습니다. "
+            "최소 후보 기준일 10일 이상, 거래 수 30건 이상을 권장합니다."
+        ),
+    }
     assert state["account"] == {
         "cashUsd": "$1,000.00",
         "equityUsd": "$1,250.00",
@@ -159,6 +250,7 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
                 "entryReasonDetail": "",
                 "profitUsd": "",
                 "profitRate": "",
+                "strategyVersion": "",
             }
     ]
     assert state["fills"] == [
@@ -176,8 +268,36 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
             "profitRate": "",
             "entryReason": "",
             "entryReasonDetail": "",
+            "strategyVersion": "",
         }
     ]
+    assert state["entryProfitSnapshots"][0] == {
+        "ticker": "AAA",
+        "ticker_name": "Alpha",
+        "entry_date": "2026-05-22",
+        "entry_time": "22:41:10",
+        "entry_price": "$12.50",
+        "profit_after_5m": "-1.00%",
+        "profit_after_10m": "+2.00%",
+        "profit_after_15m": "+3.00%",
+        "profit_after_20m": "+4.00%",
+        "profit_after_30m": "+5.00%",
+        "profit_after_60m": "-",
+        "final_exit_reason": "익절",
+        "final_profit_rate": "+6.20%",
+        "strategy_version": "STRICT_V1",
+    }
+    assert state["entryProfitSnapshotStats"] == {
+        "sampleCount": 2,
+        "sampleSufficient": False,
+        "sampleWarning": "표본 부족: 전략 판단 금지",
+        "negativeStats": [
+            {"minutes": "5", "negativeCount": "2", "finalWinRate": "50.0%"},
+            {"minutes": "10", "negativeCount": "1", "finalWinRate": "0.0%"},
+            {"minutes": "15", "negativeCount": "1", "finalWinRate": "0.0%"},
+            {"minutes": "20", "negativeCount": "1", "finalWinRate": "0.0%"},
+        ],
+    }
     assert state["logs"] == [
         ["22:40:00", "정보", "후보 3개를 점검했고, 최종 0개를 선정했습니다."],
         ["22:41:00", "정보", "필터 제외 사유: 시세 스냅샷 없음 2건, 가격 하한 미달 2건"],
@@ -194,6 +314,61 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
             "winRate": "50.0%",
         }
     ]
+    assert state["strategyStats"] == [
+        {
+            "strategy": "OPENING_BREAKOUT",
+            "strategyText": "장초반 돌파",
+            "count": "1",
+            "winRate": "100.0%",
+            "averageProfitRate": "+6.20%",
+            "totalProfitUsd": "+$15.50",
+            "averageHoldingMinutes": "30분",
+            "maxDrawdown": "+0.00%",
+        },
+        {
+            "strategy": "INTRADAY_RECHECK",
+            "strategyText": "15분 재평가",
+            "count": "1",
+            "winRate": "0.0%",
+            "averageProfitRate": "-2.50%",
+            "totalProfitUsd": "-$5.00",
+            "averageHoldingMinutes": "15분",
+            "maxDrawdown": "-2.50%",
+        },
+    ]
+    assert state["exitReasonStats"] == [
+        {
+            "exitReason": "STOP_LOSS",
+            "exitReasonText": "손절",
+            "count": "1",
+            "winRate": "0.0%",
+            "averageProfitRate": "-2.50%",
+            "totalProfitUsd": "-$5.00",
+        },
+        {
+            "exitReason": "TAKE_PROFIT",
+            "exitReasonText": "익절",
+            "count": "1",
+            "winRate": "100.0%",
+            "averageProfitRate": "+6.20%",
+            "totalProfitUsd": "+$15.50",
+        },
+    ]
+    assert state["recentTrades"][0] == {
+        "entryAt": "2026-05-22 22:40:00",
+        "exitAt": "2026-05-22 23:10:00",
+        "ticker": "AAA",
+        "name": "Alpha",
+        "entryStrategy": "OPENING_BREAKOUT",
+        "entryStrategyText": "장초반 돌파",
+        "entryTags": "뉴스 긍정, 차트 조건 양호",
+        "exitReason": "TAKE_PROFIT",
+        "exitReasonText": "익절",
+        "holdingTime": "30분",
+        "profitRate": "+6.20%",
+        "profitUsd": "+$15.50",
+        "strategyVersion": "-",
+    }
 
 
 def test_sql_monitor_history_includes_daily_run_summary() -> None:

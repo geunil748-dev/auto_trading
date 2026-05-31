@@ -4,6 +4,15 @@ import json
 from datetime import date
 from typing import Any
 
+from trading_bot.performance_analysis import (
+    ClosedTradeAnalysis,
+    aggregate_exit_reason_stats,
+    aggregate_strategy_stats,
+    closed_trade_from_row,
+    exit_label,
+    strategy_label,
+    tag_label,
+)
 from trading_bot.repositories import SqlServerMonitorRepository
 from trading_bot.trading_date import current_trade_date
 
@@ -18,10 +27,18 @@ class SqlMonitorStateSource:
         real_account = self.repository.latest_account(is_mock=False)
         realized_profit = self.repository.today_realized_profit()
         realized_profit_rate = self.repository.today_realized_profit_rate()
+        closed_trades = _closed_trade_analysis(self.repository.closed_trade_analysis())
+        entry_profit_snapshots = [
+            _entry_profit_snapshot(row)
+            for row in self.repository.latest_entry_profit_snapshots()
+        ]
         return {
             "date": current_trade_date().isoformat(),
             "account": _account(account, realized_profit, realized_profit_rate),
             "realAccount": _account(real_account, 0.0),
+            "candidateSnapshot": _candidate_snapshot_status(
+                self.repository.candidate_snapshot_status()
+            ),
             "targets": [
                 _target(row, scores.get(row[0]))
                 for row in self.repository.latest_targets()
@@ -40,6 +57,11 @@ class SqlMonitorStateSource:
                 _entry_reason_stat(row)
                 for row in self.repository.entry_reason_performance()
             ],
+            "strategyStats": _strategy_stats(closed_trades),
+            "exitReasonStats": _exit_reason_stats(closed_trades),
+            "recentTrades": [_recent_trade(row) for row in closed_trades[:30]],
+            "entryProfitSnapshots": entry_profit_snapshots,
+            "entryProfitSnapshotStats": _entry_profit_snapshot_stats(entry_profit_snapshots),
             "summary": _summary(realized_profit),
             "chart": {"closes": [], "movingAverage": []},
         }
@@ -49,6 +71,11 @@ class SqlMonitorStateSource:
         account = self.repository.history_account(trade_date)
         realized_profit = self.repository.history_realized_profit(trade_date)
         realized_profit_rate = self.repository.history_realized_profit_rate(trade_date)
+        closed_trades = _closed_trade_analysis(self.repository.closed_trade_analysis())
+        entry_profit_snapshots = [
+            _entry_profit_snapshot(row)
+            for row in self.repository.history_entry_profit_snapshots(trade_date)
+        ]
         return {
             "date": trade_date.isoformat(),
             "account": _account(account, realized_profit, realized_profit_rate),
@@ -69,6 +96,11 @@ class SqlMonitorStateSource:
                 _entry_reason_stat(row)
                 for row in self.repository.entry_reason_performance()
             ],
+            "strategyStats": _strategy_stats(closed_trades),
+            "exitReasonStats": _exit_reason_stats(closed_trades),
+            "recentTrades": [_recent_trade(row) for row in closed_trades[:30]],
+            "entryProfitSnapshots": entry_profit_snapshots,
+            "entryProfitSnapshotStats": _entry_profit_snapshot_stats(entry_profit_snapshots),
             "summary": _summary(realized_profit),
         }
 
@@ -106,6 +138,33 @@ def _target(row: tuple[Any, ...], score: tuple[Any, ...] | None) -> list[str]:
         score_value,
         state,
     ]
+
+
+def _candidate_snapshot_status(row: tuple[Any, ...]) -> dict[str, object]:
+    days = int(_number(row[0])) if len(row) > 0 else 0
+    latest_date = "" if len(row) <= 1 or row[1] is None else str(row[1])
+    latest_count = int(_number(row[2])) if len(row) > 2 else 0
+    status = "" if len(row) <= 3 or row[3] is None else str(row[3])
+    message = "" if len(row) <= 4 or row[4] is None else str(row[4])
+    sample_sufficient = days >= 10
+    sample_warning = ""
+    if not sample_sufficient:
+        sample_warning = (
+            "INSUFFICIENT_SAMPLE_FOR_STRATEGY_DECISION: "
+            "후보 기준일 또는 거래 수가 부족하여 전략 성과 판단에 사용할 수 없습니다. "
+            "최소 후보 기준일 10일 이상, 거래 수 30건 이상을 권장합니다."
+        )
+    return {
+        "candidate_snapshot_days": days,
+        "latest_candidate_snapshot_date": latest_date,
+        "latest_candidate_snapshot_count": latest_count,
+        "sample_sufficient": sample_sufficient,
+        "minimum_required_candidate_days": 10,
+        "minimum_required_trade_count": 30,
+        "last_candidate_snapshot_status": _level_text(status),
+        "last_candidate_snapshot_message": _message_text(message),
+        "sample_warning": sample_warning,
+    }
 
 
 def _target_decision(score: tuple[Any, ...] | None) -> str:
@@ -184,6 +243,7 @@ def _log(row: tuple[Any, ...]) -> list[str]:
 
 
 def _trade(row: tuple[Any, ...]) -> dict[str, str]:
+    strategy_version = row[12] if len(row) >= 13 else ""
     if len(row) >= 12:
         trade_date, created_at, ticker, ticker_name, order_type, order_price, quantity, exit_reason = row[:8]
         profit_usd = row[8]
@@ -228,6 +288,7 @@ def _trade(row: tuple[Any, ...]) -> dict[str, str]:
         "entryReasonDetail": "" if entry_reason_detail is None else str(entry_reason_detail),
         "profitUsd": "" if profit_usd is None else _signed_usd(_number(profit_usd)),
         "profitRate": "" if profit_rate is None else f"{_number(profit_rate) * 100:+.2f}%",
+        "strategyVersion": "" if strategy_version is None else str(strategy_version),
     }
 
 
@@ -237,6 +298,7 @@ def _fill(row: tuple[Any, ...]) -> dict[str, str]:
     profit_rate = row[9] if len(row) > 9 else None
     entry_reason = row[10] if len(row) > 10 else None
     entry_reason_detail = row[11] if len(row) > 11 else None
+    strategy_version = row[12] if len(row) > 12 else None
     date_text = _date_text(fill_date)
     time_text = "" if fill_time is None else str(fill_time)
     return {
@@ -253,7 +315,76 @@ def _fill(row: tuple[Any, ...]) -> dict[str, str]:
         "profitRate": "" if profit_rate is None else f"{_number(profit_rate) * 100:+.2f}%",
         "entryReason": "" if entry_reason is None else _reason_text(str(entry_reason)),
         "entryReasonDetail": "" if entry_reason_detail is None else str(entry_reason_detail),
+        "strategyVersion": "" if strategy_version is None else str(strategy_version),
     }
+
+
+def _entry_profit_snapshot(row: tuple[Any, ...]) -> dict[str, str]:
+    (
+        trade_date,
+        ticker,
+        ticker_name,
+        entry_time,
+        entry_price,
+        profit_after_5m,
+        profit_after_10m,
+        profit_after_15m,
+        profit_after_20m,
+        profit_after_30m,
+        profit_after_60m,
+        final_exit_reason,
+        final_profit_rate,
+        strategy_version,
+    ) = row[:14]
+    return {
+        "ticker": str(ticker),
+        "ticker_name": str(ticker_name or ""),
+        "entry_date": _date_text(trade_date),
+        "entry_time": "" if entry_time is None else str(entry_time),
+        "entry_price": _usd(_number(entry_price)),
+        "profit_after_5m": _rate_or_dash(profit_after_5m),
+        "profit_after_10m": _rate_or_dash(profit_after_10m),
+        "profit_after_15m": _rate_or_dash(profit_after_15m),
+        "profit_after_20m": _rate_or_dash(profit_after_20m),
+        "profit_after_30m": _rate_or_dash(profit_after_30m),
+        "profit_after_60m": _rate_or_dash(profit_after_60m),
+        "final_exit_reason": "" if final_exit_reason is None else _reason_text(str(final_exit_reason)),
+        "final_profit_rate": _rate_or_dash(final_profit_rate),
+        "strategy_version": "" if strategy_version is None else str(strategy_version),
+    }
+
+
+def _entry_profit_snapshot_stats(rows: list[dict[str, str]]) -> dict[str, object]:
+    finished = [row for row in rows if row.get("final_profit_rate") not in ("", "-")]
+    stats: dict[str, object] = {
+        "sampleCount": len(finished),
+        "sampleSufficient": len(finished) >= 30,
+        "sampleWarning": "" if len(finished) >= 30 else "표본 부족: 전략 판단 금지",
+        "negativeStats": [],
+    }
+    negative_stats = []
+    for minutes in (5, 10, 15, 20):
+        key = f"profit_after_{minutes}m"
+        negative_rows = [
+            row
+            for row in finished
+            if _percent_text_number(row.get(key)) < 0
+        ]
+        wins = [
+            row
+            for row in negative_rows
+            if _percent_text_number(row.get("final_profit_rate")) > 0
+        ]
+        count = len(negative_rows)
+        negative_stats.append(
+            {
+                "minutes": str(minutes),
+                "negativeCount": str(count),
+                "finalWinRate": "-" if count == 0 else f"{len(wins) / count * 100:.1f}%",
+            }
+        )
+    stats["negativeStats"] = negative_stats
+    return stats
 
 
 def _run_summary(row: tuple[Any, ...]) -> dict[str, str]:
@@ -299,6 +430,84 @@ def _entry_reason_stat(row: tuple[Any, ...]) -> dict[str, str]:
         "averageProfitRate": f"{_number(average_rate) * 100:+.2f}%",
         "winRate": f"{_number(win_rate) * 100:.1f}%",
     }
+
+
+def _closed_trade_analysis(rows: list[tuple[Any, ...]]) -> list[ClosedTradeAnalysis]:
+    trades: list[ClosedTradeAnalysis] = []
+    for row in rows:
+        try:
+            trades.append(closed_trade_from_row(row))
+        except Exception:
+            continue
+    return trades
+
+
+def _strategy_stats(trades: list[ClosedTradeAnalysis]) -> list[dict[str, str]]:
+    return [
+        {
+            "strategy": str(row["strategy"]),
+            "strategyText": str(row["strategyText"]),
+            "count": str(int(_number(row["count"]))),
+            "winRate": f"{_number(row['winRate']) * 100:.1f}%",
+            "averageProfitRate": f"{_number(row['averageProfitRate']) * 100:+.2f}%",
+            "totalProfitUsd": _signed_usd(_number(row["totalProfitUsd"])),
+            "averageHoldingMinutes": _duration_text(_number(row["averageHoldingMinutes"])),
+            "maxDrawdown": f"{_number(row['maxDrawdown']) * 100:+.2f}%",
+        }
+        for row in aggregate_strategy_stats(trades)
+    ]
+
+
+def _exit_reason_stats(trades: list[ClosedTradeAnalysis]) -> list[dict[str, str]]:
+    return [
+        {
+            "exitReason": str(row["exitReason"]),
+            "exitReasonText": str(row["exitReasonText"]),
+            "count": str(int(_number(row["count"]))),
+            "winRate": f"{_number(row['winRate']) * 100:.1f}%",
+            "averageProfitRate": f"{_number(row['averageProfitRate']) * 100:+.2f}%",
+            "totalProfitUsd": _signed_usd(_number(row["totalProfitUsd"])),
+        }
+        for row in aggregate_exit_reason_stats(trades)
+    ]
+
+
+def _recent_trade(trade: ClosedTradeAnalysis) -> dict[str, str]:
+    tag_text = ", ".join(tag_label(tag) for tag in trade.entry_tags)
+    return {
+        "entryAt": _datetime_text(trade.entry_at),
+        "exitAt": _datetime_text(trade.exit_at),
+        "ticker": trade.ticker,
+        "name": trade.ticker_name,
+        "entryStrategy": trade.entry_strategy,
+        "entryStrategyText": strategy_label(trade.entry_strategy),
+        "entryTags": tag_text or "-",
+        "exitReason": trade.exit_reason,
+        "exitReasonText": exit_label(trade.exit_reason),
+        "holdingTime": _duration_text(trade.holding_minutes),
+        "profitRate": f"{trade.profit_rate * 100:+.2f}%",
+        "profitUsd": _signed_usd(trade.profit_usd),
+        "strategyVersion": trade.strategy_version or "-",
+    }
+
+
+def _datetime_text(value: Any) -> str:
+    if value is None:
+        return "-"
+    if hasattr(value, "strftime"):
+        try:
+            return value.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            pass
+    return str(value)
+
+
+def _duration_text(minutes: float) -> str:
+    total = max(0, int(round(minutes)))
+    hours, mins = divmod(total, 60)
+    if hours:
+        return f"{hours}시간 {mins}분"
+    return f"{mins}분"
 
 
 def _settings_summary(settings_json: Any) -> dict[str, str]:
@@ -399,6 +608,7 @@ def _time_text(value: Any) -> str:
         try:
             return value.strftime("%H:%M:%S")
         except Exception:
+            # .NET/ODBC 시간 객체가 strftime을 흉내 내다 실패하면 필드 조합 방식으로 처리한다.
             pass
     if all(hasattr(value, field) for field in ("Hour", "Minute", "Second")):
         return f"{value.Hour:02d}:{value.Minute:02d}:{value.Second:02d}"
@@ -416,6 +626,22 @@ def _signed_usd(value: float) -> str:
     if value < 0:
         return f"-${abs(value):,.2f}"
     return "$0.00"
+
+
+def _rate_or_dash(value: Any) -> str:
+    if value is None:
+        return "-"
+    return f"{_number(value) * 100:+.2f}%"
+
+
+def _percent_text_number(value: Any) -> float:
+    text = str(value or "").replace("%", "").replace("+", "").strip()
+    if text in ("", "-"):
+        return 0.0
+    try:
+        return float(text)
+    except ValueError:
+        return 0.0
 
 
 def _usd(value: float) -> str:

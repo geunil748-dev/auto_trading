@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from trading_bot.adapters.kis_account import KisAccountReader
 from trading_bot.adapters.kis_http import KisJsonClient
@@ -32,7 +33,7 @@ from trading_bot.market_calendar import (
     is_current_us_regular_session,
     is_current_us_trading_day,
 )
-from trading_bot.models import BotLog, BuyIntent, PositionState
+from trading_bot.models import BotLog, BuyIntent, EntryProfitSnapshot, FillRecord, PositionState
 from trading_bot.monitor_state import state_from_dry_run
 from trading_bot.notifications import send_market_close_done
 from trading_bot.order_cancellation import (
@@ -292,6 +293,7 @@ def _save_daily_run_summary(
             sell_count,
         )
     except Exception:
+        # 운용 결과 저장 실패가 장중 주문/감시 루프를 멈추지 않도록 무시한다.
         return
 
 
@@ -299,6 +301,7 @@ def _send_market_close_notice() -> None:
     try:
         send_market_close_done(load_notification_settings())
     except Exception:
+        # 알림 실패는 주문/장마감 정산 흐름과 분리한다.
         return
 
 
@@ -527,18 +530,84 @@ def _persist_live_snapshot(live_state: dict[str, object]) -> str:
         if isinstance(holdings, list):
             repository.save_holdings(holdings, trade_date)
         if isinstance(fills, list):
+            settings = load_settings()
             entry_prices = repository.sell_entry_prices(trade_date)
             entry_reasons = repository.entry_reasons(trade_date)
-            records = fill_records_from_monitor_rows(fills, entry_prices, entry_reasons)
+            records = fill_records_from_monitor_rows(
+                fills,
+                entry_prices,
+                entry_reasons,
+                settings=settings,
+            )
             if records:
                 repository.save_fills(records)
+                repository.save_entry_profit_snapshots(
+                    _entry_profit_snapshots_from_fills(records)
+                )
                 if any(item.profit_usd is not None for item in records):
-                    _save_daily_run_summary(load_settings(), None, None)
+                    _save_daily_run_summary(settings, None, None)
+        if isinstance(holdings, list):
+            repository.update_entry_profit_snapshots(
+                trade_date,
+                _holding_prices(holdings),
+                _korea_time_text(),
+            )
+        repository.update_entry_profit_snapshot_finals(trade_date)
     except ValueError:
         return ""
     except Exception as exc:
         return f"모니터 DB 저장 실패: {exc}"
     return ""
+
+
+def _entry_profit_snapshots_from_fills(
+    records: list[FillRecord],
+) -> list[EntryProfitSnapshot]:
+    return [
+        EntryProfitSnapshot(
+            trade_date=item.trade_date,
+            ticker=item.ticker,
+            ticker_name=item.ticker_name,
+            entry_time=item.fill_time,
+            entry_price_usd=item.fill_price_usd,
+            strategy_version=item.strategy_version,
+        )
+        for item in records
+        if _is_buy_side(item.side) and item.fill_time and item.fill_price_usd > 0
+    ]
+
+
+def _holding_prices(holdings: list[object]) -> dict[str, float]:
+    prices: dict[str, float] = {}
+    for item in holdings:
+        if not isinstance(item, dict):
+            continue
+        ticker = _ticker(str(item.get("ticker", "")))
+        price = _float_text(
+            item.get("closePrice")
+            or item.get("lastPrice")
+            or item.get("currentPrice")
+            or item.get("price")
+        )
+        if ticker and price > 0:
+            prices[ticker] = price
+    return prices
+
+
+def _korea_time_text() -> str:
+    return datetime.now(ZoneInfo("Asia/Seoul")).strftime("%H:%M:%S")
+
+
+def _is_buy_side(side: str) -> bool:
+    normalized = side.strip().upper()
+    return "매수" in side or normalized in {"BUY", "B"}
+
+
+def _float_text(value: object) -> float:
+    try:
+        return float(str(value or "0").replace("$", "").replace(",", "").strip() or 0)
+    except ValueError:
+        return 0.0
 
 
 def _write_closed_state(monitor_state: Path) -> None:
