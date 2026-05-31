@@ -12,7 +12,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# First-run setup script for a new Windows PC or AWS Windows server.
+# First-run setup script for a new Windows PC or local server notebook.
 # Secrets are copied into .env locally and must never be committed.
 
 function Write-Step {

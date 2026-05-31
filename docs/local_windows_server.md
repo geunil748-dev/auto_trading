@@ -1,6 +1,6 @@
 # Local Windows 11 Server Setup
 
-This guide runs `auto_trading` on a personal Windows 11 Home notebook as a 24-hour server instead of AWS EC2.
+This guide runs `auto_trading` on a personal Windows 11 Home notebook as a 24-hour local server. Development happens on the main PC; the server notebook only pulls from GitHub and runs the services.
 
 The trading logic is unchanged. The default real-trading safety values stay closed:
 
@@ -13,7 +13,7 @@ REAL_EMERGENCY_STOP=true
 
 Use a dedicated Windows account if possible, connect stable power, and keep the notebook on a reliable network.
 
-After cloning the repository, open PowerShell as Administrator and run:
+Open PowerShell as Administrator and run:
 
 ```powershell
 cd C:\auto_trading
@@ -94,7 +94,24 @@ This registers:
 
 On Windows 11 Home this uses the current user logon trigger. Keep the user signed in after reboot, or sign in once so the tasks can start.
 
-## 8. Verify Operation
+## 8. Pull Updates and Restart Services
+
+After code is pushed from the main PC and merged into `main`, update the server notebook with:
+
+```powershell
+cd C:\auto_trading
+powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup_scheduler\update_local_server.ps1
+```
+
+The script refuses to continue if the server clone has local code changes. It then fast-forward pulls `main`, refreshes Python packages, runs `preflight`, stops existing Monitor/Scheduler launcher processes, and starts the scheduled tasks again.
+
+Use this shorter command only when you deliberately want to skip package refresh and preflight:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup_scheduler\update_local_server.ps1 -SkipInstall -SkipPreflight
+```
+
+## 9. Verify Operation
 
 Open the monitor on the notebook:
 
@@ -123,7 +140,7 @@ Get-Content .\logs\startup-monitor.log -Tail 50
 Get-Content .\logs\startup-scheduler.log -Tail 50
 ```
 
-## 9. Files That Must Stay Local
+## 10. Files That Must Stay Local
 
 Do not commit secrets or runtime output. The repository ignores these paths and patterns:
 
@@ -136,8 +153,47 @@ Do not commit secrets or runtime output. The repository ignores these paths and 
 
 If a file contains account numbers, API keys, bearer tokens, access tokens, or generated logs, keep it local.
 
-## 10. Daily Operating Notes
+## 11. Daily Operating Notes
 
 Keep the notebook connected to power. Windows Update may reboot the machine, so check the monitor after updates. If the notebook reboots, sign in to Windows so the current-user scheduled tasks can start.
 
-For a true boot-without-login setup, use Windows Pro or Windows Server and register tasks with `-RunAs System` from an Administrator PowerShell. Windows 11 Home is best treated as a signed-in local server.
+Windows 11 Home is best treated as a signed-in local server. AWS, Windows Server, and `-RunAs System` procedures are not needed for this notebook setup.
+
+## Minimal Command Sequence
+
+Use this sequence on a fresh server notebook:
+
+```powershell
+cd C:\auto_trading
+powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup_scheduler\check_windows_prereqs.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup_scheduler\configure_windows_power.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup_scheduler\setup_windows.ps1
+notepad .env
+powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup_scheduler\setup_windows.ps1 -SkipInstall -InitDb
+$env:PYTHONPATH='src'
+.\.venv\Scripts\python.exe -m trading_bot preflight
+powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup_scheduler\setup_windows.ps1 -SkipInstall -RegisterTasks -ReplaceTasks -StartNow
+```
+
+Use this sequence for later updates:
+
+```powershell
+cd C:\auto_trading
+powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup_scheduler\update_local_server.ps1
+```
+
+## Pre-Operation Checklist
+
+- Windows sleep is disabled and lid close is set to do nothing.
+- The notebook is connected to stable power and network.
+- Git and Python 3.11+ pass `check_windows_prereqs.ps1`.
+- `.env` exists locally and is not committed.
+- `REAL_TRADING_ENABLED=false`.
+- `REAL_EMERGENCY_STOP=true`.
+- KIS credentials are mock-trading credentials unless a separate real-trading rollout is planned.
+- MSSQL connection works and DB initialization has completed.
+- `preflight` passes.
+- `AutoTrading-Monitor` and `AutoTrading-Scheduler` are registered.
+- Monitor opens at `http://127.0.0.1:4174/`.
+- `logs/startup-monitor.log` and `logs/startup-scheduler.log` show recent starts without repeated errors.
+- Windows Update active hours are set so surprise reboots are less likely during market hours.
