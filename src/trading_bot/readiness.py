@@ -18,12 +18,51 @@ REQUIRED_TABLES = {
     "account_current",
     "account_snapshot",
     "daily_target",
+    "daily_run_summary",
+    "entry_profit_snapshot",
+    "fill_history",
     "holding_snapshot",
     "listed_target_snapshot",
     "order_snapshot",
     "runtime_setting",
     "scoring",
     "trade_history",
+}
+
+REQUIRED_COLUMNS = {
+    "trade_history": (
+        "strategy_version",
+        "settings_snapshot_hash",
+        "settings_snapshot_json",
+    ),
+    "fill_history": (
+        "strategy_version",
+        "settings_snapshot_hash",
+        "settings_snapshot_json",
+    ),
+    "daily_run_summary": (
+        "strategy_version",
+        "settings_snapshot_hash",
+        "settings_snapshot_json",
+    ),
+    "entry_profit_snapshot": (
+        "final_exit_reason",
+        "final_profit_rate",
+        "strategy_version",
+    ),
+}
+
+AUTO_ENSURE_COLUMNS = {
+    "trade_history": {
+        "strategy_version": "VARCHAR(60) NULL",
+        "settings_snapshot_hash": "VARCHAR(64) NULL",
+        "settings_snapshot_json": "NVARCHAR(MAX) NULL",
+    },
+    "fill_history": {
+        "strategy_version": "VARCHAR(60) NULL",
+        "settings_snapshot_hash": "VARCHAR(64) NULL",
+        "settings_snapshot_json": "NVARCHAR(MAX) NULL",
+    },
 }
 
 
@@ -81,13 +120,128 @@ def _mssql_status() -> dict[str, Any]:
         cursor = connection.cursor()
         cursor.execute("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = ?", ("BASE TABLE",))
         tables = {str(row[0]) for row in cursor.fetchall()}
+        columns_before = _read_columns(cursor)
+        column_actions = _ensure_trade_fill_metadata_columns(cursor, tables, columns_before)
+        connection.commit()
+        columns_after = _read_columns(cursor)
         connection.close()
     except Exception as error:
         return {"connected": False, "error": str(error)}
 
     missing = sorted(REQUIRED_TABLES - tables)
+    missing_before = _missing_columns(tables, columns_before)
+    missing_after = _missing_columns(tables, columns_after)
     return {
         "connected": True,
         "required_tables_ready": not missing,
         "missing_tables": missing,
+        "required_columns_ready": not missing_after,
+        "missing_columns": missing_after,
+        "schema_column_check": {
+            "before_missing_columns": missing_before,
+            "after_missing_columns": missing_after,
+            "actions": column_actions,
+        },
+        "warnings": _schema_warnings(missing, missing_after),
     }
+
+
+def _read_columns(cursor: Any) -> dict[str, set[str]]:
+    cursor.execute(
+        """
+        SELECT TABLE_NAME, COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME IN (?, ?, ?, ?)
+        """,
+        tuple(REQUIRED_COLUMNS),
+    )
+    columns = {table: set() for table in REQUIRED_COLUMNS}
+    for table, column in cursor.fetchall():
+        table_name = str(table)
+        if table_name in columns:
+            columns[table_name].add(str(column))
+    return columns
+
+
+def _ensure_trade_fill_metadata_columns(
+    cursor: Any,
+    tables: set[str],
+    columns_before: dict[str, set[str]],
+) -> list[dict[str, str]]:
+    actions: list[dict[str, str]] = []
+    for table, column_types in AUTO_ENSURE_COLUMNS.items():
+        for column, column_type in column_types.items():
+            before = _column_status(table, column, tables, columns_before)
+            if before == "missing":
+                _execute_statement(
+                    cursor,
+                    f"""
+                    IF OBJECT_ID(N'dbo.{table}', N'U') IS NOT NULL
+                       AND COL_LENGTH('dbo.{table}', '{column}') IS NULL
+                    BEGIN
+                        ALTER TABLE dbo.{table} ADD {column} {column_type}
+                    END
+                    """,
+                )
+                action = "added"
+            elif before == "present":
+                action = "skipped_present"
+            else:
+                action = "skipped_missing_table"
+            actions.append(
+                {
+                    "table": table,
+                    "column": column,
+                    "before": before,
+                    "action": action,
+                }
+            )
+    return actions
+
+
+def _execute_statement(cursor: Any, sql: str) -> None:
+    try:
+        cursor.execute(sql, ())
+    except TypeError:
+        cursor.execute(sql)
+
+
+def _column_status(
+    table: str,
+    column: str,
+    tables: set[str],
+    columns: dict[str, set[str]],
+) -> str:
+    if table not in tables:
+        return "missing_table"
+    if column in columns.get(table, set()):
+        return "present"
+    return "missing"
+
+
+def _missing_columns(
+    tables: set[str],
+    columns: dict[str, set[str]],
+) -> dict[str, list[str]]:
+    missing: dict[str, list[str]] = {}
+    for table, required in REQUIRED_COLUMNS.items():
+        if table not in tables:
+            missing[table] = list(required)
+            continue
+        table_columns = columns.get(table, set())
+        missing_columns = [column for column in required if column not in table_columns]
+        if missing_columns:
+            missing[table] = missing_columns
+    return missing
+
+
+def _schema_warnings(
+    missing_tables: list[str],
+    missing_columns: dict[str, list[str]],
+) -> list[str]:
+    warnings = []
+    if missing_tables:
+        warnings.append(f"Missing required MSSQL tables: {', '.join(missing_tables)}")
+    for table, columns in missing_columns.items():
+        warnings.append(f"Missing required MSSQL columns in {table}: {', '.join(columns)}")
+    return warnings
