@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import date
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
@@ -38,7 +39,7 @@ def serve_monitor(
     monitor_dir: Path = Path("monitor"),
 ) -> None:
     reader = _state_reader(state_path)
-    handler = _handler(reader, monitor_dir, ManualScreeningRunner(state_path))
+    handler = _handler(reader, monitor_dir, ManualScreeningRunner(state_path), state_path)
     ThreadingHTTPServer((host, port), handler).serve_forever()
 
 
@@ -153,7 +154,12 @@ def _empty_account() -> dict[str, str]:
     }
 
 
-def _handler(reader: Any, monitor_dir: Path, manual_screening: ManualScreeningRunner):
+def _handler(
+    reader: Any,
+    monitor_dir: Path,
+    manual_screening: ManualScreeningRunner,
+    state_path: Path = Path("monitor/state.json"),
+):
     root = monitor_dir.resolve()
 
     class MonitorHandler(SimpleHTTPRequestHandler):
@@ -162,6 +168,9 @@ def _handler(reader: Any, monitor_dir: Path, manual_screening: ManualScreeningRu
 
         def do_GET(self) -> None:
             path = urlparse(self.path).path
+            if path == "/health":
+                self._write_health()
+                return
             if path == "/api/state":
                 self._write_state()
                 return
@@ -217,6 +226,9 @@ def _handler(reader: Any, monitor_dir: Path, manual_screening: ManualScreeningRu
             state = _read_monitor_state(reader)
             state["runtime"] = _runtime_state(local_bypass=self._allow_local_bypass())
             self._write_json(state)
+
+        def _write_health(self) -> None:
+            self._write_json(_health_state(state_path))
 
         def _write_history(self) -> None:
             if not self._authorize_api():
@@ -355,6 +367,48 @@ def _handler(reader: Any, monitor_dir: Path, manual_screening: ManualScreeningRu
             self.wfile.write(payload)
 
     return MonitorHandler
+
+
+def _health_state(state_path: Path = Path("monitor/state.json")) -> dict[str, object]:
+    return {
+        "ok": True,
+        "database": _database_health(),
+        "monitor": {
+            "ok": True,
+            "pid": os.getpid(),
+        },
+        "scheduler": _scheduler_health(state_path),
+    }
+
+
+def _database_health() -> dict[str, object]:
+    if not mssql_dsn_from_env():
+        return {"configured": False, "connected": False}
+    try:
+        connection = pyodbc_connect_factory()()
+        cursor = connection.cursor()
+        cursor.execute("SELECT 1")
+        cursor.fetchall()
+        connection.close()
+    except Exception as exc:
+        return {"configured": True, "connected": False, "error": str(exc).splitlines()[0]}
+    return {"configured": True, "connected": True}
+
+
+def _scheduler_health(state_path: Path) -> dict[str, object]:
+    if not state_path.exists():
+        return {
+            "status": "missing_state",
+            "monitor_state_exists": False,
+            "monitor_state_age_seconds": None,
+        }
+    age_seconds = max(int(time.time() - state_path.stat().st_mtime), 0)
+    status = "recent" if age_seconds <= 600 else "stale"
+    return {
+        "status": status,
+        "monitor_state_exists": True,
+        "monitor_state_age_seconds": age_seconds,
+    }
 
 
 def _read_monitor_state(reader: Any) -> dict[str, object]:

@@ -13,8 +13,9 @@ from trading_bot.retry import RetryPolicy
 
 
 class MemoryTokenStore:
-    def __init__(self, token: AccessToken | None = None) -> None:
+    def __init__(self, token: AccessToken | None = None, fail_read: bool = False) -> None:
         self.token = token
+        self.fail_read = fail_read
         self.refresh_count = 0
         self.lock_count = 0
         self.read_count = 0
@@ -27,6 +28,8 @@ class MemoryTokenStore:
         refresh_margin_seconds: int,
     ) -> AccessToken | None:
         self.read_count += 1
+        if self.fail_read:
+            raise RuntimeError("db unavailable")
         if self.token is not None and self.token.is_valid(now, refresh_margin_seconds):
             return self.token
         return None
@@ -45,6 +48,12 @@ class MemoryTokenStore:
         self.refresh_count += 1
         self.token = refresh()
         return self.token
+
+
+@pytest.fixture(autouse=True)
+def default_file_token_store(monkeypatch) -> None:
+    monkeypatch.setenv("KIS_TOKEN_STORE", "file")
+    monkeypatch.delenv("KIS_ALLOW_TOKEN_REFRESH", raising=False)
 
 
 def test_kis_json_client_reuses_access_token_and_builds_query_headers() -> None:
@@ -130,6 +139,61 @@ def test_kis_json_client_reuses_db_token_without_refresh(monkeypatch) -> None:
 
     assert requests == [("GET", "Bearer db-token")]
     assert store.refresh_count == 0
+
+
+def test_kis_json_client_prefers_db_token_over_file_cache(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("KIS_TOKEN_REFRESH_MARGIN_SECONDS", "300")
+    now = datetime(2026, 5, 22, tzinfo=timezone.utc)
+    settings = KisSettings("app", "secret", "account", "01", "https://openapivts.koreainvestment.com:29443")
+    cache = tmp_path / "token.json"
+    seed = KisJsonClient(
+        settings,
+        request_json=lambda *args: {"access_token": "file-token", "expires_in": 3600},
+        retry_policy=RetryPolicy(attempts=1, retry_delay_seconds=0),
+        now=lambda: now,
+        token_cache=cache,
+    )
+    assert seed.access_token() == "file-token"
+    store = MemoryTokenStore(AccessToken("db-token", now.replace(hour=2)))
+
+    client = KisJsonClient(
+        settings,
+        request_json=lambda *args: {"output": {}},
+        retry_policy=RetryPolicy(attempts=1, retry_delay_seconds=0),
+        now=lambda: now,
+        token_cache=cache,
+        token_store=store,
+    )
+
+    assert client.access_token() == "db-token"
+    assert store.read_count == 1
+
+
+def test_kis_json_client_uses_file_cache_only_when_db_store_fails(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("KIS_TOKEN_REFRESH_MARGIN_SECONDS", "300")
+    now = datetime(2026, 5, 22, tzinfo=timezone.utc)
+    settings = KisSettings("app", "secret", "account", "01", "https://openapivts.koreainvestment.com:29443")
+    cache = tmp_path / "token.json"
+    seed = KisJsonClient(
+        settings,
+        request_json=lambda *args: {"access_token": "file-token", "expires_in": 3600},
+        retry_policy=RetryPolicy(attempts=1, retry_delay_seconds=0),
+        now=lambda: now,
+        token_cache=cache,
+    )
+    assert seed.access_token() == "file-token"
+    monkeypatch.setenv("KIS_ALLOW_TOKEN_REFRESH", "false")
+
+    client = KisJsonClient(
+        settings,
+        request_json=lambda *args: {"access_token": "new", "expires_in": 3600},
+        retry_policy=RetryPolicy(attempts=1, retry_delay_seconds=0),
+        now=lambda: now,
+        token_cache=cache,
+        token_store=MemoryTokenStore(fail_read=True),
+    )
+
+    assert client.access_token() == "file-token"
 
 
 def test_kis_json_client_refreshes_expired_db_token_once(monkeypatch) -> None:

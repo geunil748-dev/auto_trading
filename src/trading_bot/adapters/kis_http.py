@@ -96,18 +96,23 @@ class KisJsonClient:
 
     def access_token(self) -> str:
         now = self.now()
-        if self._token is None:
-            self._token = self._read_cached_token()
         refresh_margin_seconds = _token_refresh_margin_seconds()
         if self._token is not None and self._token.is_valid(now, refresh_margin_seconds):
             return self._token.value
         if self.token_store is not None:
-            store_token = self.token_store.read_valid(
-                self.token_environment,
-                self._client_fingerprint(),
-                now,
-                refresh_margin_seconds,
-            )
+            try:
+                store_token = self.token_store.read_valid(
+                    self.token_environment,
+                    self._client_fingerprint(),
+                    now,
+                    refresh_margin_seconds,
+                )
+            except Exception as exc:
+                fallback_token = self._read_cached_token()
+                if fallback_token is not None and fallback_token.is_valid(now, refresh_margin_seconds):
+                    self._token = fallback_token
+                    return fallback_token.value
+                raise RuntimeError(f"KIS DB 토큰 캐시 조회 실패: {exc}") from exc
             if store_token is not None:
                 self._token = store_token
                 return store_token.value
@@ -116,13 +121,24 @@ class KisJsonClient:
                     "KIS 토큰 갱신이 비활성화되어 있습니다. "
                     "유효한 DB 토큰이 없으면 KIS_ALLOW_TOKEN_REFRESH=true인 서버에서 먼저 발급하세요."
                 )
-            self._token = self.token_store.refresh_with_lock(
-                self.token_environment,
-                self._client_fingerprint(),
-                now,
-                refresh_margin_seconds,
-                self._issue_access_token,
-            )
+            try:
+                self._token = self.token_store.refresh_with_lock(
+                    self.token_environment,
+                    self._client_fingerprint(),
+                    now,
+                    refresh_margin_seconds,
+                    self._issue_access_token,
+                )
+            except Exception as exc:
+                fallback_token = self._read_cached_token()
+                if fallback_token is not None and fallback_token.is_valid(now, refresh_margin_seconds):
+                    self._token = fallback_token
+                    return fallback_token.value
+                raise RuntimeError(f"KIS DB 토큰 캐시 갱신 실패: {exc}") from exc
+            return self._token.value
+        if self._token is None:
+            self._token = self._read_cached_token()
+        if self._token is not None and self._token.is_valid(now, refresh_margin_seconds):
             return self._token.value
         if not _allow_token_refresh():
             raise RuntimeError("KIS 토큰 갱신이 비활성화되어 있습니다.")

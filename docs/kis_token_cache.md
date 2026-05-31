@@ -62,3 +62,20 @@ $env:PYTHONPATH="C:\auto_trading\src"
 python -m trading_bot init-db
 python -m trading_bot kis-account
 ```
+
+## 배포 후 점검
+
+운영 서버에 적용한 뒤 모니터와 스케줄러를 재시작한다. 실행 중인 프로세스는 이전 코드를 메모리에 들고 있을 수 있으므로 재시작 전에는 최근 커밋의 수정이 반영되지 않을 수 있다.
+
+```powershell
+cd C:\auto_trading
+.\.venv\Scripts\python.exe -m trading_bot preflight
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4174/health
+Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'serve-monitor|run-scheduler' }
+```
+
+운영 점검 스크립트는 시스템 PATH의 `python` 대신 `.venv\Scripts\python.exe`를 사용한다.
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\tools\check_server_status.ps1
+```

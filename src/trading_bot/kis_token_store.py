@@ -243,6 +243,15 @@ END;
 def _as_utc(value: object) -> datetime:
     if isinstance(value, datetime):
         parsed = value
+    elif all(hasattr(value, item) for item in ("Year", "Month", "Day", "Hour", "Minute", "Second")):
+        parsed = datetime(
+            int(value.Year),
+            int(value.Month),
+            int(value.Day),
+            int(value.Hour),
+            int(value.Minute),
+            int(value.Second),
+        )
     else:
         parsed = datetime.fromisoformat(str(value))
     if parsed.tzinfo is None:
