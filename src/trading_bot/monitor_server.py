@@ -24,6 +24,7 @@ from trading_bot.repositories import SqlServerMonitorRepository
 from trading_bot.sql_monitor_state import SqlMonitorStateSource
 from trading_bot.trading_date import current_trade_date
 
+# 선택 의존성: .env 파일이 없어도 배포 환경의 환경변수를 그대로 사용할 수 있다.
 try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover - 실행 환경에 따라 선택 의존성을 허용한다.
@@ -79,6 +80,11 @@ class _DashboardStateReader:
             mock["orders"] = sql_state.get("orders", [])
             mock["fills"] = sql_state.get("fills", [])
             mock["trades"] = sql_state.get("trades", [])
+            mock["strategyStats"] = sql_state.get("strategyStats", [])
+            mock["exitReasonStats"] = sql_state.get("exitReasonStats", [])
+            mock["recentTrades"] = sql_state.get("recentTrades", [])
+            mock["entryProfitSnapshots"] = sql_state.get("entryProfitSnapshots", [])
+            mock["entryProfitSnapshotStats"] = sql_state.get("entryProfitSnapshotStats", {})
             if isinstance(mock.get("account"), dict):
                 mock["account"]["realizedProfitUsd"] = (
                     sql_state.get("summary", {}).get("realizedProfitUsd", "$0.00")
@@ -366,6 +372,9 @@ def _read_history_state(reader: Any, trade_date: date) -> dict[str, object]:
         "logs": [],
         "trades": [],
         "entryReasonStats": [],
+        "strategyStats": [],
+        "exitReasonStats": [],
+        "recentTrades": [],
     }
 
 
@@ -375,6 +384,7 @@ def _query_date(path: str) -> date:
         try:
             return date.fromisoformat(raw)
         except ValueError:
+            # 잘못된 날짜 파라미터는 화면을 깨뜨리지 않고 현재 거래일로 fallback 한다.
             pass
     return current_trade_date()
 

@@ -1,3 +1,4 @@
+/* 페이지별 패널 배치 */
 .work-grid {
   display: grid;
   grid-template-columns: minmax(560px, 1.4fr) minmax(360px, 1fr);
@@ -107,6 +108,45 @@ body[data-page="entryReasonStats"] .work-grid {
 
 body[data-page="entryReasonStats"] .entry-reason-stats {
   min-height: 250px;
+}
+
+body:not([data-page="entryReasonStats"]) .entry-profit-snapshots {
+  display: none;
+}
+
+.entry-profit-snapshots {
+  min-height: 250px;
+}
+
+.entry-profit-snapshots table {
+  min-width: 1120px;
+  table-layout: auto;
+}
+
+.snapshot-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -6px 0 14px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.snapshot-summary span,
+.snapshot-summary strong {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 5px 9px;
+  border: 1px solid rgb(88 199 213 / 22%);
+  border-radius: 7px;
+  background: rgb(88 199 213 / 7%);
+}
+
+.snapshot-summary .sample-warning {
+  border-color: rgb(255 193 76 / 32%);
+  background: rgb(255 193 76 / 10%);
+  color: var(--amber);
 }
 
 body[data-page="settings"] .account-summary,

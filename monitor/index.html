@@ -9,6 +9,7 @@
   </head>
   <body>
     <div class="app-frame">
+      <!-- 왼쪽 메뉴 -->
       <aside class="side-nav" id="sideNav" aria-label="화면 메뉴">
         <div class="side-head">
           <strong>메뉴</strong>
@@ -29,7 +30,7 @@
           <span>일별 운용 결과</span>
         </button>
         <button class="nav-item" type="button" data-page="entryReasonStats" data-icon="성">
-          <span>매수 조건별 성과</span>
+          <span>전략별 성과</span>
         </button>
         <button class="nav-item" type="button" data-page="backtest" data-icon="백">
           <span>백테스트</span>
@@ -41,6 +42,7 @@
           <button id="sellAllPositions" type="button">전량 매도</button>
         </div>
       </aside>
+      <!-- 모니터 본문 -->
       <main class="monitor-shell">
         <header class="command-bar">
           <div class="title-block">
@@ -240,22 +242,106 @@
           <article class="panel entry-reason-stats">
             <div class="panel-head">
               <div>
-                <p class="eyebrow">조건 분석</p>
-                <h2>매수 조건별 성과</h2>
+                <p class="eyebrow">전략 분석</p>
+                <h2>전략별 성과</h2>
               </div>
             </div>
             <div class="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>매수 사유</th>
-                    <th>매도 건수</th>
-                    <th>총 실현손익</th>
-                    <th>평균 수익률</th>
+                    <th>전략</th>
+                    <th>거래수</th>
                     <th>승률</th>
+                    <th>평균 수익률</th>
+                    <th>총 손익</th>
+                    <th>평균 보유</th>
+                    <th>MDD</th>
                   </tr>
                 </thead>
-                <tbody id="entryReasonRows"></tbody>
+                <tbody id="strategyStatRows"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="panel entry-reason-stats">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">청산 분석</p>
+                <h2>청산 사유 성과</h2>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>청산 사유</th>
+                    <th>횟수</th>
+                    <th>승률</th>
+                    <th>평균 수익률</th>
+                    <th>총 손익</th>
+                  </tr>
+                </thead>
+                <tbody id="exitReasonStatRows"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="panel entry-reason-stats">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">거래 분석</p>
+                <h2>최근 거래 30건</h2>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>진입일시</th>
+                    <th>청산일시</th>
+                    <th>종목</th>
+                    <th>진입 전략</th>
+                    <th>전략 버전</th>
+                    <th>진입 태그</th>
+                    <th>청산 사유</th>
+                    <th>보유 시간</th>
+                    <th>수익률</th>
+                    <th>손익</th>
+                  </tr>
+                </thead>
+                <tbody id="recentTradeRows"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="panel entry-profit-snapshots">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">분석 데이터</p>
+                <h2>진입 후 수익률 추적</h2>
+              </div>
+            </div>
+            <div class="snapshot-summary" id="entryProfitSnapshotStats"></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>종목</th>
+                    <th>진입시각</th>
+                    <th>진입가</th>
+                    <th>5분</th>
+                    <th>10분</th>
+                    <th>15분</th>
+                    <th>20분</th>
+                    <th>30분</th>
+                    <th>60분</th>
+                    <th>최종청산</th>
+                    <th>최종수익률</th>
+                    <th>전략버전</th>
+                  </tr>
+                </thead>
+                <tbody id="entryProfitSnapshotRows"></tbody>
               </table>
             </div>
           </article>
@@ -511,6 +597,6 @@
       </main>
     </div>
     <script src="./runtime-controls.js?v=3"></script>
-    <script src="./app.js?v=65"></script>
+    <script src="./app.js?v=66"></script>
   </body>
 </html>

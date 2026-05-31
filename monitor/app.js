@@ -1,3 +1,4 @@
+// 기본 상태
 const emptyAccount = {
   connected: false,
   error: "",
@@ -16,6 +17,11 @@ const emptyAccount = {
   orders: [],
   fills: [],
   entryReasonStats: [],
+  strategyStats: [],
+  exitReasonStats: [],
+  recentTrades: [],
+  entryProfitSnapshots: [],
+  entryProfitSnapshotStats: {},
   logs: [],
   trades: [],
 };
@@ -48,6 +54,11 @@ let historyState = {
   trades: [],
   runSummaries: [],
   entryReasonStats: [],
+  strategyStats: [],
+  exitReasonStats: [],
+  recentTrades: [],
+  entryProfitSnapshots: [],
+  entryProfitSnapshotStats: {},
 };
 let backtestState = {
   tickers: [],
@@ -199,6 +210,11 @@ async function loadHistory() {
       trades: [],
       runSummaries: [],
       entryReasonStats: [],
+      strategyStats: [],
+      exitReasonStats: [],
+      recentTrades: [],
+      entryProfitSnapshots: [],
+      entryProfitSnapshotStats: {},
     };
     setAuthStatus("DB 기록을 불러오지 못했습니다.");
   } finally {
@@ -269,6 +285,7 @@ async function submitManualScreening() {
   }
 }
 
+// 데이터 조회
 async function pollManualScreeningStatus() {
   for (let attempt = 0; attempt < 60; attempt += 1) {
     await wait(attempt === 0 ? 1500 : 5000);
@@ -622,6 +639,11 @@ function normalizeHistoryState(state) {
     trades: state.trades || [],
     runSummaries: state.runSummaries || [],
     entryReasonStats: state.entryReasonStats || [],
+    strategyStats: state.strategyStats || [],
+    exitReasonStats: state.exitReasonStats || [],
+    recentTrades: state.recentTrades || [],
+    entryProfitSnapshots: state.entryProfitSnapshots || [],
+    entryProfitSnapshotStats: state.entryProfitSnapshotStats || {},
   };
 }
 
@@ -633,6 +655,7 @@ function render(state) {
   renderPage();
 }
 
+// 화면 렌더링
 function renderPage() {
   document.body.dataset.page = activePage;
   navButtons.forEach((button) => button.classList.toggle("active", button.dataset.page === activePage));
@@ -688,11 +711,40 @@ function renderTables(accountState) {
   renderList("#fillRows", fills, renderFillRow, "체결 내역이 없습니다");
   renderList("#runSummaryRows", historyState.runSummaries, renderRunSummaryRow, "저장된 일별 운용 결과가 없습니다");
   renderRows(
-    "#entryReasonRows",
-    historyState.entryReasonStats,
-    renderEntryReasonRow,
+    "#strategyStatRows",
+    historyState.strategyStats?.length ? historyState.strategyStats : accountState.strategyStats,
+    renderStrategyStatRow,
+    7,
+    "전략별 성과 기록이 없습니다",
+  );
+  renderRows(
+    "#exitReasonStatRows",
+    historyState.exitReasonStats?.length ? historyState.exitReasonStats : accountState.exitReasonStats,
+    renderExitReasonStatRow,
     5,
-    "매수 조건별 성과 기록이 없습니다",
+    "청산 사유 성과 기록이 없습니다",
+  );
+  renderRows(
+    "#recentTradeRows",
+    historyState.recentTrades?.length ? historyState.recentTrades : accountState.recentTrades,
+    renderRecentTradeRow,
+    10,
+    "최근 거래 기록이 없습니다",
+  );
+  const entryProfitSnapshots = historyState.entryProfitSnapshots?.length
+    ? historyState.entryProfitSnapshots
+    : accountState.entryProfitSnapshots;
+  renderEntryProfitSnapshotStats(
+    historyState.entryProfitSnapshotStats?.sampleCount != null
+      ? historyState.entryProfitSnapshotStats
+      : accountState.entryProfitSnapshotStats,
+  );
+  renderRows(
+    "#entryProfitSnapshotRows",
+    entryProfitSnapshots,
+    renderEntryProfitSnapshotRow,
+    12,
+    "저장된 진입 후 수익률 추적 데이터가 없습니다",
   );
   renderBacktestTickerOptions();
   renderBacktest();
@@ -807,6 +859,78 @@ function renderEntryReasonRow(item) {
     <td>${escapeHtml(item.totalProfitUsd || "$0.00")}</td>
     <td>${escapeHtml(item.averageProfitRate || "0.00%")}</td>
     <td>${escapeHtml(item.winRate || "0.0%")}</td>
+  </tr>`;
+}
+
+function renderStrategyStatRow(item) {
+  return `<tr>
+    <td><strong>${escapeHtml(item.strategyText || item.strategy || "-")}</strong></td>
+    <td>${escapeHtml(item.count || "0")}건</td>
+    <td>${escapeHtml(item.winRate || "0.0%")}</td>
+    <td>${escapeHtml(item.averageProfitRate || "0.00%")}</td>
+    <td>${escapeHtml(item.totalProfitUsd || "$0.00")}</td>
+    <td>${escapeHtml(item.averageHoldingMinutes || "-")}</td>
+    <td>${escapeHtml(item.maxDrawdown || "0.00%")}</td>
+  </tr>`;
+}
+
+function renderExitReasonStatRow(item) {
+  return `<tr>
+    <td><strong>${escapeHtml(item.exitReasonText || item.exitReason || "-")}</strong></td>
+    <td>${escapeHtml(item.count || "0")}건</td>
+    <td>${escapeHtml(item.winRate || "0.0%")}</td>
+    <td>${escapeHtml(item.averageProfitRate || "0.00%")}</td>
+    <td>${escapeHtml(item.totalProfitUsd || "$0.00")}</td>
+  </tr>`;
+}
+
+function renderRecentTradeRow(item) {
+  const symbol = [item.name, item.ticker].filter(Boolean).join(" / ");
+  return `<tr>
+    <td>${escapeHtml(item.entryAt || "-")}</td>
+    <td>${escapeHtml(item.exitAt || "-")}</td>
+    <td><strong>${escapeHtml(symbol || "-")}</strong></td>
+    <td>${escapeHtml(item.entryStrategyText || item.entryStrategy || "-")}</td>
+    <td>${escapeHtml(item.strategyVersion || "-")}</td>
+    <td>${escapeHtml(item.entryTags || "-")}</td>
+    <td>${escapeHtml(item.exitReasonText || item.exitReason || "-")}</td>
+    <td>${escapeHtml(item.holdingTime || "-")}</td>
+    <td>${escapeHtml(item.profitRate || "0.00%")}</td>
+    <td>${escapeHtml(item.profitUsd || "$0.00")}</td>
+  </tr>`;
+}
+
+function renderEntryProfitSnapshotStats(stats = {}) {
+  const target = document.querySelector("#entryProfitSnapshotStats");
+  if (!target) return;
+  const warning = stats.sampleWarning
+    ? `<strong class="sample-warning">${escapeHtml(stats.sampleWarning)}</strong>`
+    : "";
+  const statRows = (stats.negativeStats || []).map((item) => (
+    `<span>${escapeHtml(item.minutes)}분 음수 ${escapeHtml(item.negativeCount || "0")}건 / 최종 승률 ${escapeHtml(item.finalWinRate || "-")}</span>`
+  ));
+  target.innerHTML = [
+    `<span>분석 완료 표본 ${escapeHtml(String(stats.sampleCount == null ? 0 : stats.sampleCount))}건</span>`,
+    warning,
+    ...statRows,
+  ].filter(Boolean).join("");
+}
+
+function renderEntryProfitSnapshotRow(item) {
+  const symbol = [item.ticker_name, item.ticker].filter(Boolean).join(" / ");
+  return `<tr>
+    <td><strong>${escapeHtml(symbol || "-")}</strong></td>
+    <td>${escapeHtml(item.entry_time || "-")}</td>
+    <td>${escapeHtml(item.entry_price || "-")}</td>
+    <td>${escapeHtml(item.profit_after_5m || "-")}</td>
+    <td>${escapeHtml(item.profit_after_10m || "-")}</td>
+    <td>${escapeHtml(item.profit_after_15m || "-")}</td>
+    <td>${escapeHtml(item.profit_after_20m || "-")}</td>
+    <td>${escapeHtml(item.profit_after_30m || "-")}</td>
+    <td>${escapeHtml(item.profit_after_60m || "-")}</td>
+    <td>${escapeHtml(item.final_exit_reason || "-")}</td>
+    <td>${escapeHtml(item.final_profit_rate || "-")}</td>
+    <td>${escapeHtml(item.strategy_version || "-")}</td>
   </tr>`;
 }
 
