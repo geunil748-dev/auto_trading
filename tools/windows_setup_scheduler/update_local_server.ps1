@@ -42,14 +42,26 @@ function Stop-AutoTradingProcess {
 
     $escapedWorkspace = [regex]::Escape($WorkspacePath)
     $scriptPattern = "start_(monitor_server|scheduler)\.ps1"
-    $processes = Get-CimInstance Win32_Process |
+    $servicePattern = "(^|\s)-m\s+trading_bot\s+(serve-monitor|run-scheduler)(\s|$)"
+    $allProcesses = Get-CimInstance Win32_Process
+    $serviceProcesses = $allProcesses |
+        Where-Object {
+            $_.CommandLine -and
+            $_.CommandLine -match $servicePattern
+        }
+    $launcherProcesses = $allProcesses |
         Where-Object {
             $_.CommandLine -and
             $_.CommandLine -match $scriptPattern -and
             $_.CommandLine -match $escapedWorkspace
         }
 
-    foreach ($process in $processes) {
+    $seen = @{}
+    foreach ($process in @($serviceProcesses + $launcherProcesses)) {
+        if ($seen.ContainsKey($process.ProcessId)) {
+            continue
+        }
+        $seen[$process.ProcessId] = $true
         Write-Host "Stopping process $($process.ProcessId): $($process.Name)"
         Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
     }
