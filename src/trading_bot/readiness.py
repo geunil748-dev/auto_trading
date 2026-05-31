@@ -22,6 +22,7 @@ REQUIRED_TABLES = {
     "entry_profit_snapshot",
     "fill_history",
     "holding_snapshot",
+    "KisTokenCache",
     "listed_target_snapshot",
     "order_snapshot",
     "runtime_setting",
@@ -49,6 +50,12 @@ REQUIRED_COLUMNS = {
         "final_exit_reason",
         "final_profit_rate",
         "strategy_version",
+    ),
+    "KisTokenCache": (
+        "environment",
+        "app_key_hash",
+        "access_token",
+        "expires_at",
     ),
 }
 
@@ -147,11 +154,12 @@ def _mssql_status() -> dict[str, Any]:
 
 
 def _read_columns(cursor: Any) -> dict[str, set[str]]:
+    placeholders = ", ".join("?" for _ in REQUIRED_COLUMNS)
     cursor.execute(
-        """
+        f"""
         SELECT TABLE_NAME, COLUMN_NAME
         FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_NAME IN (?, ?, ?, ?)
+        WHERE TABLE_NAME IN ({placeholders})
         """,
         tuple(REQUIRED_COLUMNS),
     )

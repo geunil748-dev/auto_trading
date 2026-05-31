@@ -146,7 +146,7 @@ class DotNetSqlCursor:
         for name, value in params:
             command.Parameters.AddWithValue(name, _dotnet_param_value(value))
 
-        if command_text.lstrip().upper().startswith("SELECT"):
+        if _returns_result_set(command_text):
             self._rows = _read_rows(command.ExecuteReader())
         else:
             command.ExecuteNonQuery()
@@ -188,6 +188,11 @@ def _read_rows(reader: Any) -> list[tuple[Any, ...]]:
     finally:
         reader.Close()
     return rows
+
+
+def _returns_result_set(command_text: str) -> bool:
+    normalized = command_text.lstrip().upper()
+    return normalized.startswith("SELECT") or "SELECT @RESULT" in normalized
 
 
 def _dotnet_param_value(value: Any) -> Any:

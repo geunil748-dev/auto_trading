@@ -1,4 +1,5 @@
 from trading_bot.database import (
+    _returns_result_set,
     initialize_database,
     mssql_dsn_from_env,
     mssql_sqlclient_connection_string_from_env,
@@ -93,3 +94,9 @@ def test_mssql_sqlclient_connection_string_from_env(monkeypatch) -> None:
         "TrustServerCertificate=True;"
         "Connection Timeout=5"
     )
+
+
+def test_dotnet_cursor_reads_applock_result_batch() -> None:
+    assert _returns_result_set("SELECT 1")
+    assert _returns_result_set("DECLARE @result INT; SELECT @result;")
+    assert not _returns_result_set("UPDATE sample SET value = 1")

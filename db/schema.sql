@@ -92,6 +92,24 @@ END;
 ALTER TABLE dbo.daily_target ALTER COLUMN volume_ratio DECIMAL(12, 2) NULL;
 ALTER TABLE dbo.daily_target ALTER COLUMN price_change DECIMAL(12, 2) NULL;
 
+IF OBJECT_ID(N'dbo.KisTokenCache', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.KisTokenCache (
+        id INT IDENTITY PRIMARY KEY,
+        environment VARCHAR(10) NOT NULL,
+        app_key_hash VARCHAR(64) NOT NULL,
+        access_token NVARCHAR(2048) NOT NULL,
+        token_type VARCHAR(20) NOT NULL DEFAULT 'Bearer',
+        expires_at DATETIME2(0) NOT NULL,
+        issued_at DATETIME2(0) NOT NULL DEFAULT SYSUTCDATETIME(),
+        last_used_at DATETIME2(0) NULL,
+        created_at DATETIME2(0) NOT NULL DEFAULT SYSUTCDATETIME(),
+        updated_at DATETIME2(0) NOT NULL DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT UQ_KisTokenCache_environment_app_key_hash
+            UNIQUE (environment, app_key_hash)
+    );
+END;
+
 IF OBJECT_ID(N'dbo.listed_target_snapshot', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.listed_target_snapshot (
