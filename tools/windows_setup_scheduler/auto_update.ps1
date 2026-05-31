@@ -21,10 +21,20 @@ function Invoke-Checked {
         [string[]]$ArgumentList
     )
 
-    & $Exe @ArgumentList 2>&1 | ForEach-Object {
-        Add-Content -LiteralPath $script:ResolvedLogPath -Encoding UTF8 -Value $_.ToString()
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & $Exe @ArgumentList 2>&1
+        $exitCode = $LASTEXITCODE
     }
-    if ($LASTEXITCODE -ne 0) {
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    foreach ($line in $output) {
+        Add-Content -LiteralPath $script:ResolvedLogPath -Encoding UTF8 -Value $line.ToString()
+    }
+    if ($exitCode -ne 0) {
         throw "Command failed: $Exe $($ArgumentList -join ' ')"
     }
 }
