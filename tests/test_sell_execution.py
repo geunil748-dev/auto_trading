@@ -3,6 +3,7 @@ from datetime import date
 from trading_bot.config import TradingSettings
 from trading_bot.models import BotLog, SellIntent, TradeRecord
 from trading_bot.sell_execution import SellIntentExecutor
+from trading_bot.strategy_metadata import strategy_metadata_from_settings
 
 
 class Repository:
@@ -20,6 +21,7 @@ class Repository:
 def test_sell_intent_executor_records_exit_reason() -> None:
     submitted: list[SellIntent] = []
     repository = Repository()
+    metadata = strategy_metadata_from_settings(TradingSettings())
     trades = SellIntentExecutor(
         submit_order=lambda intent: submitted.append(intent) or {"ok": True},
         repository=repository,
@@ -40,6 +42,9 @@ def test_sell_intent_executor_records_exit_reason() -> None:
             order_qty=2,
             filled_qty=0,
             remaining_qty=2,
+            strategy_version=metadata.strategy_version,
+            settings_snapshot_hash=metadata.settings_snapshot_hash,
+            settings_snapshot_json=metadata.settings_snapshot_json,
         )
     ]
     assert repository.logs == [

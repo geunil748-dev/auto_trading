@@ -4,7 +4,9 @@ from collections.abc import Iterable, Mapping
 from datetime import date
 from typing import Any
 
+from trading_bot.config import TradingSettings
 from trading_bot.models import FillRecord
+from trading_bot.strategy_metadata import strategy_metadata_from_settings
 
 
 def fill_records_from_monitor_rows(
@@ -12,8 +14,10 @@ def fill_records_from_monitor_rows(
     entry_prices: Mapping[str, float] | None = None,
     entry_reasons: Mapping[str, tuple[str, str]] | None = None,
     is_mock: bool = True,
+    settings: TradingSettings | None = None,
 ) -> list[FillRecord]:
     records: list[FillRecord] = []
+    strategy_metadata = strategy_metadata_from_settings(settings) if settings is not None else None
     entries = {key.upper(): (0, value) for key, value in (entry_prices or {}).items()}
     reasons = {key.upper(): value for key, value in (entry_reasons or {}).items()}
     rows = sorted(fills, key=_sort_key)
@@ -48,6 +52,9 @@ def fill_records_from_monitor_rows(
                 entry_reason=entry_reason,
                 entry_reason_detail=entry_reason_detail,
                 is_mock=is_mock,
+                strategy_version=strategy_metadata.strategy_version if strategy_metadata else "",
+                settings_snapshot_hash=strategy_metadata.settings_snapshot_hash if strategy_metadata else "",
+                settings_snapshot_json=strategy_metadata.settings_snapshot_json if strategy_metadata else "",
             )
         )
     return records

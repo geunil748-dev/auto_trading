@@ -8,6 +8,7 @@ from trading_bot.config import TradingSettings
 from trading_bot.models import BotLog, BuyIntent, TradeRecord
 from trading_bot.order_protection import QuoteReader, buy_order_protection_log
 from trading_bot.ports import DailyRepository
+from trading_bot.strategy_metadata import strategy_metadata_from_settings
 
 OrderSubmitter = Callable[[BuyIntent], dict[str, object]]
 
@@ -35,6 +36,7 @@ class BuyIntentExecutor:
         submitted = list(intents)
         successful: list[BuyIntent] = []
         trades: list[TradeRecord] = []
+        strategy_metadata = strategy_metadata_from_settings(self.settings)
         for intent in submitted:
             protection_log = buy_order_protection_log(intent, self.settings, self.quote_reader)
             if protection_log is not None and protection_log.reject_reason != "QUOTE_LOOKUP_FAILED":
@@ -62,6 +64,9 @@ class BuyIntentExecutor:
                     order_qty=intent.quantity,
                     filled_qty=0,
                     remaining_qty=intent.quantity,
+                    strategy_version=strategy_metadata.strategy_version,
+                    settings_snapshot_hash=strategy_metadata.settings_snapshot_hash,
+                    settings_snapshot_json=strategy_metadata.settings_snapshot_json,
                 )
             )
         self.repository.save_trades(trades)

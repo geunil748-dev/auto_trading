@@ -1,13 +1,20 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Iterable
 from contextlib import closing
 from datetime import date
 from typing import Any, Protocol
 
 from trading_bot.config import TradingSettings
-from trading_bot.models import BotLog, DailyScore, DailyTarget, FillRecord, TradeRecord
+from trading_bot.models import (
+    BotLog,
+    DailyScore,
+    DailyTarget,
+    EntryProfitSnapshot,
+    FillRecord,
+    TradeRecord,
+)
+from trading_bot.strategy_metadata import settings_snapshot, strategy_metadata_from_settings
 from trading_bot.trading_date import current_trade_date
 
 
@@ -27,6 +34,7 @@ class Connection(Protocol):
     def close(self) -> None: ...
 
 
+# 일별 저장소: 수집/주문/체결/계좌 스냅샷을 거래일 기준으로 기록한다.
 class SqlServerDailyRepository:
     """자동매매 실행 결과를 거래일 기준으로 MSSQL에 저장하는 저장소."""
 
@@ -304,7 +312,8 @@ class SqlServerDailyRepository:
         sell_fill_count: int,
     ) -> None:
         self._ensure_daily_run_summary_table()
-        settings_json = json.dumps(_settings_snapshot(settings), ensure_ascii=False, sort_keys=True)
+        strategy_metadata = strategy_metadata_from_settings(settings)
+        settings_json = strategy_metadata.settings_snapshot_json
         self._execute(
             """
             IF EXISTS (SELECT 1 FROM daily_run_summary WHERE trade_date = ? AND is_mock = 1)
@@ -312,6 +321,9 @@ class SqlServerDailyRepository:
                 UPDATE daily_run_summary
                 SET candidate_selection_mode = ?,
                     settings_json = ?,
+                    strategy_version = ?,
+                    settings_snapshot_hash = ?,
+                    settings_snapshot_json = ?,
                     realized_profit_usd = ?,
                     realized_profit_rate = ?,
                     eod_sell_count = COALESCE(?, eod_sell_count),
@@ -325,14 +337,18 @@ class SqlServerDailyRepository:
             BEGIN
                 INSERT INTO daily_run_summary
                     (trade_date, candidate_selection_mode, settings_json,
+                     strategy_version, settings_snapshot_hash, settings_snapshot_json,
                      realized_profit_usd, realized_profit_rate, eod_sell_count,
                      cancelled_order_count, buy_fill_count, sell_fill_count, is_mock)
-                VALUES (?, ?, ?, ?, ?, COALESCE(?, 0), COALESCE(?, 0), ?, ?, 1)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), COALESCE(?, 0), ?, ?, 1)
             END
             """,
             (
                 trade_date,
                 settings.candidate_selection_mode,
+                settings_json,
+                strategy_metadata.strategy_version,
+                strategy_metadata.settings_snapshot_hash,
                 settings_json,
                 realized_profit_usd,
                 realized_profit_rate,
@@ -343,6 +359,9 @@ class SqlServerDailyRepository:
                 trade_date,
                 trade_date,
                 settings.candidate_selection_mode,
+                settings_json,
+                strategy_metadata.strategy_version,
+                strategy_metadata.settings_snapshot_hash,
                 settings_json,
                 realized_profit_usd,
                 realized_profit_rate,
@@ -385,6 +404,9 @@ class SqlServerDailyRepository:
                 item.reject_reason,
                 item.actual_value,
                 item.threshold_value,
+                item.strategy_version,
+                item.settings_snapshot_hash,
+                item.settings_snapshot_json,
             )
             for item in trade_items
         ]
@@ -396,8 +418,9 @@ class SqlServerDailyRepository:
                  entry_price, max_price_after_buy, quantity, usd_krw_rate, profit_usd,
                  profit_krw, profit_rate, exit_reason, entry_reason, entry_reason_detail, is_mock,
                  order_status, retry_count, order_qty, filled_qty, remaining_qty, avg_fill_price,
-                 last_fill_time, reject_reason, actual_value, threshold_value)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 last_fill_time, reject_reason, actual_value, threshold_value,
+                 strategy_version, settings_snapshot_hash, settings_snapshot_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
@@ -419,6 +442,9 @@ class SqlServerDailyRepository:
                 item.entry_reason,
                 item.entry_reason_detail,
                 item.is_mock,
+                item.strategy_version,
+                item.settings_snapshot_hash,
+                item.settings_snapshot_json,
             )
             for item in fills
         ]
@@ -444,7 +470,10 @@ class SqlServerDailyRepository:
                     SET profit_usd = ?,
                         profit_rate = ?,
                         entry_reason = COALESCE(entry_reason, ?),
-                        entry_reason_detail = COALESCE(entry_reason_detail, ?)
+                        entry_reason_detail = COALESCE(entry_reason_detail, ?),
+                        strategy_version = COALESCE(NULLIF(strategy_version, ''), ?),
+                        settings_snapshot_hash = COALESCE(settings_snapshot_hash, ?),
+                        settings_snapshot_json = COALESCE(settings_snapshot_json, ?)
                     WHERE trade_date = ?
                       AND ISNULL(fill_time, '') = ?
                       AND ticker = ?
@@ -458,8 +487,9 @@ class SqlServerDailyRepository:
                     INSERT INTO fill_history
                         (trade_date, fill_date, fill_time, ticker, ticker_name, side, quantity,
                          fill_price, fill_amount, profit_usd, profit_rate, order_no,
-                         entry_reason, entry_reason_detail, is_mock)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         entry_reason, entry_reason_detail, is_mock,
+                         strategy_version, settings_snapshot_hash, settings_snapshot_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 END
                 """,
                 (
@@ -474,6 +504,9 @@ class SqlServerDailyRepository:
                     row[9],
                     row[11],
                     row[12],
+                    row[14],
+                    row[15],
+                    row[16],
                     row[0],
                     row[1],
                     row[2],
@@ -485,6 +518,166 @@ class SqlServerDailyRepository:
                     *row,
                 ),
             )
+
+    def save_entry_profit_snapshots(self, snapshots: Iterable[EntryProfitSnapshot]) -> None:
+        rows = [
+            (
+                item.trade_date,
+                item.ticker,
+                item.ticker_name,
+                item.entry_time,
+                item.entry_price_usd,
+                item.strategy_version,
+            )
+            for item in snapshots
+        ]
+        if not rows:
+            return
+        self._ensure_entry_profit_snapshot_table()
+        self._executemany(
+            """
+            IF NOT EXISTS (
+                SELECT 1
+                FROM entry_profit_snapshot
+                WHERE trade_date = ?
+                  AND ticker = ?
+                  AND ISNULL(entry_time, '') = ?
+            )
+            BEGIN
+                INSERT INTO entry_profit_snapshot
+                    (trade_date, ticker, ticker_name, entry_time, entry_price,
+                     strategy_version)
+                VALUES (?, ?, ?, ?, ?, ?)
+            END
+            """,
+            [
+                (
+                    row[0],
+                    row[1],
+                    row[3],
+                    row[0],
+                    row[1],
+                    row[2],
+                    row[3],
+                    row[4],
+                    row[5],
+                )
+                for row in rows
+            ],
+        )
+
+    def update_entry_profit_snapshots(
+        self,
+        trade_date: date,
+        current_prices: dict[str, float],
+        now_text: str,
+    ) -> None:
+        if not current_prices:
+            return
+        self._ensure_entry_profit_snapshot_table()
+        for ticker, current_price in current_prices.items():
+            if current_price <= 0:
+                continue
+            self._execute(
+                """
+                UPDATE entry_profit_snapshot
+                SET profit_after_5m = CASE
+                        WHEN profit_after_5m IS NULL
+                         AND DATEDIFF(MINUTE, dbo._entry_datetime(trade_date, entry_time), dbo._entry_datetime(trade_date, ?)) >= 5
+                        THEN (? / NULLIF(entry_price, 0)) - 1
+                        ELSE profit_after_5m
+                    END,
+                    profit_after_10m = CASE
+                        WHEN profit_after_10m IS NULL
+                         AND DATEDIFF(MINUTE, dbo._entry_datetime(trade_date, entry_time), dbo._entry_datetime(trade_date, ?)) >= 10
+                        THEN (? / NULLIF(entry_price, 0)) - 1
+                        ELSE profit_after_10m
+                    END,
+                    profit_after_15m = CASE
+                        WHEN profit_after_15m IS NULL
+                         AND DATEDIFF(MINUTE, dbo._entry_datetime(trade_date, entry_time), dbo._entry_datetime(trade_date, ?)) >= 15
+                        THEN (? / NULLIF(entry_price, 0)) - 1
+                        ELSE profit_after_15m
+                    END,
+                    profit_after_20m = CASE
+                        WHEN profit_after_20m IS NULL
+                         AND DATEDIFF(MINUTE, dbo._entry_datetime(trade_date, entry_time), dbo._entry_datetime(trade_date, ?)) >= 20
+                        THEN (? / NULLIF(entry_price, 0)) - 1
+                        ELSE profit_after_20m
+                    END,
+                    profit_after_30m = CASE
+                        WHEN profit_after_30m IS NULL
+                         AND DATEDIFF(MINUTE, dbo._entry_datetime(trade_date, entry_time), dbo._entry_datetime(trade_date, ?)) >= 30
+                        THEN (? / NULLIF(entry_price, 0)) - 1
+                        ELSE profit_after_30m
+                    END,
+                    profit_after_60m = CASE
+                        WHEN profit_after_60m IS NULL
+                         AND DATEDIFF(MINUTE, dbo._entry_datetime(trade_date, entry_time), dbo._entry_datetime(trade_date, ?)) >= 60
+                        THEN (? / NULLIF(entry_price, 0)) - 1
+                        ELSE profit_after_60m
+                    END,
+                    updated_at = GETDATE()
+                WHERE trade_date = ?
+                  AND ticker = ?
+                  AND final_exit_reason IS NULL
+                """,
+                (
+                    now_text,
+                    current_price,
+                    now_text,
+                    current_price,
+                    now_text,
+                    current_price,
+                    now_text,
+                    current_price,
+                    now_text,
+                    current_price,
+                    now_text,
+                    current_price,
+                    trade_date,
+                    ticker,
+                ),
+            )
+
+    def update_entry_profit_snapshot_finals(self, trade_date: date) -> None:
+        self._ensure_entry_profit_snapshot_table()
+        self._execute(
+            """
+            UPDATE eps
+            SET final_exit_reason = sell.exit_reason,
+                final_profit_rate = sell_fill.profit_rate,
+                updated_at = GETDATE()
+            FROM entry_profit_snapshot eps
+            OUTER APPLY (
+                SELECT TOP (1) created_at, exit_reason
+                FROM trade_history
+                WHERE trade_date = eps.trade_date
+                  AND ticker = eps.ticker
+                  AND order_type = 'SELL'
+                  AND exit_reason IS NOT NULL
+                  AND created_at >= dbo._entry_datetime(eps.trade_date, eps.entry_time)
+                ORDER BY created_at ASC, id ASC
+            ) sell
+            OUTER APPLY (
+                SELECT TOP (1) profit_rate
+                FROM fill_history
+                WHERE trade_date = eps.trade_date
+                  AND ticker = eps.ticker
+                  AND profit_rate IS NOT NULL
+                  AND (
+                      UPPER(side) IN ('SELL', 'S')
+                      OR side LIKE N'%매도%'
+                  )
+                  AND dbo._entry_datetime(trade_date, fill_time) >= dbo._entry_datetime(eps.trade_date, eps.entry_time)
+                ORDER BY created_at ASC, id ASC
+            ) sell_fill
+            WHERE eps.trade_date = ?
+              AND eps.final_exit_reason IS NULL
+              AND sell.exit_reason IS NOT NULL
+            """,
+            (trade_date,),
+        )
 
     def sell_entry_prices(self, trade_date: date) -> dict[str, float]:
         self._ensure_trade_history_columns()
@@ -629,6 +822,15 @@ class SqlServerDailyRepository:
 
             IF COL_LENGTH('dbo.trade_history', 'threshold_value') IS NULL
                 ALTER TABLE dbo.trade_history ADD threshold_value FLOAT NULL
+
+            IF COL_LENGTH('dbo.trade_history', 'strategy_version') IS NULL
+                ALTER TABLE dbo.trade_history ADD strategy_version VARCHAR(60) NULL
+
+            IF COL_LENGTH('dbo.trade_history', 'settings_snapshot_hash') IS NULL
+                ALTER TABLE dbo.trade_history ADD settings_snapshot_hash VARCHAR(64) NULL
+
+            IF COL_LENGTH('dbo.trade_history', 'settings_snapshot_json') IS NULL
+                ALTER TABLE dbo.trade_history ADD settings_snapshot_json NVARCHAR(MAX) NULL
             """,
         )
         self._execute_statement(
@@ -761,10 +963,65 @@ class SqlServerDailyRepository:
             IF COL_LENGTH('dbo.fill_history', 'entry_reason_detail') IS NULL
                 ALTER TABLE dbo.fill_history ADD entry_reason_detail NVARCHAR(500) NULL
 
+            IF COL_LENGTH('dbo.fill_history', 'strategy_version') IS NULL
+                ALTER TABLE dbo.fill_history ADD strategy_version VARCHAR(60) NULL
+
+            IF COL_LENGTH('dbo.fill_history', 'settings_snapshot_hash') IS NULL
+                ALTER TABLE dbo.fill_history ADD settings_snapshot_hash VARCHAR(64) NULL
+
+            IF COL_LENGTH('dbo.fill_history', 'settings_snapshot_json') IS NULL
+                ALTER TABLE dbo.fill_history ADD settings_snapshot_json NVARCHAR(MAX) NULL
+
             EXEC(N'
             UPDATE dbo.fill_history
             SET trade_date = fill_date
             WHERE trade_date IS NULL
+            ')
+            """,
+        )
+
+    def _ensure_entry_profit_snapshot_table(self) -> None:
+        self._execute_statement(
+            """
+            IF OBJECT_ID(N'dbo.entry_profit_snapshot', N'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.entry_profit_snapshot (
+                    id INT IDENTITY PRIMARY KEY,
+                    trade_date DATE NOT NULL,
+                    ticker VARCHAR(10) NOT NULL,
+                    ticker_name NVARCHAR(100),
+                    entry_time VARCHAR(8) NOT NULL,
+                    entry_price DECIMAL(12, 4) NOT NULL,
+                    profit_after_5m DECIMAL(12, 6),
+                    profit_after_10m DECIMAL(12, 6),
+                    profit_after_15m DECIMAL(12, 6),
+                    profit_after_20m DECIMAL(12, 6),
+                    profit_after_30m DECIMAL(12, 6),
+                    profit_after_60m DECIMAL(12, 6),
+                    final_exit_reason VARCHAR(80),
+                    final_profit_rate DECIMAL(12, 6),
+                    strategy_version VARCHAR(60),
+                    created_at DATETIME DEFAULT GETDATE(),
+                    updated_at DATETIME DEFAULT GETDATE()
+                );
+            END
+
+            IF OBJECT_ID(N'dbo._entry_datetime', N'FN') IS NULL
+            EXEC(N'
+                CREATE FUNCTION dbo._entry_datetime(@trade_date DATE, @time_text VARCHAR(8))
+                RETURNS DATETIME
+                AS
+                BEGIN
+                    DECLARE @base DATETIME = CAST(@trade_date AS DATETIME)
+                    DECLARE @hour INT = TRY_CONVERT(INT, LEFT(ISNULL(@time_text, ''''), 2))
+                    DECLARE @minute INT = TRY_CONVERT(INT, SUBSTRING(ISNULL(@time_text, ''''), 4, 2))
+                    DECLARE @second INT = TRY_CONVERT(INT, SUBSTRING(ISNULL(@time_text, ''''), 7, 2))
+                    IF @hour IS NULL OR @minute IS NULL OR @second IS NULL
+                        RETURN @base
+                    IF @hour < 12
+                        SET @base = DATEADD(DAY, 1, @base)
+                    RETURN DATEADD(SECOND, @second, DATEADD(MINUTE, @minute, DATEADD(HOUR, @hour, @base)))
+                END
             ')
             """,
         )
@@ -1041,6 +1298,9 @@ class SqlServerDailyRepository:
                     cancelled_order_count INT DEFAULT 0,
                     buy_fill_count INT DEFAULT 0,
                     sell_fill_count INT DEFAULT 0,
+                    strategy_version VARCHAR(60),
+                    settings_snapshot_hash VARCHAR(64),
+                    settings_snapshot_json NVARCHAR(MAX),
                     is_mock BIT DEFAULT 1,
                     created_at DATETIME DEFAULT GETDATE(),
                     updated_at DATETIME DEFAULT GETDATE()
@@ -1071,6 +1331,15 @@ class SqlServerDailyRepository:
             IF COL_LENGTH('dbo.daily_run_summary', 'sell_fill_count') IS NULL
                 ALTER TABLE dbo.daily_run_summary ADD sell_fill_count INT DEFAULT 0
 
+            IF COL_LENGTH('dbo.daily_run_summary', 'strategy_version') IS NULL
+                ALTER TABLE dbo.daily_run_summary ADD strategy_version VARCHAR(60) NULL
+
+            IF COL_LENGTH('dbo.daily_run_summary', 'settings_snapshot_hash') IS NULL
+                ALTER TABLE dbo.daily_run_summary ADD settings_snapshot_hash VARCHAR(64) NULL
+
+            IF COL_LENGTH('dbo.daily_run_summary', 'settings_snapshot_json') IS NULL
+                ALTER TABLE dbo.daily_run_summary ADD settings_snapshot_json NVARCHAR(MAX) NULL
+
             IF COL_LENGTH('dbo.daily_run_summary', 'is_mock') IS NULL
                 ALTER TABLE dbo.daily_run_summary ADD is_mock BIT DEFAULT 1
 
@@ -1100,11 +1369,16 @@ class SqlServerDailyRepository:
             connection.commit()
 
 
+# 모니터 조회 저장소: 화면 API가 사용할 최신값과 날짜별 이력을 조회한다.
 class SqlServerMonitorRepository:
     """모니터 화면이 사용할 최신 스냅샷과 날짜별 이력을 DB에서 조회한다."""
 
     def __init__(self, connect: Callable[[], Connection]) -> None:
         self.connect = connect
+
+    def _ensure_trade_history_columns(self) -> None:
+        # 모니터 조회는 스키마를 변경하지 않고, 기존 조회 쿼리의 fallback만 사용한다.
+        return None
 
     def latest_targets(self, limit: int = 20) -> list[tuple[Any, ...]]:
         target_date = current_trade_date()
@@ -1200,6 +1474,57 @@ class SqlServerMonitorRepository:
         if rows:
             return rows
         return self._latest_daily_targets(limit)
+
+    def candidate_snapshot_status(self) -> tuple[Any, ...]:
+        try:
+            date_rows = self._query(
+                """
+                SELECT TOP (30) CONVERT(varchar(10), trade_date, 23) AS trade_date
+                FROM (
+                    SELECT trade_date FROM daily_target
+                    UNION ALL
+                    SELECT trade_date FROM listed_target_snapshot
+                ) candidate_rows
+                GROUP BY CONVERT(varchar(10), trade_date, 23)
+                ORDER BY CONVERT(varchar(10), trade_date, 23) DESC
+                """,
+                (),
+            )
+            latest_date = str(date_rows[0][0]) if date_rows and date_rows[0][0] else ""
+            latest_count = 0
+            if latest_date:
+                count_rows = self._query(
+                    """
+                    SELECT COUNT(DISTINCT ticker)
+                    FROM (
+                        SELECT trade_date, ticker FROM daily_target
+                        UNION ALL
+                        SELECT trade_date, ticker FROM listed_target_snapshot
+                    ) candidate_rows
+                    WHERE CONVERT(varchar(10), trade_date, 23) = ?
+                    """,
+                    (latest_date,),
+                )
+                latest_count = int(_number(count_rows[0][0])) if count_rows else 0
+            status_rows = self._query(
+                """
+                SELECT TOP (1) log_level, message
+                FROM bot_log
+                WHERE module = 'screening'
+                  AND (
+                       message LIKE 'CANDIDATE_SNAPSHOT_%'
+                       OR message LIKE N'%후보%DB%저장%'
+                       OR message LIKE N'%후보 0건%'
+                  )
+                ORDER BY created_at DESC, id DESC
+                """,
+                (),
+            )
+        except Exception:
+            return (0, "", 0, "UNKNOWN", "후보 스냅샷 상태를 조회하지 못했습니다.")
+        status = status_rows[0][0] if status_rows else ""
+        message = status_rows[0][1] if status_rows else ""
+        return (len(date_rows), latest_date, latest_count, status, message)
 
     def _latest_daily_targets(self, limit: int) -> list[tuple[Any, ...]]:
         target_date = current_trade_date()
@@ -1314,6 +1639,7 @@ class SqlServerMonitorRepository:
             if rows:
                 return rows[0]
         except Exception:
+            # 최신 계좌 테이블이 아직 없거나 조회 실패하면 일별 스냅샷으로 fallback 한다.
             pass
         try:
             rows = self._query(
@@ -1411,17 +1737,31 @@ class SqlServerMonitorRepository:
 
     def latest_trades(self, limit: int = 20) -> list[tuple[Any, ...]]:
         target_date = current_trade_date()
-        return self._query(
-            """
-            SELECT TOP (?) trade_date, created_at, ticker, ticker_name,
-                   order_type, order_price, quantity, exit_reason,
-                   profit_usd, profit_rate, entry_reason, entry_reason_detail
-            FROM trade_history
-            WHERE trade_date = ?
-            ORDER BY created_at DESC
-            """,
-            (limit, target_date),
-        )
+        try:
+            return self._query(
+                """
+                SELECT TOP (?) trade_date, created_at, ticker, ticker_name,
+                       order_type, order_price, quantity, exit_reason,
+                       profit_usd, profit_rate, entry_reason, entry_reason_detail,
+                       strategy_version
+                FROM trade_history
+                WHERE trade_date = ?
+                ORDER BY created_at DESC
+                """,
+                (limit, target_date),
+            )
+        except Exception:
+            return self._query(
+                """
+                SELECT TOP (?) trade_date, created_at, ticker, ticker_name,
+                       order_type, order_price, quantity, exit_reason,
+                       profit_usd, profit_rate, entry_reason, entry_reason_detail
+                FROM trade_history
+                WHERE trade_date = ?
+                ORDER BY created_at DESC
+                """,
+                (limit, target_date),
+            )
 
     def today_realized_profit(self) -> float:
         return self._sum_profit(
@@ -1454,7 +1794,7 @@ class SqlServerMonitorRepository:
                 """
                 SELECT TOP (?) fill_date, fill_time, ticker, ticker_name, side,
                        quantity, fill_price, fill_amount, profit_usd, profit_rate,
-                       entry_reason, entry_reason_detail
+                       entry_reason, entry_reason_detail, strategy_version
                 FROM fill_history
                 WHERE trade_date = ?
                 ORDER BY created_at DESC
@@ -1462,7 +1802,20 @@ class SqlServerMonitorRepository:
                 (limit, target_date),
             )
         except Exception:
-            return []
+            try:
+                return self._query(
+                    """
+                    SELECT TOP (?) fill_date, fill_time, ticker, ticker_name, side,
+                           quantity, fill_price, fill_amount, profit_usd, profit_rate,
+                           entry_reason, entry_reason_detail
+                    FROM fill_history
+                    WHERE trade_date = ?
+                    ORDER BY created_at DESC
+                    """,
+                    (limit, target_date),
+                )
+            except Exception:
+                return []
 
     def latest_logs(self, limit: int = 20) -> list[tuple[Any, ...]]:
         target_date = current_trade_date()
@@ -1499,6 +1852,7 @@ class SqlServerMonitorRepository:
             if rows:
                 return rows
         except Exception:
+            # 최신 후보 스냅샷이 없으면 기존 daily_target 이력 조회로 fallback 한다.
             pass
         return self._history_daily_targets(trade_date, limit)
 
@@ -1624,17 +1978,31 @@ class SqlServerMonitorRepository:
         )
 
     def history_trades(self, trade_date: date, limit: int = 200) -> list[tuple[Any, ...]]:
-        return self._query(
-            """
-            SELECT TOP (?) trade_date, created_at, ticker, ticker_name,
-                   order_type, order_price, quantity, exit_reason,
-                   profit_usd, profit_rate
-            FROM trade_history
-            WHERE trade_date = ?
-            ORDER BY created_at DESC
-            """,
-            (limit, trade_date),
-        )
+        try:
+            return self._query(
+                """
+                SELECT TOP (?) trade_date, created_at, ticker, ticker_name,
+                       order_type, order_price, quantity, exit_reason,
+                       profit_usd, profit_rate, entry_reason, entry_reason_detail,
+                       strategy_version
+                FROM trade_history
+                WHERE trade_date = ?
+                ORDER BY created_at DESC
+                """,
+                (limit, trade_date),
+            )
+        except Exception:
+            return self._query(
+                """
+                SELECT TOP (?) trade_date, created_at, ticker, ticker_name,
+                       order_type, order_price, quantity, exit_reason,
+                       profit_usd, profit_rate, entry_reason, entry_reason_detail
+                FROM trade_history
+                WHERE trade_date = ?
+                ORDER BY created_at DESC
+                """,
+                (limit, trade_date),
+            )
 
     def history_realized_profit(self, trade_date: date) -> float:
         return self._sum_profit(
@@ -1689,10 +2057,48 @@ class SqlServerMonitorRepository:
             return self._query(
                 """
                 SELECT TOP (?) fill_date, fill_time, ticker, ticker_name, side,
-                       quantity, fill_price, fill_amount, profit_usd, profit_rate
+                       quantity, fill_price, fill_amount, profit_usd, profit_rate,
+                       entry_reason, entry_reason_detail, strategy_version
                 FROM fill_history
                 WHERE trade_date = ?
                 ORDER BY created_at DESC
+                """,
+                (limit, trade_date),
+            )
+        except Exception:
+            try:
+                return self._query(
+                    """
+                    SELECT TOP (?) fill_date, fill_time, ticker, ticker_name, side,
+                           quantity, fill_price, fill_amount, profit_usd, profit_rate,
+                           entry_reason, entry_reason_detail
+                    FROM fill_history
+                    WHERE trade_date = ?
+                    ORDER BY created_at DESC
+                    """,
+                    (limit, trade_date),
+                )
+            except Exception:
+                return []
+
+    def latest_entry_profit_snapshots(self, limit: int = 100) -> list[tuple[Any, ...]]:
+        return self.history_entry_profit_snapshots(current_trade_date(), limit)
+
+    def history_entry_profit_snapshots(
+        self,
+        trade_date: date,
+        limit: int = 200,
+    ) -> list[tuple[Any, ...]]:
+        try:
+            return self._query(
+                """
+                SELECT TOP (?) trade_date, ticker, ticker_name, entry_time, entry_price,
+                       profit_after_5m, profit_after_10m, profit_after_15m,
+                       profit_after_20m, profit_after_30m, profit_after_60m,
+                       final_exit_reason, final_profit_rate, strategy_version
+                FROM entry_profit_snapshot
+                WHERE trade_date = ?
+                ORDER BY dbo._entry_datetime(trade_date, entry_time) DESC, id DESC
                 """,
                 (limit, trade_date),
             )
@@ -1744,6 +2150,49 @@ class SqlServerMonitorRepository:
             )
             for reason, item in ranked[:limit]
         ]
+
+    def closed_trade_analysis(self, limit: int = 500) -> list[tuple[Any, ...]]:
+        self._ensure_trade_history_columns()
+        try:
+            return self._query(
+                """
+                SELECT TOP (?) buy.created_at AS entry_at,
+                       sell.created_at AS exit_at,
+                       sell.ticker,
+                       sell.ticker_name,
+                       COALESCE(sell.entry_reason, buy.entry_reason, ''),
+                       COALESCE(sell.entry_reason_detail, buy.entry_reason_detail, ''),
+                       COALESCE(sell.exit_reason, 'UNKNOWN'),
+                       CASE
+                           WHEN buy.created_at IS NULL THEN 0
+                           ELSE DATEDIFF(MINUTE, buy.created_at, sell.created_at)
+                       END,
+                       sell.profit_rate,
+                       sell.profit_usd,
+                       COALESCE(sell.strategy_version, buy.strategy_version, '')
+                FROM trade_history sell
+                OUTER APPLY (
+                    SELECT TOP (1) created_at, entry_reason, entry_reason_detail, strategy_version
+                    FROM trade_history buy
+                    WHERE buy.ticker = sell.ticker
+                      AND buy.created_at <= sell.created_at
+                      AND (
+                          UPPER(buy.order_type) IN ('BUY', 'B')
+                          OR buy.order_type LIKE N'%매수%'
+                      )
+                    ORDER BY buy.created_at DESC, buy.id DESC
+                ) buy
+                WHERE sell.profit_usd IS NOT NULL
+                  AND (
+                      UPPER(sell.order_type) IN ('SELL', 'S')
+                      OR sell.order_type LIKE N'%매도%'
+                  )
+                ORDER BY sell.created_at DESC, sell.id DESC
+                """,
+                (limit,),
+            )
+        except Exception:
+            return []
 
     def history_logs(self, trade_date: date, limit: int = 200) -> list[tuple[Any, ...]]:
         return self._query(
@@ -1868,26 +2317,4 @@ def _account_type(is_mock: bool) -> str:
 
 
 def _settings_snapshot(settings: TradingSettings) -> dict[str, object]:
-    return {
-        "candidateSelectionMode": settings.candidate_selection_mode,
-        "stopLossPercent": abs(settings.max_position_loss * 100),
-        "takeProfitPercent": settings.take_profit_rate * 100,
-        "partialTakeProfitEnabled": settings.partial_take_profit_enabled,
-        "minTotalScore": settings.min_total_score,
-        "minPriceUsd": settings.min_price_usd,
-        "maxPriceUsd": settings.max_price_usd,
-        "minOpeningPriceChangePercent": settings.min_opening_price_change * 100,
-        "minVolumeRatio": settings.min_volume_ratio,
-        "maxOpeningGapPercent": settings.max_opening_gap * 100,
-        "openingFixedCandidateLimit": settings.opening_fixed_candidate_limit,
-        "intradayRefreshCandidateLimit": settings.intraday_refresh_candidate_limit,
-        "hybridCandidateLimit": settings.hybrid_candidate_limit,
-        "stopLossCooldownMinutes": settings.stop_loss_cooldown_minutes,
-        "maxConsecutiveStopLossCount": settings.max_consecutive_stop_loss_count,
-        "maxBidAskSpreadRate": settings.max_bid_ask_spread_rate,
-        "maxExpectedFillPriceGapRate": settings.max_expected_fill_price_gap_rate,
-        "maxOrderRetryCount": settings.max_order_retry_count,
-        "orderRetryDelaySeconds": settings.order_retry_delay_seconds,
-        "partialFillPolicy": settings.partial_fill_policy,
-        "unfilledCancelAfterSeconds": settings.unfilled_cancel_after_seconds,
-    }
+    return settings_snapshot(settings)

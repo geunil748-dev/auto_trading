@@ -26,6 +26,9 @@ BEGIN
     cancelled_order_count INT DEFAULT 0,
     buy_fill_count INT DEFAULT 0,
     sell_fill_count INT DEFAULT 0,
+    strategy_version VARCHAR(60),
+    settings_snapshot_hash VARCHAR(64),
+    settings_snapshot_json NVARCHAR(MAX),
     is_mock BIT DEFAULT 1,
         created_at DATETIME DEFAULT GETDATE(),
         updated_at DATETIME DEFAULT GETDATE()
@@ -55,6 +58,15 @@ IF COL_LENGTH('dbo.daily_run_summary', 'buy_fill_count') IS NULL
 
 IF COL_LENGTH('dbo.daily_run_summary', 'sell_fill_count') IS NULL
     ALTER TABLE dbo.daily_run_summary ADD sell_fill_count INT DEFAULT 0;
+
+IF COL_LENGTH('dbo.daily_run_summary', 'strategy_version') IS NULL
+    ALTER TABLE dbo.daily_run_summary ADD strategy_version VARCHAR(60) NULL;
+
+IF COL_LENGTH('dbo.daily_run_summary', 'settings_snapshot_hash') IS NULL
+    ALTER TABLE dbo.daily_run_summary ADD settings_snapshot_hash VARCHAR(64) NULL;
+
+IF COL_LENGTH('dbo.daily_run_summary', 'settings_snapshot_json') IS NULL
+    ALTER TABLE dbo.daily_run_summary ADD settings_snapshot_json NVARCHAR(MAX) NULL;
 
 IF COL_LENGTH('dbo.daily_run_summary', 'is_mock') IS NULL
     ALTER TABLE dbo.daily_run_summary ADD is_mock BIT DEFAULT 1;
@@ -275,6 +287,9 @@ BEGIN
         exit_reason VARCHAR(20),
         entry_reason VARCHAR(80),
         entry_reason_detail NVARCHAR(500),
+        strategy_version VARCHAR(60),
+        settings_snapshot_hash VARCHAR(64),
+        settings_snapshot_json NVARCHAR(MAX),
         is_mock BIT DEFAULT 1,
         created_at DATETIME DEFAULT GETDATE()
     );
@@ -300,6 +315,21 @@ BEGIN
     ALTER TABLE dbo.trade_history ADD entry_reason_detail NVARCHAR(500) NULL;
 END;
 
+IF COL_LENGTH('dbo.trade_history', 'strategy_version') IS NULL
+BEGIN
+    ALTER TABLE dbo.trade_history ADD strategy_version VARCHAR(60) NULL;
+END;
+
+IF COL_LENGTH('dbo.trade_history', 'settings_snapshot_hash') IS NULL
+BEGIN
+    ALTER TABLE dbo.trade_history ADD settings_snapshot_hash VARCHAR(64) NULL;
+END;
+
+IF COL_LENGTH('dbo.trade_history', 'settings_snapshot_json') IS NULL
+BEGIN
+    ALTER TABLE dbo.trade_history ADD settings_snapshot_json NVARCHAR(MAX) NULL;
+END;
+
 IF OBJECT_ID(N'dbo.fill_history', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.fill_history (
@@ -318,6 +348,9 @@ BEGIN
         order_no VARCHAR(30),
         entry_reason VARCHAR(80),
         entry_reason_detail NVARCHAR(500),
+        strategy_version VARCHAR(60),
+        settings_snapshot_hash VARCHAR(64),
+        settings_snapshot_json NVARCHAR(MAX),
         is_mock BIT DEFAULT 1,
         created_at DATETIME DEFAULT GETDATE()
     );
@@ -353,6 +386,62 @@ IF COL_LENGTH('dbo.fill_history', 'entry_reason_detail') IS NULL
 BEGIN
     ALTER TABLE dbo.fill_history ADD entry_reason_detail NVARCHAR(500) NULL;
 END;
+
+IF COL_LENGTH('dbo.fill_history', 'strategy_version') IS NULL
+BEGIN
+    ALTER TABLE dbo.fill_history ADD strategy_version VARCHAR(60) NULL;
+END;
+
+IF COL_LENGTH('dbo.fill_history', 'settings_snapshot_hash') IS NULL
+BEGIN
+    ALTER TABLE dbo.fill_history ADD settings_snapshot_hash VARCHAR(64) NULL;
+END;
+
+IF COL_LENGTH('dbo.fill_history', 'settings_snapshot_json') IS NULL
+BEGIN
+    ALTER TABLE dbo.fill_history ADD settings_snapshot_json NVARCHAR(MAX) NULL;
+END;
+
+IF OBJECT_ID(N'dbo.entry_profit_snapshot', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.entry_profit_snapshot (
+        id INT IDENTITY PRIMARY KEY,
+        trade_date DATE NOT NULL,
+        ticker VARCHAR(10) NOT NULL,
+        ticker_name NVARCHAR(100),
+        entry_time VARCHAR(8) NOT NULL,
+        entry_price DECIMAL(12, 4) NOT NULL,
+        profit_after_5m DECIMAL(12, 6),
+        profit_after_10m DECIMAL(12, 6),
+        profit_after_15m DECIMAL(12, 6),
+        profit_after_20m DECIMAL(12, 6),
+        profit_after_30m DECIMAL(12, 6),
+        profit_after_60m DECIMAL(12, 6),
+        final_exit_reason VARCHAR(80),
+        final_profit_rate DECIMAL(12, 6),
+        strategy_version VARCHAR(60),
+        created_at DATETIME DEFAULT GETDATE(),
+        updated_at DATETIME DEFAULT GETDATE()
+    );
+END;
+
+IF OBJECT_ID(N'dbo._entry_datetime', N'FN') IS NULL
+EXEC(N'
+    CREATE FUNCTION dbo._entry_datetime(@trade_date DATE, @time_text VARCHAR(8))
+    RETURNS DATETIME
+    AS
+    BEGIN
+        DECLARE @base DATETIME = CAST(@trade_date AS DATETIME)
+        DECLARE @hour INT = TRY_CONVERT(INT, LEFT(ISNULL(@time_text, ''''), 2))
+        DECLARE @minute INT = TRY_CONVERT(INT, SUBSTRING(ISNULL(@time_text, ''''), 4, 2))
+        DECLARE @second INT = TRY_CONVERT(INT, SUBSTRING(ISNULL(@time_text, ''''), 7, 2))
+        IF @hour IS NULL OR @minute IS NULL OR @second IS NULL
+            RETURN @base
+        IF @hour < 12
+            SET @base = DATEADD(DAY, 1, @base)
+        RETURN DATEADD(SECOND, @second, DATEADD(MINUTE, @minute, DATEADD(HOUR, @hour, @base)))
+    END
+');
 
 EXEC(N'
 UPDATE th

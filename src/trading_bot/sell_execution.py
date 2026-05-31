@@ -7,6 +7,7 @@ from datetime import date
 from trading_bot.config import TradingSettings
 from trading_bot.models import BotLog, SellIntent, TradeRecord
 from trading_bot.ports import DailyRepository
+from trading_bot.strategy_metadata import strategy_metadata_from_settings
 
 SellSubmitter = Callable[[SellIntent], dict[str, object]]
 
@@ -32,6 +33,7 @@ class SellIntentExecutor:
         submitted = list(intents)
         successful: list[SellIntent] = []
         trades: list[TradeRecord] = []
+        strategy_metadata = strategy_metadata_from_settings(self.settings)
         for intent in submitted:
             retry_count = self._submit_with_retry(intent)
             if retry_count is None:
@@ -54,6 +56,9 @@ class SellIntentExecutor:
                     order_qty=intent.quantity,
                     filled_qty=0,
                     remaining_qty=intent.quantity,
+                    strategy_version=strategy_metadata.strategy_version,
+                    settings_snapshot_hash=strategy_metadata.settings_snapshot_hash,
+                    settings_snapshot_json=strategy_metadata.settings_snapshot_json,
                 )
             )
         self.repository.save_trades(trades)

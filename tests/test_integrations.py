@@ -231,6 +231,9 @@ def test_sql_repository_writes_daily_rows_and_logs() -> None:
             None,
             None,
             None,
+            "",
+            "",
+            "",
         )
     ]
     assert all(connection.closed for connection in connections)
@@ -257,7 +260,10 @@ def test_sql_repository_writes_daily_run_summary() -> None:
     assert "IF EXISTS" in cursor.calls[1][0]
     assert cursor.calls[1][1][1] == "hybrid"
     assert '"minTotalScore": 40' in cursor.calls[1][1][2]
-    assert cursor.calls[1][1][3:9] == (12.5, 3.4, 2, 1, 4, 3)
+    assert cursor.calls[1][1][3] == "LEGACY_RELAXED"
+    assert len(cursor.calls[1][1][4]) == 64
+    assert '"strategyVersion": "LEGACY_RELAXED"' in cursor.calls[1][1][5]
+    assert cursor.calls[1][1][6:12] == (12.5, 3.4, 2, 1, 4, 3)
 
 
 def test_sql_monitor_run_summaries_ignore_history_date() -> None:
@@ -559,6 +565,9 @@ def test_sql_repository_writes_fill_rows_without_duplicates() -> None:
         None,
         None,
         None,
+        "",
+        "",
+        "",
         date(2026, 5, 22),
         "22:41:10",
         "AAA",
@@ -581,6 +590,9 @@ def test_sql_repository_writes_fill_rows_without_duplicates() -> None:
         None,
         None,
         True,
+        "",
+        "",
+        "",
     )
 
 

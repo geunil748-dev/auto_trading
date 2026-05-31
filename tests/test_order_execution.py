@@ -3,6 +3,7 @@ from datetime import date
 from trading_bot.config import TradingSettings
 from trading_bot.models import BotLog, BuyIntent, TradeRecord
 from trading_bot.order_execution import BuyIntentExecutor
+from trading_bot.strategy_metadata import strategy_metadata_from_settings
 
 
 class Repository:
@@ -20,6 +21,7 @@ class Repository:
 def test_buy_intent_executor_submits_and_records_mock_orders() -> None:
     submitted: list[BuyIntent] = []
     repository = Repository()
+    metadata = strategy_metadata_from_settings(TradingSettings())
     executor = BuyIntentExecutor(
         submit_order=lambda intent: submitted.append(intent) or {"ok": True},
         repository=repository,
@@ -43,6 +45,9 @@ def test_buy_intent_executor_submits_and_records_mock_orders() -> None:
             order_qty=2,
             filled_qty=0,
             remaining_qty=2,
+            strategy_version=metadata.strategy_version,
+            settings_snapshot_hash=metadata.settings_snapshot_hash,
+            settings_snapshot_json=metadata.settings_snapshot_json,
         )
     ]
     assert repository.trades == trades

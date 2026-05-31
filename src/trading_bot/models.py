@@ -183,6 +183,9 @@ class TradeRecord:
     reject_reason: str | None = None
     actual_value: float | None = None
     threshold_value: float | None = None
+    strategy_version: str = ""
+    settings_snapshot_hash: str = ""
+    settings_snapshot_json: str = ""
 
 
 @dataclass(frozen=True)
@@ -201,3 +204,16 @@ class FillRecord:
     entry_reason: str | None = None
     entry_reason_detail: str | None = None
     is_mock: bool = True
+    strategy_version: str = ""
+    settings_snapshot_hash: str = ""
+    settings_snapshot_json: str = ""
+
+
+@dataclass(frozen=True)
+class EntryProfitSnapshot:
+    trade_date: date
+    ticker: str
+    ticker_name: str
+    entry_time: str
+    entry_price_usd: float
+    strategy_version: str = ""
