@@ -4,6 +4,7 @@
 .kis-token.json
 .kis-token-*.json
 .pytest_cache/
+.yfinance-cache/
 __pycache__/
 *.py[cod]
 .venv/
