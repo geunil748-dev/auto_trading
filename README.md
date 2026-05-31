@@ -46,6 +46,9 @@ For a Windows 11 Home notebook running as a local 24-hour server, see
 For automatic server updates from `origin/main`, see
 [docs/auto_update.md](docs/auto_update.md).
 
+For sharing one KIS access token across the real and test servers, see
+[docs/kis_token_cache.md](docs/kis_token_cache.md).
+
 ## Trading Bot Phase 2
 
 This repository starts the mock-trading foundation described in the planning
