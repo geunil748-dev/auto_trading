@@ -165,6 +165,38 @@ def test_adaptive_screening_relaxes_filters_until_enough_candidates() -> None:
     assert {item.ticker for item in selected} == {"CHANGE", "VOLUME", "GAP"}
 
 
+def test_opening_change_only_relax_keeps_other_filters_strict() -> None:
+    snapshots = {
+        "OPENING": candidate("OPENING", change=0.02, volume_ratio=1.8),
+        "PRICE": candidate("PRICE", price=4.0, change=0.02, volume_ratio=1.8),
+        "VOLUME": candidate("VOLUME", change=0.02, volume_ratio=1.0),
+        "GAP": candidate("GAP", open_price=12.6, change=0.02, volume_ratio=1.8),
+    }
+
+    selected = adaptive_ranking_intersection(
+        [
+            RankedStock("OPENING", 1),
+            RankedStock("PRICE", 2),
+            RankedStock("VOLUME", 3),
+            RankedStock("GAP", 4),
+        ],
+        [
+            RankedStock("OPENING", 1),
+            RankedStock("PRICE", 2),
+            RankedStock("VOLUME", 3),
+            RankedStock("GAP", 4),
+        ],
+        snapshots,
+        TradingSettings(
+            allow_relaxed_candidate_filter=False,
+            relax_opening_change_only=True,
+            min_selected_candidates=1,
+        ),
+    )
+
+    assert [item.ticker for item in selected] == ["OPENING"]
+
+
 def test_scoring_uses_positive_news_ratio_and_score_sizing() -> None:
     score = news_score([Sentiment.POSITIVE, Sentiment.NEUTRAL, Sentiment.POSITIVE])
     settings = TradingSettings(min_total_score=40)

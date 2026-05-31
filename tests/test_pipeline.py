@@ -83,6 +83,24 @@ class EmptyMarketData:
         return {}
 
 
+class RelaxableMarketData:
+    def __init__(self) -> None:
+        self.snapshot_requests: list[set[str]] = []
+
+    def market_context(self) -> MarketContext:
+        return MarketContext(101, 100, 0.01)
+
+    def ranked_gainers(self) -> tuple[RankedStock, ...]:
+        return (RankedStock("AAA", 1),)
+
+    def ranked_turnover(self) -> tuple[RankedStock, ...]:
+        return (RankedStock("AAA", 1),)
+
+    def candidate_snapshots(self, tickers: set[str]) -> dict[str, CandidateSnapshot]:
+        self.snapshot_requests.append(tickers)
+        return {"AAA": snapshot("AAA", price=4.0)}
+
+
 class Scoring:
     def __init__(self) -> None:
         self.called = 0
@@ -104,13 +122,14 @@ def account() -> AccountState:
 
 def snapshot(
     ticker: str,
+    price: float = 12,
     volume_ratio: float = 1.8,
     gain_rank: int = 1,
     turnover_rank: int = 1,
 ) -> CandidateSnapshot:
     return CandidateSnapshot(
         ticker=ticker,
-        price_usd=12,
+        price_usd=price,
         open_price_usd=11,
         previous_close_usd=10,
         opening_price_change=0.04,
@@ -139,7 +158,8 @@ def test_pipeline_screens_scores_and_persists_selected_candidates() -> None:
     assert [item.score.ticker for item in repository.scores] == ["AAA", "BBB"]
     assert [item.ticker for item in run.selected] == ["AAA", "BBB"]
     assert repository.logs[-1].message == "Screened 2 targets and selected 2."
-    assert repository.logs[-2].message == "Filter rejects: LOW_OPENING_VOLUME=1, MISSING_SNAPSHOT=2."
+    assert repository.logs[-2].message == "CANDIDATE_SNAPSHOT_SAVED: 후보 2건을 DB에 저장했습니다."
+    assert repository.logs[-3].message == "Filter rejects: LOW_OPENING_VOLUME=1, MISSING_SNAPSHOT=2."
 
 
 def test_pipeline_logs_and_skips_market_calls_when_global_gate_blocks_entry() -> None:
@@ -187,7 +207,74 @@ def test_pipeline_handles_zero_listed_candidates_without_error() -> None:
     assert repository.scores == []
     assert scoring.called == 0
     assert all(request == set() for request in market_data.snapshot_requests)
-    assert repository.logs[-2:] == [
+    assert repository.logs[-4:] == [
         BotLog("INFO", "screening", "Filter rejects: none."),
+        BotLog("INFO", "screening", "CANDIDATE_SNAPSHOT_SAVED: 후보 0건을 DB에 저장했습니다.", actual_value=0.0),
+        BotLog(
+            "WARNING",
+            "screening",
+            "CANDIDATE_SNAPSHOT_EMPTY: 후보 0건으로 수집이 완료되었습니다.",
+            reject_reason="CANDIDATE_SNAPSHOT_EMPTY",
+            actual_value=0.0,
+            threshold_value=3.0,
+        ),
+        BotLog("INFO", "pipeline", "Screened 0 targets and selected 0."),
+    ]
+
+
+def test_pipeline_keeps_relaxed_candidate_filter_by_default() -> None:
+    market_data = RelaxableMarketData()
+    repository = Repository()
+
+    run = ScreeningScoringPipeline(
+        market_data,
+        Scoring(),
+        AccountReader(account()),
+        repository,
+        FixedClock(),
+        TradingSettings(
+            min_selected_candidates=1,
+            max_selected_candidates=1,
+            allow_relaxed_candidate_filter=True,
+        ),
+    ).run()
+
+    assert [item.candidate.ticker for item in repository.targets] == ["AAA"]
+    assert [item.ticker for item in run.selected] == ["AAA"]
+
+
+def test_pipeline_strict_filter_blocks_shortfall_candidates() -> None:
+    market_data = RelaxableMarketData()
+    repository = Repository()
+    scoring = Scoring()
+
+    run = ScreeningScoringPipeline(
+        market_data,
+        scoring,
+        AccountReader(account()),
+        repository,
+        FixedClock(),
+        TradingSettings(
+            min_selected_candidates=1,
+            max_selected_candidates=1,
+            allow_relaxed_candidate_filter=False,
+        ),
+    ).run()
+
+    assert run.blocked_reason == "STRICT_FILTER_NO_CANDIDATES"
+    assert run.targets == ()
+    assert run.scores == ()
+    assert run.selected == ()
+    assert scoring.called == 0
+    assert repository.scores == []
+    assert repository.logs[-2:] == [
+        BotLog(
+            "WARNING",
+            "screening",
+            "STRICT_FILTER_NO_CANDIDATES: 엄격 필터 기준을 만족한 후보가 부족합니다.",
+            reject_reason="STRICT_FILTER_NO_CANDIDATES",
+            actual_value=0.0,
+            threshold_value=1.0,
+        ),
         BotLog("INFO", "pipeline", "Screened 0 targets and selected 0."),
     ]

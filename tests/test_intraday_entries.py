@@ -43,14 +43,28 @@ def test_intraday_entries_allow_profitable_pyramiding_once() -> None:
         add_on_tickers=[],
         unfilled_tickers=[],
         completed_rounds=0,
-        settings=TradingSettings(),
+        settings=TradingSettings(enable_pyramiding=True),
     )
 
     assert [item.ticker for item in intents] == ["AAA"]
 
 
+def test_intraday_entries_block_pyramiding_when_disabled() -> None:
+    intents = limited_intraday_buy_intents(
+        [intent("AAA")],
+        positions=[PositionState("AAA", 10, 1, 10.31, 10.31)],
+        submitted_tickers=["AAA"],
+        add_on_tickers=[],
+        unfilled_tickers=[],
+        completed_rounds=0,
+        settings=TradingSettings(enable_pyramiding=False),
+    )
+
+    assert intents == []
+
+
 def test_intraday_entries_block_unfilled_or_repeated_pyramiding() -> None:
-    settings = TradingSettings()
+    settings = TradingSettings(enable_pyramiding=True)
 
     assert limited_intraday_buy_intents(
         [intent("AAA")],

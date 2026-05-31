@@ -64,7 +64,11 @@ class ScreeningScoringPipeline:
         }
         snapshots = self.market_data.candidate_snapshots(requested_tickers)
         candidates = adaptive_ranking_intersection(gainers, turnover, snapshots, self.settings)
-        if len(candidates) < self.settings.min_selected_candidates:
+        strict_shortfall = (
+            not self.settings.allow_relaxed_candidate_filter
+            and len(candidates) < self.settings.min_selected_candidates
+        )
+        if len(candidates) < self.settings.min_selected_candidates and not strict_shortfall:
             for rank_limit in (5, 10, 15):
                 expanded_tickers = _expanded_tickers(gainers, turnover, rank_limit)
                 snapshots = {
@@ -94,7 +98,57 @@ class ScreeningScoringPipeline:
                     break
         self._save_screening_diagnostics(requested_tickers, snapshots)
         targets = tuple(DailyTarget(trade_date, item) for item in candidates)
-        self.repository.save_daily_targets(targets)
+        try:
+            self.repository.save_daily_targets(targets)
+        except Exception as exc:
+            self._safe_log(
+                BotLog(
+                    "ERROR",
+                    "screening",
+                    f"CANDIDATE_SNAPSHOT_SAVE_FAILED: 후보 저장에 실패했습니다. ({exc})",
+                    actual_value=float(len(targets)),
+                )
+            )
+            raise
+        self.repository.save_log(
+            BotLog(
+                "INFO",
+                "screening",
+                f"CANDIDATE_SNAPSHOT_SAVED: 후보 {len(targets)}건을 DB에 저장했습니다.",
+                actual_value=float(len(targets)),
+            )
+        )
+        if not targets:
+            self.repository.save_log(
+                BotLog(
+                    "WARNING",
+                    "screening",
+                    "CANDIDATE_SNAPSHOT_EMPTY: 후보 0건으로 수집이 완료되었습니다.",
+                    reject_reason="CANDIDATE_SNAPSHOT_EMPTY",
+                    actual_value=0.0,
+                    threshold_value=float(self.settings.min_selected_candidates),
+                )
+            )
+
+        if strict_shortfall:
+            self.repository.save_log(
+                BotLog(
+                    "WARNING",
+                    "screening",
+                    "STRICT_FILTER_NO_CANDIDATES: 엄격 필터 기준을 만족한 후보가 부족합니다.",
+                    reject_reason="STRICT_FILTER_NO_CANDIDATES",
+                    actual_value=float(len(candidates)),
+                    threshold_value=float(self.settings.min_selected_candidates),
+                )
+            )
+            self.repository.save_log(
+                BotLog(
+                    "INFO",
+                    "pipeline",
+                    f"Screened {len(targets)} targets and selected 0.",
+                )
+            )
+            return ScoringRun(trade_date, "STRICT_FILTER_NO_CANDIDATES", targets, ())
 
         if not entry_gate.allowed:
             self.repository.save_log(
@@ -136,6 +190,12 @@ class ScreeningScoringPipeline:
         self.repository.save_log(
             BotLog("INFO", "screening", f"Filter rejects: {summary or 'none'}.")
         )
+
+    def _safe_log(self, log: BotLog) -> None:
+        try:
+            self.repository.save_log(log)
+        except Exception:
+            pass
 
 
 def _expanded_tickers(gainers, turnover, rank_limit: int) -> set[str]:

@@ -55,6 +55,8 @@ def _pyramiding_allowed(
     add_on_tickers: set[str],
     settings: TradingSettings,
 ) -> bool:
+    if not settings.enable_pyramiding:
+        return False
     return (
         position.profit_rate >= settings.min_pyramiding_profit_rate
         and ticker not in add_on_tickers

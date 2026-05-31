@@ -92,6 +92,79 @@ def test_load_settings_reads_p1_stability_settings(tmp_path, monkeypatch) -> Non
     assert settings.unfilled_cancel_after_seconds == 90
 
 
+def test_load_settings_keeps_current_strategy_defaults(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in (
+        "MSSQL_DSN",
+        "MSSQL_HOST",
+        "MSSQL_DATABASE",
+        "MSSQL_USERNAME",
+        "MSSQL_PASSWORD",
+    ):
+        monkeypatch.setenv(name, "")
+    monkeypatch.setenv("STRATEGY_PRESET", "current")
+    monkeypatch.setenv("TAKE_PROFIT_RATE", "0.05")
+    monkeypatch.setenv("TRAILING_STOP_ACTIVATION_RATE", "0.03")
+    monkeypatch.setenv("ALLOW_RELAXED_CANDIDATE_FILTER", "true")
+    monkeypatch.setenv("ENABLE_PYRAMIDING", "false")
+
+    settings = load_settings()
+
+    assert settings.strategy_preset == "current"
+    assert settings.max_position_loss == -0.05
+    assert settings.take_profit_rate == 0.05
+    assert settings.trailing_stop_activation_rate == 0.03
+    assert settings.trailing_stop_drop == 0.03
+    assert settings.allow_relaxed_candidate_filter is True
+    assert settings.enable_pyramiding is False
+
+
+def test_load_settings_applies_conservative_intraday_preset(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in (
+        "MSSQL_DSN",
+        "MSSQL_HOST",
+        "MSSQL_DATABASE",
+        "MSSQL_USERNAME",
+        "MSSQL_PASSWORD",
+    ):
+        monkeypatch.setenv(name, "")
+    monkeypatch.setenv("STRATEGY_PRESET", "conservative_intraday")
+    monkeypatch.setenv("TAKE_PROFIT_RATE", "0.05")
+    monkeypatch.setenv("TRAILING_STOP_ACTIVATION_RATE", "0.03")
+
+    settings = load_settings()
+
+    assert settings.strategy_preset == "conservative_intraday"
+    assert settings.max_position_loss == -0.025
+    assert settings.take_profit_rate == 0.03
+    assert settings.trailing_stop_activation_rate == 0.02
+    assert settings.trailing_stop_drop == 0.015
+
+
+def test_load_settings_applies_balanced_intraday_preset(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in (
+        "MSSQL_DSN",
+        "MSSQL_HOST",
+        "MSSQL_DATABASE",
+        "MSSQL_USERNAME",
+        "MSSQL_PASSWORD",
+    ):
+        monkeypatch.setenv(name, "")
+    monkeypatch.setenv("STRATEGY_PRESET", "balanced_intraday")
+    monkeypatch.setenv("RELAX_OPENING_CHANGE_ONLY", "true")
+
+    settings = load_settings()
+
+    assert settings.strategy_preset == "balanced_intraday"
+    assert settings.max_position_loss == -0.035
+    assert settings.take_profit_rate == 0.04
+    assert settings.trailing_stop_activation_rate == 0.025
+    assert settings.trailing_stop_drop == 0.02
+    assert settings.relax_opening_change_only is True
+
+
 def test_load_notification_settings_reads_optional_alert_channels(monkeypatch) -> None:
     monkeypatch.setenv("ALERT_DISCORD_WEBHOOK_URL", "https://discord.example")
     monkeypatch.setenv("ALERT_TELEGRAM_BOT_TOKEN", "telegram-token")
@@ -163,3 +236,6 @@ def test_runtime_risk_settings_override_env_values(tmp_path, monkeypatch) -> Non
     assert runtime_risk_settings_payload(settings)["require5mVolumeIncrease"] is True
     assert runtime_risk_settings_payload(settings)["requireVwapOrMa20"] is True
     assert runtime_risk_settings_payload(settings)["requirePullbackRebreak"] is True
+    assert runtime_risk_settings_payload(settings)["strategyPreset"] == "current"
+    assert runtime_risk_settings_payload(settings)["allowRelaxedCandidateFilter"] is True
+    assert runtime_risk_settings_payload(settings)["enablePyramiding"] is False

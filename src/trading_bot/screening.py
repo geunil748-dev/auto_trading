@@ -35,6 +35,17 @@ def adaptive_ranking_intersection(
     settings: TradingSettings,
     limit: int | None = None,
 ) -> list[CandidateSnapshot]:
+    if not settings.allow_relaxed_candidate_filter:
+        if settings.relax_opening_change_only:
+            return opening_change_relaxed_intersection(
+                gainers,
+                turnover,
+                snapshots,
+                settings,
+                limit,
+            )
+        return ranking_intersection(gainers, turnover, snapshots, settings, limit)
+
     max_count = limit or settings.max_selected_candidates
     min_count = min(settings.min_selected_candidates, max_count)
     gain_ranks = {item.ticker: item.rank for item in gainers}
@@ -68,6 +79,30 @@ def adaptive_ranking_intersection(
     )
     candidates.sort(key=lambda item: (-screening_priority_score(item), item.ticker))
     return candidates[:max_count]
+
+
+def opening_change_relaxed_intersection(
+    gainers: Iterable[RankedStock],
+    turnover: Iterable[RankedStock],
+    snapshots: Mapping[str, CandidateSnapshot],
+    settings: TradingSettings,
+    limit: int | None = None,
+) -> list[CandidateSnapshot]:
+    gain_ranks = {item.ticker: item.rank for item in gainers}
+    turnover_ranks = {item.ticker: item.rank for item in turnover}
+    common_tickers = gain_ranks.keys() & turnover_ranks.keys() & snapshots.keys()
+    opening_change_floor = _relaxed_opening_change_threshold(settings)
+    screened = [
+        snapshots[ticker]
+        for ticker in common_tickers
+        if _passes_opening_change_only_relax(
+            snapshots[ticker],
+            settings,
+            opening_change_floor,
+        )
+    ]
+    screened.sort(key=lambda item: (-screening_priority_score(item), item.ticker))
+    return screened[: limit or settings.max_selected_candidates]
 
 
 def screening_priority_score(candidate: CandidateSnapshot) -> float:
@@ -187,3 +222,21 @@ def _gap_stages(settings: TradingSettings) -> tuple[float, ...]:
         0.40,
         1.00,
     )
+
+
+def _passes_opening_change_only_relax(
+    candidate: CandidateSnapshot,
+    settings: TradingSettings,
+    opening_change_floor: float,
+) -> bool:
+    return (
+        candidate.opening_volume_ratio >= settings.min_volume_ratio
+        and candidate.opening_price_change >= opening_change_floor
+        and defensive_candidate_gate(candidate, settings).reason is None
+    )
+
+
+def _relaxed_opening_change_threshold(settings: TradingSettings) -> float:
+    if settings.min_opening_price_change <= 0:
+        return settings.min_opening_price_change
+    return max(0.0001, settings.min_opening_price_change - 0.01)

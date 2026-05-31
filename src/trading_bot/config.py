@@ -11,9 +11,15 @@ except ImportError:  # pragma: no cover - 로컬 규칙 테스트에서 선택 �
     load_dotenv = None
 
 RUNTIME_SETTINGS_PATH = Path("monitor/trading_settings.json")
+
+# 화면에서 조정 가능한 매매 설정 키. 런타임 저장소와 .env 값을 같은 이름으로 맞춘다.
 RUNTIME_SETTING_KEYS = {
     "max_position_loss",
     "take_profit_rate",
+    "strategy_preset",
+    "allow_relaxed_candidate_filter",
+    "relax_opening_change_only",
+    "enable_pyramiding",
     "partial_take_profit_enabled",
     "trailing_stop_activation_rate",
     "min_total_score",
@@ -48,6 +54,14 @@ CANDIDATE_SELECTION_MODES = {
     CANDIDATE_MODE_FIXED,
     CANDIDATE_MODE_HYBRID,
 }
+STRATEGY_PRESET_CURRENT = "current"
+STRATEGY_PRESET_CONSERVATIVE_INTRADAY = "conservative_intraday"
+STRATEGY_PRESET_BALANCED_INTRADAY = "balanced_intraday"
+STRATEGY_PRESETS = {
+    STRATEGY_PRESET_CURRENT,
+    STRATEGY_PRESET_CONSERVATIVE_INTRADAY,
+    STRATEGY_PRESET_BALANCED_INTRADAY,
+}
 PARTIAL_FILL_POLICY_KEEP = "KEEP_REMAINING"
 PARTIAL_FILL_POLICY_CANCEL = "CANCEL_REMAINING"
 PARTIAL_FILL_POLICIES = {PARTIAL_FILL_POLICY_KEEP, PARTIAL_FILL_POLICY_CANCEL}
@@ -65,6 +79,10 @@ class TradingSettings:
     max_position_exposure: float = 0.20
     max_position_loss: float = -0.05
     take_profit_rate: float = 0.05
+    strategy_preset: str = STRATEGY_PRESET_CURRENT
+    allow_relaxed_candidate_filter: bool = True
+    relax_opening_change_only: bool = False
+    enable_pyramiding: bool = False
     partial_take_profit_enabled: bool = True
     trailing_stop_activation_rate: float = 0.03
     max_daily_account_loss: float = -0.03
@@ -181,6 +199,10 @@ def load_settings() -> TradingSettings:
         unfilled_cancel_after_seconds=_int_env("UNFILLED_CANCEL_AFTER_SECONDS", 60),
         news_cache_ttl_minutes=_int_env("NEWS_CACHE_TTL_MINUTES", 30),
         take_profit_rate=_float_env("TAKE_PROFIT_RATE", 0.05),
+        strategy_preset=_strategy_preset_env(),
+        allow_relaxed_candidate_filter=_bool_env("ALLOW_RELAXED_CANDIDATE_FILTER", True),
+        relax_opening_change_only=_bool_env("RELAX_OPENING_CHANGE_ONLY", False),
+        enable_pyramiding=_bool_env("ENABLE_PYRAMIDING", False),
         partial_take_profit_enabled=_bool_env("PARTIAL_TAKE_PROFIT_ENABLED", True),
         trailing_stop_activation_rate=_float_env("TRAILING_STOP_ACTIVATION_RATE", 0.03),
         real_trading_enabled=_bool_env("REAL_TRADING_ENABLED", False),
@@ -188,7 +210,7 @@ def load_settings() -> TradingSettings:
         real_max_daily_order_krw=_int_env("REAL_MAX_DAILY_ORDER_KRW", 300000),
         real_emergency_stop=_bool_env("REAL_EMERGENCY_STOP", True),
     )
-    return _apply_runtime_settings(settings)
+    return _apply_strategy_preset(_apply_runtime_settings(settings))
 
 
 def runtime_risk_settings_payload(
@@ -200,6 +222,10 @@ def runtime_risk_settings_payload(
         "stopLossPercent": abs(current.max_position_loss * 100),
         "takeProfitRate": current.take_profit_rate,
         "takeProfitPercent": current.take_profit_rate * 100,
+        "strategyPreset": current.strategy_preset,
+        "allowRelaxedCandidateFilter": bool(current.allow_relaxed_candidate_filter),
+        "relaxOpeningChangeOnly": bool(current.relax_opening_change_only),
+        "enablePyramiding": bool(current.enable_pyramiding),
         "partialTakeProfitEnabled": bool(current.partial_take_profit_enabled),
         "trailingStopActivationRate": current.trailing_stop_activation_rate,
         "trailingStopActivationPercent": current.trailing_stop_activation_rate * 100,
@@ -255,6 +281,10 @@ def save_runtime_risk_settings(
     order_retry_delay_seconds: float | None = None,
     partial_fill_policy: str | None = None,
     unfilled_cancel_after_seconds: float | None = None,
+    strategy_preset: str | None = None,
+    allow_relaxed_candidate_filter: bool | None = None,
+    relax_opening_change_only: bool | None = None,
+    enable_pyramiding: bool | None = None,
     path: Path = RUNTIME_SETTINGS_PATH,
 ) -> dict[str, float]:
     stop = _validate_percent(stop_loss_percent, "손절 비율")
@@ -264,6 +294,16 @@ def save_runtime_risk_settings(
         "max_position_loss": -(stop / 100),
         "take_profit_rate": profit / 100,
     })
+    if strategy_preset is not None:
+        payload["strategy_preset"] = _strategy_preset_to_float(strategy_preset)
+    if allow_relaxed_candidate_filter is not None:
+        payload["allow_relaxed_candidate_filter"] = (
+            1.0 if allow_relaxed_candidate_filter else 0.0
+        )
+    if relax_opening_change_only is not None:
+        payload["relax_opening_change_only"] = 1.0 if relax_opening_change_only else 0.0
+    if enable_pyramiding is not None:
+        payload["enable_pyramiding"] = 1.0 if enable_pyramiding else 0.0
     if min_total_score is not None:
         payload["min_total_score"] = _validate_score(min_total_score, "선정점수")
     if min_price_usd is not None or max_price_usd is not None:
@@ -354,114 +394,134 @@ def save_runtime_risk_settings(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     current = load_settings()
-    return runtime_risk_settings_payload(
-        replace(
-            current,
-            max_position_loss=payload["max_position_loss"],
-            take_profit_rate=payload["take_profit_rate"],
-            min_total_score=payload.get("min_total_score", current.min_total_score),
-            min_price_usd=payload.get("min_price_usd", current.min_price_usd),
-            max_price_usd=payload.get("max_price_usd", current.max_price_usd),
-            min_opening_price_change=payload.get(
-                "min_opening_price_change",
-                current.min_opening_price_change,
-            ),
-            min_volume_ratio=payload.get("min_volume_ratio", current.min_volume_ratio),
-            max_opening_gap=payload.get("max_opening_gap", current.max_opening_gap),
-            refresh_intraday_candidates=bool(
-                payload.get(
-                    "refresh_intraday_candidates",
-                    float(current.refresh_intraday_candidates),
-                )
-            ),
-            candidate_selection_mode=_candidate_mode_from_float(
-                payload.get(
-                    "candidate_selection_mode",
-                    _candidate_mode_to_float(current.candidate_selection_mode),
-                )
-            ),
-            partial_take_profit_enabled=bool(
-                payload.get(
-                    "partial_take_profit_enabled",
-                    float(current.partial_take_profit_enabled),
-                )
-            ),
-            trailing_stop_activation_rate=payload.get(
-                "trailing_stop_activation_rate",
-                current.trailing_stop_activation_rate,
-            ),
-            max_entry_price_change=payload.get(
-                "max_entry_price_change",
-                current.max_entry_price_change,
-            ),
-            breakout_hold_minutes=payload.get(
-                "breakout_hold_minutes",
-                current.breakout_hold_minutes,
-            ),
-            require_5m_close_above_breakout=bool(
-                payload.get(
-                    "require_5m_close_above_breakout",
-                    float(current.require_5m_close_above_breakout),
-                )
-            ),
-            require_5m_volume_increase=bool(
-                payload.get(
-                    "require_5m_volume_increase",
-                    float(current.require_5m_volume_increase),
-                )
-            ),
-            require_vwap_or_ma20=bool(
-                payload.get("require_vwap_or_ma20", float(current.require_vwap_or_ma20))
-            ),
-            require_pullback_rebreak=bool(
-                payload.get(
-                    "require_pullback_rebreak",
-                    float(current.require_pullback_rebreak),
-                )
-            ),
-            stop_loss_cooldown_minutes=int(
-                payload.get(
-                    "stop_loss_cooldown_minutes",
-                    current.stop_loss_cooldown_minutes,
-                )
-            ),
-            max_consecutive_stop_loss_count=int(
-                payload.get(
-                    "max_consecutive_stop_loss_count",
-                    current.max_consecutive_stop_loss_count,
-                )
-            ),
-            max_bid_ask_spread_rate=payload.get(
-                "max_bid_ask_spread_rate",
-                current.max_bid_ask_spread_rate,
-            ),
-            max_expected_fill_price_gap_rate=payload.get(
-                "max_expected_fill_price_gap_rate",
-                current.max_expected_fill_price_gap_rate,
-            ),
-            max_order_retry_count=int(
-                payload.get("max_order_retry_count", current.max_order_retry_count)
-            ),
-            order_retry_delay_seconds=int(
-                payload.get(
-                    "order_retry_delay_seconds",
-                    current.order_retry_delay_seconds,
-                )
-            ),
-            partial_fill_policy=_partial_fill_policy_from_float(
-                payload.get(
-                    "partial_fill_policy",
-                    _partial_fill_policy_to_float(current.partial_fill_policy),
-                )
-            ),
-            unfilled_cancel_after_seconds=int(
-                payload.get(
-                    "unfilled_cancel_after_seconds",
-                    current.unfilled_cancel_after_seconds,
-                )
-            ),
-        )
+    updated = replace(
+        current,
+        max_position_loss=payload["max_position_loss"],
+        take_profit_rate=payload["take_profit_rate"],
+        strategy_preset=_strategy_preset_from_float(
+            payload.get(
+                "strategy_preset",
+                _strategy_preset_to_float(current.strategy_preset),
+            )
+        ),
+        allow_relaxed_candidate_filter=bool(
+            payload.get(
+                "allow_relaxed_candidate_filter",
+                float(current.allow_relaxed_candidate_filter),
+            )
+        ),
+        relax_opening_change_only=bool(
+            payload.get(
+                "relax_opening_change_only",
+                float(current.relax_opening_change_only),
+            )
+        ),
+        enable_pyramiding=bool(
+            payload.get("enable_pyramiding", float(current.enable_pyramiding))
+        ),
+        min_total_score=payload.get("min_total_score", current.min_total_score),
+        min_price_usd=payload.get("min_price_usd", current.min_price_usd),
+        max_price_usd=payload.get("max_price_usd", current.max_price_usd),
+        min_opening_price_change=payload.get(
+            "min_opening_price_change",
+            current.min_opening_price_change,
+        ),
+        min_volume_ratio=payload.get("min_volume_ratio", current.min_volume_ratio),
+        max_opening_gap=payload.get("max_opening_gap", current.max_opening_gap),
+        refresh_intraday_candidates=bool(
+            payload.get(
+                "refresh_intraday_candidates",
+                float(current.refresh_intraday_candidates),
+            )
+        ),
+        candidate_selection_mode=_candidate_mode_from_float(
+            payload.get(
+                "candidate_selection_mode",
+                _candidate_mode_to_float(current.candidate_selection_mode),
+            )
+        ),
+        partial_take_profit_enabled=bool(
+            payload.get(
+                "partial_take_profit_enabled",
+                float(current.partial_take_profit_enabled),
+            )
+        ),
+        trailing_stop_activation_rate=payload.get(
+            "trailing_stop_activation_rate",
+            current.trailing_stop_activation_rate,
+        ),
+        max_entry_price_change=payload.get(
+            "max_entry_price_change",
+            current.max_entry_price_change,
+        ),
+        breakout_hold_minutes=payload.get(
+            "breakout_hold_minutes",
+            current.breakout_hold_minutes,
+        ),
+        require_5m_close_above_breakout=bool(
+            payload.get(
+                "require_5m_close_above_breakout",
+                float(current.require_5m_close_above_breakout),
+            )
+        ),
+        require_5m_volume_increase=bool(
+            payload.get(
+                "require_5m_volume_increase",
+                float(current.require_5m_volume_increase),
+            )
+        ),
+        require_vwap_or_ma20=bool(
+            payload.get("require_vwap_or_ma20", float(current.require_vwap_or_ma20))
+        ),
+        require_pullback_rebreak=bool(
+            payload.get(
+                "require_pullback_rebreak",
+                float(current.require_pullback_rebreak),
+            )
+        ),
+        stop_loss_cooldown_minutes=int(
+            payload.get(
+                "stop_loss_cooldown_minutes",
+                current.stop_loss_cooldown_minutes,
+            )
+        ),
+        max_consecutive_stop_loss_count=int(
+            payload.get(
+                "max_consecutive_stop_loss_count",
+                current.max_consecutive_stop_loss_count,
+            )
+        ),
+        max_bid_ask_spread_rate=payload.get(
+            "max_bid_ask_spread_rate",
+            current.max_bid_ask_spread_rate,
+        ),
+        max_expected_fill_price_gap_rate=payload.get(
+            "max_expected_fill_price_gap_rate",
+            current.max_expected_fill_price_gap_rate,
+        ),
+        max_order_retry_count=int(
+            payload.get("max_order_retry_count", current.max_order_retry_count)
+        ),
+        order_retry_delay_seconds=int(
+            payload.get(
+                "order_retry_delay_seconds",
+                current.order_retry_delay_seconds,
+            )
+        ),
+        partial_fill_policy=_partial_fill_policy_from_float(
+            payload.get(
+                "partial_fill_policy",
+                _partial_fill_policy_to_float(current.partial_fill_policy),
+            )
+        ),
+        unfilled_cancel_after_seconds=int(
+            payload.get(
+                "unfilled_cancel_after_seconds",
+                current.unfilled_cancel_after_seconds,
+            )
+        ),
     )
+    return runtime_risk_settings_payload(_apply_strategy_preset(updated))
 
 
 def load_notification_settings() -> NotificationSettings:
@@ -553,6 +613,10 @@ def _candidate_mode_env() -> str:
     return CANDIDATE_MODE_REFRESH if _bool_env("REFRESH_INTRADAY_CANDIDATES", True) else CANDIDATE_MODE_FIXED
 
 
+def _strategy_preset_env() -> str:
+    return _validate_strategy_preset(os.getenv("STRATEGY_PRESET", STRATEGY_PRESET_CURRENT))
+
+
 def _partial_fill_policy_env() -> str:
     return _validate_partial_fill_policy(os.getenv("PARTIAL_FILL_POLICY", PARTIAL_FILL_POLICY_KEEP))
 
@@ -569,6 +633,14 @@ def _apply_runtime_settings(settings: TradingSettings) -> TradingSettings:
     overrides = _complete_runtime_settings(settings, overrides)
     if "refresh_intraday_candidates" in overrides:
         overrides["refresh_intraday_candidates"] = bool(overrides["refresh_intraday_candidates"])
+    if "allow_relaxed_candidate_filter" in overrides:
+        overrides["allow_relaxed_candidate_filter"] = bool(
+            overrides["allow_relaxed_candidate_filter"]
+        )
+    if "relax_opening_change_only" in overrides:
+        overrides["relax_opening_change_only"] = bool(overrides["relax_opening_change_only"])
+    if "enable_pyramiding" in overrides:
+        overrides["enable_pyramiding"] = bool(overrides["enable_pyramiding"])
     if "partial_take_profit_enabled" in overrides:
         overrides["partial_take_profit_enabled"] = bool(overrides["partial_take_profit_enabled"])
     for key in (
@@ -583,6 +655,8 @@ def _apply_runtime_settings(settings: TradingSettings) -> TradingSettings:
         overrides["candidate_selection_mode"] = _candidate_mode_from_float(
             overrides["candidate_selection_mode"]
         )
+    if "strategy_preset" in overrides:
+        overrides["strategy_preset"] = _strategy_preset_from_float(overrides["strategy_preset"])
     if "partial_fill_policy" in overrides:
         overrides["partial_fill_policy"] = _partial_fill_policy_from_float(
             overrides["partial_fill_policy"]
@@ -611,6 +685,12 @@ def _runtime_settings_from_settings(settings: TradingSettings) -> dict[str, floa
     return {
         "max_position_loss": settings.max_position_loss,
         "take_profit_rate": settings.take_profit_rate,
+        "strategy_preset": _strategy_preset_to_float(settings.strategy_preset),
+        "allow_relaxed_candidate_filter": (
+            1.0 if settings.allow_relaxed_candidate_filter else 0.0
+        ),
+        "relax_opening_change_only": 1.0 if settings.relax_opening_change_only else 0.0,
+        "enable_pyramiding": 1.0 if settings.enable_pyramiding else 0.0,
         "partial_take_profit_enabled": 1.0 if settings.partial_take_profit_enabled else 0.0,
         "trailing_stop_activation_rate": settings.trailing_stop_activation_rate,
         "min_total_score": settings.min_total_score,
@@ -738,6 +818,51 @@ def _candidate_mode_from_float(value: float) -> str:
     if code == 3:
         return CANDIDATE_MODE_HYBRID
     return CANDIDATE_MODE_REFRESH
+
+
+def _validate_strategy_preset(value: str) -> str:
+    preset = str(value).strip().lower()
+    if preset not in STRATEGY_PRESETS:
+        raise ValueError("전략 프리셋은 current 또는 conservative_intraday 중 하나여야 합니다.")
+    return preset
+
+
+def _strategy_preset_to_float(preset: str) -> float:
+    validated = _validate_strategy_preset(preset)
+    if validated == STRATEGY_PRESET_CONSERVATIVE_INTRADAY:
+        return 2.0
+    if validated == STRATEGY_PRESET_BALANCED_INTRADAY:
+        return 3.0
+    return 1.0
+
+
+def _strategy_preset_from_float(value: float) -> str:
+    code = int(float(value))
+    if code == 2:
+        return STRATEGY_PRESET_CONSERVATIVE_INTRADAY
+    if code == 3:
+        return STRATEGY_PRESET_BALANCED_INTRADAY
+    return STRATEGY_PRESET_CURRENT
+
+
+def _apply_strategy_preset(settings: TradingSettings) -> TradingSettings:
+    if settings.strategy_preset == STRATEGY_PRESET_CONSERVATIVE_INTRADAY:
+        return replace(
+            settings,
+            max_position_loss=-0.025,
+            take_profit_rate=0.03,
+            trailing_stop_activation_rate=0.02,
+            trailing_stop_drop=0.015,
+        )
+    if settings.strategy_preset == STRATEGY_PRESET_BALANCED_INTRADAY:
+        return replace(
+            settings,
+            max_position_loss=-0.035,
+            take_profit_rate=0.04,
+            trailing_stop_activation_rate=0.025,
+            trailing_stop_drop=0.02,
+        )
+    return settings
 
 
 def _validate_partial_fill_policy(value: str) -> str:
