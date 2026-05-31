@@ -2,9 +2,9 @@
 
 주식 자동 매도/매수 모의투자 시스템입니다.
 
-## 빠른 시작: Windows / AWS Windows
+## 빠른 시작: Windows 로컬 서버
 
-새 PC나 AWS Windows 서버에서 저장소를 받은 뒤 아래 순서로 진행합니다.
+새 Windows PC나 로컬 서버 노트북에서 저장소를 받은 뒤 아래 순서로 진행합니다.
 민감정보가 들어가는 `.env`는 GitHub에 올리지 않고 서버마다 직접 만듭니다.
 
 ```powershell
@@ -29,13 +29,6 @@ DB 테이블까지 초기화하려면 `.env` 입력 후 아래 명령을 실행�
 .\tools\windows_setup_scheduler\setup_windows.ps1 -SkipInstall -RegisterTasks -ReplaceTasks -StartNow
 ```
 
-AWS Windows 서버에서 관리자 PowerShell을 사용할 수 있다면 부팅 시 자동 실행되는
-SYSTEM 방식으로 등록할 수 있습니다.
-
-```powershell
-.\tools\windows_setup_scheduler\setup_windows.ps1 -SkipInstall -RegisterTasks -RunAs System -ReplaceTasks -StartNow
-```
-
 자세한 실행 순서는 [tools/windows_setup_scheduler/README.txt](tools/windows_setup_scheduler/README.txt)에도
 별도로 정리되어 있습니다.
 
@@ -46,6 +39,9 @@ SYSTEM 방식으로 등록할 수 있습니다.
 
 로컬 PC나 노트북에서 운영할 때는 장중 절전모드가 들어가지 않도록 전원 설정을
 꺼두어야 합니다.
+
+For a Windows 11 Home notebook running as a local 24-hour server, see
+[docs/local_windows_server.md](docs/local_windows_server.md).
 
 ## Trading Bot Phase 2
 
@@ -230,15 +226,3 @@ verified source.
 The browser monitor lives in `monitor/`. It first requests `/api/state` from
 the local monitor server and falls back to `state.json` if the API is not
 available.
-
-## AWS connection check
-
-This project does not deploy anything to AWS yet. To prepare for a later EC2
-move, install AWS CLI v2, add the AWS values to `.env`, then run:
-
-```powershell
-tools/check_aws_connection.ps1
-```
-
-The script only calls `aws sts get-caller-identity`, so it verifies credentials
-and account access without creating or uploading resources.

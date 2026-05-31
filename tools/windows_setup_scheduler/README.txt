@@ -1,7 +1,7 @@
 auto_trading Windows 세팅 가이드
 ================================
 
-이 폴더는 새 Windows PC, 안 쓰는 노트북, AWS Windows 서버에서
+이 폴더는 새 Windows PC나 안 쓰는 노트북에서
 auto_trading을 바로 세팅하기 위한 스크립트 모음입니다.
 
 
@@ -71,18 +71,7 @@ Windows 로그인 시 자동으로 모니터와 자동매매 스케줄러가 실
 이 방식은 현재 사용자 로그인 후 자동 실행됩니다.
 
 
-4. AWS Windows 서버에서 자동 실행 등록
--------------------------------------
-
-AWS Windows 서버에서 로그인 없이 부팅 시 자동 실행되게 하려면
-PowerShell을 관리자 권한으로 열고 아래 명령을 실행합니다.
-
-   powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup_scheduler\setup_windows.ps1 -SkipInstall -RegisterTasks -RunAs System -ReplaceTasks -StartNow
-
-이 방식은 SYSTEM 계정으로 등록됩니다.
-
-
-5. 접속 주소
+4. 접속 주소
 ------------
 
 서비스가 실행되면 브라우저에서 아래 주소로 접속합니다.
@@ -103,5 +92,4 @@ PowerShell을 관리자 권한으로 열고 아래 명령을 실행합니다.
 - .env, 토큰 파일, logs, .venv는 GitHub에 올리면 안 됩니다.
 - 자동매매 중에는 절전모드를 꺼야 합니다.
 - 화면이 꺼지는 것은 괜찮지만 PC가 잠들면 자동매매도 멈춥니다.
-- AWS에서 외부 접속을 허용하려면 Windows 방화벽과 AWS 보안 그룹을 확인해야 합니다.
 - 실투자 주문은 별도 안전장치가 켜져 있어야 하며, 모의투자 검증 전에는 열지 않는 것을 권장합니다.

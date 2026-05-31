@@ -9,7 +9,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# 전용 노트북 또는 AWS Windows 서버에서 자동매매 작업 스케줄러를 등록합니다.
+# 전용 노트북에서 자동매매 작업 스케줄러를 등록합니다.
 # 콘솔 창이 뜨지 않도록 작업 스케줄러는 wscript 숨김 런처를 실행합니다.
 
 function Resolve-PythonPath {

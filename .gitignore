@@ -9,6 +9,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .idea/
+logs/
 *.log
 monitor/state.json
 monitor/server.*.log
