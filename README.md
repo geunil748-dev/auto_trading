@@ -43,6 +43,9 @@ DB 테이블까지 초기화하려면 `.env` 입력 후 아래 명령을 실행�
 For a Windows 11 Home notebook running as a local 24-hour server, see
 [docs/local_windows_server.md](docs/local_windows_server.md).
 
+For automatic server updates from `origin/main`, see
+[docs/auto_update.md](docs/auto_update.md).
+
 ## Trading Bot Phase 2
 
 This repository starts the mock-trading foundation described in the planning

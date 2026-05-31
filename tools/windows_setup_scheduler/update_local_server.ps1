@@ -3,6 +3,7 @@ param(
     [string]$Branch = "main",
     [switch]$SkipInstall,
     [switch]$SkipPreflight,
+    [switch]$SkipPull,
     [switch]$SkipRestart
 )
 
@@ -84,13 +85,12 @@ if ($dirty) {
     throw "Local changes detected. This server clone should stay read-only; commit, stash, or reset changes before updating."
 }
 
-Write-Step "Pull latest code"
-Invoke-Checked -Exe "git" -ArgumentList @("-C", $workspacePath, "fetch", "origin", $Branch) -WorkingDirectory $workspacePath
-Invoke-Checked -Exe "git" -ArgumentList @("-C", $workspacePath, "checkout", $Branch) -WorkingDirectory $workspacePath
-Invoke-Checked -Exe "git" -ArgumentList @("-C", $workspacePath, "pull", "--ff-only", "origin", $Branch) -WorkingDirectory $workspacePath
-
-Write-Step "Stop running services"
-Stop-AutoTradingProcess -WorkspacePath $workspacePath
+if (-not $SkipPull) {
+    Write-Step "Pull latest code"
+    Invoke-Checked -Exe "git" -ArgumentList @("-C", $workspacePath, "fetch", "origin", $Branch) -WorkingDirectory $workspacePath
+    Invoke-Checked -Exe "git" -ArgumentList @("-C", $workspacePath, "checkout", $Branch) -WorkingDirectory $workspacePath
+    Invoke-Checked -Exe "git" -ArgumentList @("-C", $workspacePath, "pull", "--ff-only", "origin", $Branch) -WorkingDirectory $workspacePath
+}
 
 if (-not $SkipInstall) {
     if (-not (Test-Path -LiteralPath $venvPython)) {
@@ -112,6 +112,9 @@ if (-not $SkipPreflight) {
 }
 
 if (-not $SkipRestart) {
+    Write-Step "Stop running services"
+    Stop-AutoTradingProcess -WorkspacePath $workspacePath
+
     Write-Step "Start scheduled tasks"
     Start-AutoTradingTasks
 }
