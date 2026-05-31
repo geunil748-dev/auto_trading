@@ -41,6 +41,8 @@ def test_chart_backtest_runs_one_to_ten_years_without_news() -> None:
     assert [item.years for item in results] == [1, 2]
     assert results[0].trades > 0
     assert results[0].return_rate > 0
+    assert results[0].take_profit_count > 0
+    assert results[0].eod_count == 0
 
 
 def test_chart_backtest_marks_periods_without_enough_history() -> None:
@@ -71,6 +73,8 @@ def test_backtest_service_uses_current_monitor_candidates() -> None:
     assert payload["tickers"] == ["AAA"]
     assert payload["candidates"] == [{"ticker": "AAA", "name": "테스트"}]
     assert len(payload["results"]) == 1
+    assert "zeroEntryDays" in payload["results"][0]
+    assert "eodRate" in payload["results"][0]
 
 
 def test_backtest_service_can_run_single_selected_candidate() -> None:
@@ -95,6 +99,67 @@ def test_backtest_service_can_run_single_selected_candidate() -> None:
         {"ticker": "AAA", "name": "에이"},
         {"ticker": "BBB", "name": "비"},
     ]
+
+
+def test_chart_backtest_compares_relaxed_and_strict_filters() -> None:
+    bars = _momentum_bars(date(2024, 1, 1), 760, open_change=0.02)
+    strict = TradingSettings(
+        min_price_usd=5,
+        max_price_usd=50,
+        min_opening_price_change=0.03,
+        min_volume_ratio=0.5,
+        min_total_score=20,
+        allow_relaxed_candidate_filter=False,
+    )
+    relaxed = TradingSettings(
+        min_price_usd=5,
+        max_price_usd=50,
+        min_opening_price_change=0.03,
+        min_volume_ratio=1.5,
+        min_total_score=20,
+        allow_relaxed_candidate_filter=True,
+    )
+
+    strict_result = run_chart_backtest(["AAA"], {"AAA": bars}, strict, max_years=1)[0]
+    relaxed_result = run_chart_backtest(["AAA"], {"AAA": bars}, relaxed, max_years=1)[0]
+
+    assert strict_result.trades == 0
+    assert relaxed_result.trades > 0
+    assert strict_result.zero_entry_days > relaxed_result.zero_entry_days
+
+
+def test_chart_backtest_can_relax_only_opening_change() -> None:
+    bars = _momentum_bars(date(2024, 1, 1), 760, open_change=0.02)
+    settings = TradingSettings(
+        min_price_usd=5,
+        max_price_usd=50,
+        min_opening_price_change=0.03,
+        min_volume_ratio=0.5,
+        min_total_score=20,
+        allow_relaxed_candidate_filter=False,
+        relax_opening_change_only=True,
+    )
+
+    result = run_chart_backtest(["AAA"], {"AAA": bars}, settings, max_years=1)[0]
+
+    assert result.trades > 0
+
+
+def test_chart_backtest_opening_relax_keeps_volume_strict() -> None:
+    bars = _momentum_bars(date(2024, 1, 1), 760, open_change=0.02, volume=1000)
+    settings = TradingSettings(
+        min_price_usd=5,
+        max_price_usd=50,
+        min_opening_price_change=0.03,
+        min_volume_ratio=1.5,
+        min_total_score=20,
+        allow_relaxed_candidate_filter=False,
+        relax_opening_change_only=True,
+    )
+
+    result = run_chart_backtest(["AAA"], {"AAA": bars}, settings, max_years=1)[0]
+
+    assert result.trades == 0
 
 
 def test_backtest_service_can_run_custom_ticker_outside_candidates() -> None:
@@ -144,11 +209,16 @@ def test_backtest_service_reports_empty_candidates() -> None:
     assert payload["results"] == []
 
 
-def _momentum_bars(start: date, count: int) -> list[BacktestBar]:
+def _momentum_bars(
+    start: date,
+    count: int,
+    open_change: float = 0.02,
+    volume: float | None = None,
+) -> list[BacktestBar]:
     bars: list[BacktestBar] = []
     for offset in range(count):
         base = 10.0 + (offset % 40) * 0.03
-        opened = base * 1.02
+        opened = base * (1 + open_change)
         high = opened * 1.10
         low = opened * 0.99
         close = base
@@ -159,7 +229,7 @@ def _momentum_bars(start: date, count: int) -> list[BacktestBar]:
                 high=high,
                 low=low,
                 close=close,
-                volume=100000 + offset * 1000,
+                volume=volume if volume is not None else 100000 + offset * 1000,
             )
         )
     return bars

@@ -118,6 +118,12 @@ def _result_payload(result: BacktestResult) -> dict[str, str | int]:
             "endingEquityUsd": "-",
             "averageTradeReturn": "-",
             "maxDrawdown": "-",
+            "zeroEntryDays": 0,
+            "stopLossCount": 0,
+            "takeProfitCount": 0,
+            "trailingStopCount": 0,
+            "eodCount": 0,
+            "eodRate": "-",
         }
     return {
         "years": result.years,
@@ -130,6 +136,12 @@ def _result_payload(result: BacktestResult) -> dict[str, str | int]:
         "endingEquityUsd": _usd(result.ending_equity_usd),
         "averageTradeReturn": _signed_percent(result.average_trade_return),
         "maxDrawdown": _signed_percent(result.max_drawdown),
+        "zeroEntryDays": result.zero_entry_days,
+        "stopLossCount": result.stop_loss_count,
+        "takeProfitCount": result.take_profit_count,
+        "trailingStopCount": result.trailing_stop_count,
+        "eodCount": result.eod_count,
+        "eodRate": _percent(result.eod_rate),
     }
 
 
