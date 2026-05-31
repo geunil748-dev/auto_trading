@@ -47,6 +47,9 @@ SYSTEM 방식으로 등록할 수 있습니다.
 로컬 PC나 노트북에서 운영할 때는 장중 절전모드가 들어가지 않도록 전원 설정을
 꺼두어야 합니다.
 
+For a Windows 11 Home notebook that will replace AWS EC2 as a local 24-hour
+server, see [docs/local_windows_server.md](docs/local_windows_server.md).
+
 ## Trading Bot Phase 2
 
 This repository starts the mock-trading foundation described in the planning
