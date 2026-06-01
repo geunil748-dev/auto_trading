@@ -23,6 +23,8 @@ class SqlMonitorStateSource:
 
     def read(self) -> dict[str, object]:
         scores = {row[0]: row for row in self.repository.latest_scores()}
+        logs = self.repository.latest_logs()
+        missing_score_decision = _missing_score_decision(logs)
         account = self.repository.latest_account(is_mock=True)
         real_account = self.repository.latest_account(is_mock=False)
         realized_profit = self.repository.today_realized_profit()
@@ -40,7 +42,7 @@ class SqlMonitorStateSource:
                 self.repository.candidate_snapshot_status()
             ),
             "targets": [
-                _target(row, scores.get(row[0]))
+                _target(row, scores.get(row[0]), missing_score_decision)
                 for row in self.repository.latest_targets()
             ],
             "positions": [],
@@ -51,7 +53,7 @@ class SqlMonitorStateSource:
                 ["저장소", "MSSQL"],
                 ["점수 기록", str(len(scores))],
             ],
-            "logs": [_log(row) for row in self.repository.latest_logs()],
+            "logs": [_log(row) for row in logs],
             "trades": [_trade(row) for row in self.repository.latest_trades()],
             "entryReasonStats": [
                 _entry_reason_stat(row)
@@ -68,6 +70,8 @@ class SqlMonitorStateSource:
 
     def read_history(self, trade_date: date) -> dict[str, object]:
         scores = {row[0]: row for row in self.repository.history_scores(trade_date)}
+        logs = self.repository.history_logs(trade_date)
+        missing_score_decision = _missing_score_decision(logs)
         account = self.repository.history_account(trade_date)
         realized_profit = self.repository.history_realized_profit(trade_date)
         realized_profit_rate = self.repository.history_realized_profit_rate(trade_date)
@@ -80,13 +84,13 @@ class SqlMonitorStateSource:
             "date": trade_date.isoformat(),
             "account": _account(account, realized_profit, realized_profit_rate),
             "targets": [
-                _target(row, scores.get(row[0]))
+                _target(row, scores.get(row[0]), missing_score_decision)
                 for row in self.repository.history_targets(trade_date)
             ],
             "holdings": [_holding(row) for row in self.repository.history_holdings(trade_date)],
             "orders": [_order(row) for row in self.repository.history_orders(trade_date)],
             "fills": [_fill(row) for row in self.repository.history_fills(trade_date)],
-            "logs": [_log(row) for row in self.repository.history_logs(trade_date)],
+            "logs": [_log(row) for row in logs],
             "trades": [_trade(row) for row in self.repository.history_trades(trade_date)],
             "runSummaries": [
                 _run_summary(row)
@@ -105,7 +109,11 @@ class SqlMonitorStateSource:
         }
 
 
-def _target(row: tuple[Any, ...], score: tuple[Any, ...] | None) -> list[str]:
+def _target(
+    row: tuple[Any, ...],
+    score: tuple[Any, ...] | None,
+    missing_score_decision: str = "점수 계산 전",
+) -> list[str]:
     if len(row) >= 6:
         ticker, ticker_name, price_usd, opening_volume, volume_ratio, price_change = row[:6]
         price_text = _usd_or_dash(price_usd)
@@ -127,7 +135,7 @@ def _target(row: tuple[Any, ...], score: tuple[Any, ...] | None) -> list[str]:
         if score is None
         else str(round(_number(score[3])))
     )
-    state = _target_decision(score)
+    state = _target_decision(score, missing_score_decision)
     return [
         str(ticker),
         str(ticker_name or "-"),
@@ -167,12 +175,31 @@ def _candidate_snapshot_status(row: tuple[Any, ...]) -> dict[str, object]:
     }
 
 
-def _target_decision(score: tuple[Any, ...] | None) -> str:
+def _target_decision(
+    score: tuple[Any, ...] | None,
+    missing_score_decision: str = "점수 계산 전",
+) -> str:
     if score is None:
-        return "점수 계산 전"
+        return missing_score_decision
     if bool(score[4]):
         return "최종 선정"
     return "선정점수/순위 미달"
+
+
+def _missing_score_decision(logs: list[tuple[Any, ...]]) -> str:
+    messages = [str(row[2]) for row in logs if len(row) >= 3]
+    if any("STRICT_FILTER_NO_CANDIDATES" in message for message in messages):
+        return "최소 후보 수 미달로 점수 계산 생략"
+    if any(
+        "[PIPELINE]" in message
+        and "risk_pass_count=0" in message
+        and "scoring_pass_count=0" in message
+        for message in messages
+    ):
+        return "점수 계산 대상 없음"
+    if any("[FILTER]" in message and "final_count=0" in message for message in messages):
+        return "점수 계산 대상 없음"
+    return "점수 계산 전"
 
 
 def _holding(row: tuple[Any, ...]) -> dict[str, str]:

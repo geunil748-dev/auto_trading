@@ -413,6 +413,29 @@ def test_sql_monitor_state_shows_filter_score_before_total_score_exists() -> Non
     assert state["targets"][0][7] == "점수 계산 전"
 
 
+def test_sql_monitor_state_marks_strict_filter_shortfall_without_scores() -> None:
+    class StrictFilterRepository(PendingScoreRepository):
+        def latest_logs(self) -> list[tuple[object, ...]]:
+            return [
+                (
+                    "22:36:14",
+                    "WARNING",
+                    "STRICT_FILTER_NO_CANDIDATES: 엄격 필터 기준을 만족한 후보가 부족합니다.",
+                ),
+                (
+                    "22:36:14",
+                    "INFO",
+                    "[PIPELINE] gainers_count=100 volume_count=100 intersection_count=5 "
+                    "snapshot_success_count=5 snapshot_fail_count=0 risk_pass_count=0 "
+                    "scoring_pass_count=0 final_selected_count=0",
+                ),
+            ]
+
+    state = SqlMonitorStateSource(StrictFilterRepository()).read()
+
+    assert state["targets"][0][7] == "최소 후보 수 미달로 점수 계산 생략"
+
+
 def test_sql_monitor_state_marks_unselected_target_decision() -> None:
     class UnselectedScoreRepository(Repository):
         def latest_scores(self) -> list[tuple[object, ...]]:
