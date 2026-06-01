@@ -146,14 +146,17 @@ def main() -> None:
         return
 
     if args.command == "preflight":
+        readiness = mock_trading_readiness(args.monitor_state, market_date=args.us_date)
         print(
             json.dumps(
-                mock_trading_readiness(args.monitor_state, market_date=args.us_date),
+                readiness,
                 indent=2,
                 ensure_ascii=False,
                 default=str,
             )
         )
+        if not _preflight_ready(readiness):
+            raise SystemExit(1)
         return
 
     if args.command == "kis-rankings":
@@ -596,6 +599,17 @@ def _latest_candidate_tickers() -> tuple[str, list[str]]:
     if not recent:
         return "", []
     return recent[0]
+
+
+def _preflight_ready(readiness: dict[str, object]) -> bool:
+    mssql = readiness.get("mssql")
+    if not isinstance(mssql, dict):
+        return False
+    return (
+        mssql.get("connected") is True
+        and mssql.get("required_tables_ready") is True
+        and mssql.get("required_columns_ready") is True
+    )
 
 
 def _recent_candidate_tickers(limit: int) -> list[tuple[str, list[str]]]:

@@ -37,6 +37,52 @@ function Invoke-Checked {
     }
 }
 
+function Invoke-Preflight {
+    param(
+        [string]$PythonPath,
+        [string]$WorkingDirectory
+    )
+
+    $previousLocation = Get-Location
+    try {
+        Set-Location -LiteralPath $WorkingDirectory
+        $preflightOutput = & $PythonPath -m trading_bot preflight 2>&1
+        $exitCode = $LASTEXITCODE
+        $preflightText = ($preflightOutput | ForEach-Object { $_.ToString() }) -join "`n"
+        if ($preflightText) {
+            Write-Host $preflightText
+        }
+
+        try {
+            $preflight = $preflightText | ConvertFrom-Json -ErrorAction Stop
+        }
+        catch {
+            throw "Preflight output was not valid JSON. Exit code: $exitCode"
+        }
+
+        $failedChecks = @()
+        if ($preflight.mssql.connected -ne $true) {
+            $failedChecks += "mssql.connected"
+        }
+        if ($preflight.mssql.required_tables_ready -ne $true) {
+            $failedChecks += "mssql.required_tables_ready"
+        }
+        if ($preflight.mssql.required_columns_ready -ne $true) {
+            $failedChecks += "mssql.required_columns_ready"
+        }
+
+        if ($failedChecks.Count -gt 0) {
+            throw "Preflight readiness failed: $($failedChecks -join ', ')"
+        }
+        if ($exitCode -ne 0) {
+            throw "Preflight command failed with exit code $exitCode"
+        }
+    }
+    finally {
+        Set-Location -LiteralPath $previousLocation
+    }
+}
+
 function Stop-AutoTradingProcess {
     param([string]$WorkspacePath)
 
@@ -120,7 +166,7 @@ if (-not $SkipPreflight) {
 
     Write-Step "Run preflight"
     $env:PYTHONPATH = Join-Path $workspacePath "src"
-    Invoke-Checked -Exe $venvPython -ArgumentList @("-m", "trading_bot", "preflight") -WorkingDirectory $workspacePath
+    Invoke-Preflight -PythonPath $venvPython -WorkingDirectory $workspacePath
 }
 
 if (-not $SkipRestart) {
