@@ -37,6 +37,155 @@ function Invoke-Checked {
     }
 }
 
+function Resolve-PythonPath {
+    param([string]$PythonPath)
+
+    if ([string]::IsNullOrWhiteSpace($PythonPath)) {
+        return $null
+    }
+    $candidate = $PythonPath.Trim().Trim('"')
+    if (Test-Path -LiteralPath $candidate) {
+        return (Resolve-Path -LiteralPath $candidate).Path
+    }
+    $command = Get-Command $candidate -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+    return $candidate
+}
+
+function Get-QuotedArguments {
+    param([string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return @()
+    }
+    return [regex]::Matches($Text, '"([^"]+)"') |
+        ForEach-Object { $_.Groups[1].Value }
+}
+
+function Get-ServicePythonFromScheduledTasks {
+    $paths = @()
+    foreach ($taskName in @("AutoTrading-Monitor", "AutoTrading-Scheduler")) {
+        $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        if (-not $task) {
+            continue
+        }
+        foreach ($action in $task.Actions) {
+            foreach ($argument in Get-QuotedArguments $action.Arguments) {
+                if ([IO.Path]::GetFileName($argument) -ieq "python.exe") {
+                    $paths += Resolve-PythonPath $argument
+                }
+            }
+        }
+    }
+    $uniquePaths = @($paths | Where-Object { $_ } | Sort-Object -Unique)
+    if ($uniquePaths.Count -gt 1) {
+        throw "Scheduled tasks use different Python runtimes: $($uniquePaths -join ', ')"
+    }
+    if ($uniquePaths.Count -eq 1) {
+        return $uniquePaths[0]
+    }
+    return $null
+}
+
+function Get-ServicePythonFromRunningProcesses {
+    $paths = @()
+    $servicePattern = "(^|\s)-m\s+trading_bot\s+(serve-monitor|run-scheduler)(\s|$)"
+    $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.CommandLine -and
+            $_.CommandLine -match $servicePattern
+        }
+    foreach ($process in $processes) {
+        if ($process.CommandLine -match '^"([^"]*python\.exe)"\s+-m\s+trading_bot\s+') {
+            $paths += Resolve-PythonPath $Matches[1]
+        }
+        elseif ($process.CommandLine -match '^(\S*python\.exe)\s+-m\s+trading_bot\s+') {
+            $paths += Resolve-PythonPath $Matches[1]
+        }
+    }
+    $uniquePaths = @($paths | Where-Object { $_ } | Sort-Object -Unique)
+    if ($uniquePaths.Count -gt 1) {
+        throw "Running services use different Python runtimes: $($uniquePaths -join ', ')"
+    }
+    if ($uniquePaths.Count -eq 1) {
+        return $uniquePaths[0]
+    }
+    return $null
+}
+
+function Resolve-DeployPython {
+    param(
+        [string]$VenvPython,
+        [string]$DefaultPython
+    )
+
+    $servicePython = Get-ServicePythonFromScheduledTasks
+    $runningPython = Get-ServicePythonFromRunningProcesses
+    if ($servicePython -and $runningPython -and $servicePython -ne $runningPython) {
+        throw "Scheduled task Python and running service Python differ: $servicePython / $runningPython"
+    }
+    if ($servicePython) {
+        return $servicePython
+    }
+    if ($runningPython) {
+        return $runningPython
+    }
+
+    foreach ($envName in @("DEPLOY_PYTHON", "AUTOTRADING_PYTHON", "AUTO_TRADING_PYTHON")) {
+        $value = [Environment]::GetEnvironmentVariable($envName, "Process")
+        if ($value) {
+            return Resolve-PythonPath $value
+        }
+    }
+    if (Test-Path -LiteralPath $DefaultPython) {
+        return (Resolve-Path -LiteralPath $DefaultPython).Path
+    }
+    if (Test-Path -LiteralPath $VenvPython) {
+        return (Resolve-Path -LiteralPath $VenvPython).Path
+    }
+    throw "No Python runtime was found for deployment preflight."
+}
+
+function Test-PythonImport {
+    param(
+        [string]$PythonPath,
+        [string]$ModuleName
+    )
+
+    $output = & $PythonPath -c "import $ModuleName; print('ok')" 2>&1
+    return [pscustomobject]@{
+        Module = $ModuleName
+        Ok = ($LASTEXITCODE -eq 0)
+        Output = (($output | ForEach-Object { $_.ToString() }) -join "`n")
+    }
+}
+
+function Invoke-PythonEnvironmentCheck {
+    param([string]$PythonPath)
+
+    if (-not (Test-Path -LiteralPath $PythonPath)) {
+        throw "Selected Python was not found: $PythonPath"
+    }
+    Write-Host "Preflight Python: $PythonPath"
+    $versionOutput = & $PythonPath --version 2>&1
+    $versionText = ($versionOutput | ForEach-Object { $_.ToString() }) -join "`n"
+    Write-Host "Preflight Python version: $versionText"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Selected Python failed to report version: $PythonPath"
+    }
+
+    foreach ($moduleName in @("clr", "pyodbc")) {
+        $result = Test-PythonImport -PythonPath $PythonPath -ModuleName $moduleName
+        $status = if ($result.Ok) { "OK" } else { "FAIL" }
+        Write-Host "Python import ${moduleName}: $status"
+        if (-not $result.Ok) {
+            throw "Selected Python cannot import $moduleName. Python: $PythonPath. Output: $($result.Output)"
+        }
+    }
+}
+
 function Invoke-Preflight {
     param(
         [string]$PythonPath,
@@ -46,6 +195,7 @@ function Invoke-Preflight {
     $previousLocation = Get-Location
     try {
         Set-Location -LiteralPath $WorkingDirectory
+        Invoke-PythonEnvironmentCheck -PythonPath $PythonPath
         $preflightOutput = & $PythonPath -m trading_bot preflight 2>&1
         $exitCode = $LASTEXITCODE
         $preflightText = ($preflightOutput | ForEach-Object { $_.ToString() }) -join "`n"
@@ -126,6 +276,7 @@ function Start-AutoTradingTasks {
 
 $workspacePath = (Resolve-Path -LiteralPath $Workspace).Path
 $venvPython = Join-Path $workspacePath ".venv\Scripts\python.exe"
+$defaultPython = "C:\Users\admin\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
 
 Write-Step "Workspace"
 Write-Host $workspacePath
@@ -160,13 +311,10 @@ if (-not $SkipInstall) {
 }
 
 if (-not $SkipPreflight) {
-    if (-not (Test-Path -LiteralPath $venvPython)) {
-        throw "Virtual environment was not found: $venvPython. Run setup_windows.ps1 first."
-    }
-
     Write-Step "Run preflight"
     $env:PYTHONPATH = Join-Path $workspacePath "src"
-    Invoke-Preflight -PythonPath $venvPython -WorkingDirectory $workspacePath
+    $deployPython = Resolve-DeployPython -VenvPython $venvPython -DefaultPython $defaultPython
+    Invoke-Preflight -PythonPath $deployPython -WorkingDirectory $workspacePath
 }
 
 if (-not $SkipRestart) {
