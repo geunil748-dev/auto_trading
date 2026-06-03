@@ -12,6 +12,7 @@ def test_kis_screening_market_data_maps_quote_and_volume_history(monkeypatch) ->
         def __init__(self) -> None:
             self.gainers_limit: int | None = None
             self.volume_limit: int | None = None
+            self.trade_value_limit: int | None = None
 
         def ranked_gainers(self, limit: int = 100) -> list:
             self.gainers_limit = limit
@@ -20,6 +21,10 @@ def test_kis_screening_market_data_maps_quote_and_volume_history(monkeypatch) ->
         def ranked_trade_volume(self, limit: int = 100) -> list:
             self.volume_limit = limit
             return [RankedStock("AAA", 4)]
+
+        def ranked_trade_value(self, limit: int = 100) -> list:
+            self.trade_value_limit = limit
+            return [RankedStock("AAA", 5)]
 
         def quote(self, _: str) -> dict[str, str]:
             return {
@@ -44,6 +49,7 @@ def test_kis_screening_market_data_maps_quote_and_volume_history(monkeypatch) ->
     market = KisScreeningMarketData(kis, Context(), History())
     market.ranked_gainers(220)
     market.ranked_turnover(230)
+    market.ranked_trade_value(240)
 
     snapshot = market.candidate_snapshots(["AAA"])["AAA"]
 
@@ -53,6 +59,7 @@ def test_kis_screening_market_data_maps_quote_and_volume_history(monkeypatch) ->
     assert (snapshot.gain_rank, snapshot.turnover_rank) == (2, 4)
     assert kis.gainers_limit == 220
     assert kis.volume_limit == 230
+    assert kis.trade_value_limit == 240
 
 
 def test_kis_screening_market_data_reads_open_from_daily_price_when_quote_omits_it() -> None:
@@ -76,6 +83,34 @@ def test_kis_screening_market_data_reads_open_from_daily_price_when_quote_omits_
     market._volume_ranks = {"AAA": 4}
 
     assert market.candidate_snapshots(["AAA"])["AAA"].open_price_usd == 11
+
+
+def test_kis_screening_market_data_uses_fallback_rank_for_union_only_ticker() -> None:
+    class Kis:
+        def quote(self, _: str) -> dict[str, str]:
+            return {
+                "last": "12.30",
+                "open": "11.00",
+                "base": "10.00",
+                "tvol": "3,000",
+            }
+
+    class Context:
+        def market_context(self) -> object:
+            return object()
+
+    class History:
+        def average_daily_volume(self, ticker: str, sessions: int) -> float:
+            return 2000
+
+    market = KisScreeningMarketData(Kis(), Context(), History())
+    market._gain_ranks = {"AAA": 2}
+    market._volume_ranks = {"BBB": 4}
+
+    snapshot = market.candidate_snapshots(["AAA"])["AAA"]
+
+    assert snapshot.gain_rank == 2
+    assert snapshot.turnover_rank == 54
 
 
 def test_kis_screening_market_data_skips_candidates_without_history() -> None:

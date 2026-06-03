@@ -69,8 +69,10 @@ class ScreeningScoringPipeline:
         )
         snapshots = {}
         requested_tickers: set[str] = set()
+        intersection_tickers: set[str] = set()
         gainers: tuple[RankedStock, ...] = ()
         turnover: tuple[RankedStock, ...] = ()
+        trade_value: tuple[RankedStock, ...] = ()
         candidates = []
         active_profile = _relaxation_profiles(self.settings)[0]
         for profile in _relaxation_profiles(self.settings):
@@ -79,9 +81,14 @@ class ScreeningScoringPipeline:
             active_profile = profile
             gainers = tuple(self.market_data.ranked_gainers(profile.gainer_limit))
             turnover = tuple(self.market_data.ranked_turnover(profile.turnover_limit))
-            requested_tickers = {item.ticker for item in gainers} & {
-                item.ticker for item in turnover
-            }
+            trade_value = tuple(
+                self.market_data.ranked_trade_value(profile.turnover_limit)
+            )
+            gainer_tickers = {item.ticker for item in gainers}
+            turnover_tickers = {item.ticker for item in turnover}
+            trade_value_tickers = {item.ticker for item in trade_value}
+            intersection_tickers = gainer_tickers & turnover_tickers
+            requested_tickers = gainer_tickers | turnover_tickers | trade_value_tickers
             snapshots = {
                 **snapshots,
                 **self.market_data.candidate_snapshots(
@@ -89,15 +96,16 @@ class ScreeningScoringPipeline:
                 ),
             }
             candidates = ranking_intersection(
-                gainers,
-                turnover,
+                _with_missing_ranks(gainers, requested_tickers),
+                _with_missing_ranks(turnover, requested_tickers),
                 snapshots,
                 profile.settings,
             )
             self._log_relaxation_profile(profile, len(candidates))
             if len(candidates) >= self.settings.min_selected_candidates:
                 break
-        initial_intersection_count = len(requested_tickers)
+        initial_intersection_count = len(intersection_tickers)
+        ranking_union_count = len(requested_tickers)
         strict_shortfall = (
             not self.settings.allow_relaxed_candidate_filter
             and len(candidates) < self.settings.min_selected_candidates
@@ -148,9 +156,12 @@ class ScreeningScoringPipeline:
                 started_at,
                 requested_gainer_limit=active_profile.gainer_limit,
                 requested_turnover_limit=active_profile.turnover_limit,
+                requested_trade_value_limit=active_profile.turnover_limit,
                 gainers_count=len(gainers),
                 volume_count=len(turnover),
+                trade_value_count=len(trade_value),
                 intersection_count=initial_intersection_count,
+                ranking_union_count=ranking_union_count,
                 snapshot_success_count=len(snapshots),
                 snapshot_fail_count=len(requested_tickers - snapshots.keys()),
                 risk_pass_count=len(candidates),
@@ -185,9 +196,12 @@ class ScreeningScoringPipeline:
                 started_at,
                 requested_gainer_limit=active_profile.gainer_limit,
                 requested_turnover_limit=active_profile.turnover_limit,
+                requested_trade_value_limit=active_profile.turnover_limit,
                 gainers_count=len(gainers),
                 volume_count=len(turnover),
+                trade_value_count=len(trade_value),
                 intersection_count=initial_intersection_count,
+                ranking_union_count=ranking_union_count,
                 snapshot_success_count=len(snapshots),
                 snapshot_fail_count=len(requested_tickers - snapshots.keys()),
                 risk_pass_count=len(candidates),
@@ -250,9 +264,12 @@ class ScreeningScoringPipeline:
             started_at,
             requested_gainer_limit=active_profile.gainer_limit,
             requested_turnover_limit=active_profile.turnover_limit,
+            requested_trade_value_limit=active_profile.turnover_limit,
             gainers_count=len(gainers),
             volume_count=len(turnover),
+            trade_value_count=len(trade_value),
             intersection_count=initial_intersection_count,
+            ranking_union_count=ranking_union_count,
             snapshot_success_count=len(snapshots),
             snapshot_fail_count=len(requested_tickers - snapshots.keys()),
             risk_pass_count=len(candidates),
@@ -317,9 +334,12 @@ class ScreeningScoringPipeline:
         *,
         requested_gainer_limit: int,
         requested_turnover_limit: int,
+        requested_trade_value_limit: int,
         gainers_count: int,
         volume_count: int,
+        trade_value_count: int,
         intersection_count: int,
+        ranking_union_count: int,
         snapshot_success_count: int,
         snapshot_fail_count: int,
         risk_pass_count: int,
@@ -341,9 +361,13 @@ class ScreeningScoringPipeline:
                 f"received_gainer_count={gainers_count} "
                 f"requested_turnover_limit={requested_turnover_limit} "
                 f"received_turnover_count={volume_count} "
+                f"requested_trade_value_limit={requested_trade_value_limit} "
+                f"received_trade_value_count={trade_value_count} "
                 f"gainers_count={gainers_count} "
                 f"volume_count={volume_count} "
+                f"trade_value_count={trade_value_count} "
                 f"intersection_count={intersection_count} "
+                f"ranking_union_count={ranking_union_count} "
                 f"snapshot_success_count={snapshot_success_count} "
                 f"snapshot_fail_count={snapshot_fail_count} "
                 f"risk_pass_count={risk_pass_count} "
@@ -373,9 +397,13 @@ class ScreeningScoringPipeline:
                 f"received_gainer_count={gainers_count} "
                 f"requested_turnover_limit={requested_turnover_limit} "
                 f"received_turnover_count={volume_count} "
+                f"requested_trade_value_limit={requested_trade_value_limit} "
+                f"received_trade_value_count={trade_value_count} "
                 f"gainers={gainers_count} "
                 f"volume={volume_count} "
+                f"trade_value={trade_value_count} "
                 f"intersection={intersection_count} "
+                f"ranking_union={ranking_union_count} "
                 f"snapshot_success={snapshot_success_count} "
                 f"snapshot_fail={snapshot_fail_count} "
                 f"risk_pass={risk_pass_count} "

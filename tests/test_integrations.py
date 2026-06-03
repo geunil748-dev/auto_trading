@@ -659,6 +659,8 @@ def test_kis_overseas_client_uses_official_ranking_and_quote_shapes() -> None:
                 return {"output2": [{"symb": "AAA"}, {"symb": "BBB"}]}
             if path.endswith("trade-vol"):
                 return {"output2": [{"rsym": "CCC"}]}
+            if path.endswith("trade-pbmn"):
+                return {"output2": [{"symb": "DDD"}]}
             if path.endswith("inquire-ccnl"):
                 return {"output": [{"pdno": "AAA"}]}
             return {"output": {"last": "12.30"}}
@@ -667,14 +669,17 @@ def test_kis_overseas_client_uses_official_ranking_and_quote_shapes() -> None:
 
     assert [item.ticker for item in client.ranked_gainers(1)] == ["AAA"]
     assert [item.ticker for item in client.ranked_trade_volume()] == ["CCC"]
+    assert [item.ticker for item in client.ranked_trade_value()] == ["DDD"]
     assert client.quote("AAA") == {"last": "12.30"}
     assert client.daily_prices("AAA") == []
     assert client.mock_order_history("12345678", "01", "20260522") == [{"pdno": "AAA"}]
     assert calls[0][2]["GUBN"] == "1"
     assert calls[1][2]["NDAY"] == "0"
-    assert calls[2][2]["SYMB"] == "AAA"
-    assert calls[3][2]["GUBN"] == "0"
-    assert calls[4][2]["ORD_STRT_DT"] == "20260522"
+    assert calls[2][1] == "HHDFS76320010"
+    assert calls[2][2]["NDAY"] == "0"
+    assert calls[3][2]["SYMB"] == "AAA"
+    assert calls[4][2]["GUBN"] == "0"
+    assert calls[5][2]["ORD_STRT_DT"] == "20260522"
 
 
 def test_kis_overseas_client_uses_mock_balance_and_limit_order_shapes() -> None:

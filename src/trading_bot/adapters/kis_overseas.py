@@ -10,6 +10,8 @@ PRICE_FLUCT_PATH = "/uapi/overseas-stock/v1/ranking/price-fluct"
 PRICE_FLUCT_TR_ID = "HHDFS76260000"
 TRADE_VOLUME_PATH = "/uapi/overseas-stock/v1/ranking/trade-vol"
 TRADE_VOLUME_TR_ID = "HHDFS76310010"
+TRADE_VALUE_PATH = "/uapi/overseas-stock/v1/ranking/trade-pbmn"
+TRADE_VALUE_TR_ID = "HHDFS76320010"
 QUOTE_PATH = "/uapi/overseas-price/v1/quotations/price"
 QUOTE_TR_ID = "HHDFS00000300"
 DAILY_PRICE_PATH = "/uapi/overseas-price/v1/quotations/dailyprice"
@@ -46,6 +48,22 @@ class KisOverseasClient:
         payload = self.http.get(
             TRADE_VOLUME_PATH,
             TRADE_VOLUME_TR_ID,
+            {
+                "EXCD": self.exchange_code,
+                "NDAY": "0",
+                "VOL_RANG": "0",
+                "KEYB": "",
+                "AUTH": "",
+                "PRC1": "",
+                "PRC2": "",
+            },
+        )
+        return _rank_rows(_output_rows(payload), limit)
+
+    def ranked_trade_value(self, limit: int = 200) -> list[RankedStock]:
+        payload = self.http.get(
+            TRADE_VALUE_PATH,
+            TRADE_VALUE_TR_ID,
             {
                 "EXCD": self.exchange_code,
                 "NDAY": "0",

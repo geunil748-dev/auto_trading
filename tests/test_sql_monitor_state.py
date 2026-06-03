@@ -393,9 +393,13 @@ def test_sql_monitor_state_translates_structured_log_messages() -> None:
                 (
                     "22:50:00",
                     "INFO",
-                    "[PIPELINE] gainers_count=100 volume_count=100 intersection_count=5 "
-                    "snapshot_success_count=5 snapshot_fail_count=0 risk_pass_count=0 "
-                    "scoring_pass_count=0 final_selected_count=0",
+                    "[PIPELINE] requested_gainer_limit=100 received_gainer_count=100 "
+                    "requested_turnover_limit=100 received_turnover_count=100 "
+                    "requested_trade_value_limit=100 received_trade_value_count=100 "
+                    "gainers_count=100 volume_count=100 intersection_count=5 "
+                    "trade_value_count=100 ranking_union_count=260 snapshot_success_count=5 "
+                    "snapshot_fail_count=0 risk_pass_count=0 scoring_pass_count=0 "
+                    "final_selected_count=0",
                 ),
                 (
                     "22:50:01",
@@ -406,7 +410,10 @@ def test_sql_monitor_state_translates_structured_log_messages() -> None:
                 (
                     "22:50:02",
                     "INFO",
-                    "[PIPELINE_SUMMARY] gainers=100 volume=100 intersection=5 "
+                    "[PIPELINE_SUMMARY] requested_gainer_limit=100 received_gainer_count=100 "
+                    "requested_turnover_limit=100 received_turnover_count=100 "
+                    "requested_trade_value_limit=100 received_trade_value_count=100 "
+                    "gainers=100 volume=100 trade_value=100 intersection=5 ranking_union=260 "
                     "snapshot_success=5 snapshot_fail=0 risk_pass=0 score_pass=0 "
                     "saved=0 duration_ms=1234",
                 ),
@@ -431,7 +438,10 @@ def test_sql_monitor_state_translates_structured_log_messages() -> None:
 
     assert [row[2] for row in state["logs"]] == [
         (
-            "후보 생성 단계: 상승률 랭킹 100건, 거래량 랭킹 100건, 교집합 5건, "
+            "후보 생성 단계: 상승률 요청 100건, 상승률 수신 100건, "
+            "거래량 요청 100건, 거래량 수신 100건, 거래대금 요청 100건, "
+            "거래대금 수신 100건, 상승률 랭킹 100건, 거래량 랭킹 100건, "
+            "교집합 5건, 거래대금 랭킹 100건, 합집합 260건, "
             "시세 조회 성공 5건, 시세 조회 실패 0건, 필터 통과 후보 0건, "
             "점수 통과 후보 0건, 최종 선정 후보 0건"
         ),
@@ -441,13 +451,52 @@ def test_sql_monitor_state_translates_structured_log_messages() -> None:
             "최종 후보 0건"
         ),
         (
-            "후보 생성 요약: 상승률 랭킹 100건, 거래량 랭킹 100건, 교집합 5건, "
+            "후보 생성 요약: 상승률 요청 100건, 상승률 수신 100건, "
+            "거래량 요청 100건, 거래량 수신 100건, 거래대금 요청 100건, "
+            "거래대금 수신 100건, 상승률 랭킹 100건, 거래량 랭킹 100건, "
+            "거래대금 랭킹 100건, 교집합 5건, 합집합 260건, "
             "시세 조회 성공 5건, 시세 조회 실패 0건, 필터 통과 후보 0건, "
             "점수 통과 후보 0건, DB 저장 후보 0건, 소요 시간 1234ms"
         ),
         "후보 저장: 후보 수 5건, 거래일 2026-06-01",
         "점수 저장: 점수 수 5건, 거래일 2026-06-01",
         "시세 스냅샷 누락: 종목 AAPL, 사유 일봉 데이터 없음",
+    ]
+
+
+def test_sql_monitor_state_translates_candidate_evaluation_log_messages() -> None:
+    class CandidateEvaluationLogRepository(Repository):
+        def latest_logs(self) -> list[tuple[object, ...]]:
+            return [
+                (
+                    "01:32:19",
+                    "INFO",
+                    "candidate_evaluation_saved symbol=NVTS final_score=65.875 "
+                    "buy_allowed=True order_submitted=False buy_block_reason=BUY_ALLOWED "
+                    "hard_filter_failed_count=0 soft_condition_failed_count=1 "
+                    "vwap_ma20_status=DISABLED",
+                ),
+                (
+                    "01:22:56",
+                    "INFO",
+                    "candidate_evaluation_saved symbol=ANY final_score=55.5 "
+                    "buy_allowed=False order_submitted=False "
+                    "buy_block_reason=OVERHEAT_LIMIT_EXCEEDED hard_filter_failed_count=1 "
+                    "soft_condition_failed_count=1 vwap_ma20_status=DISABLED",
+                ),
+            ]
+
+    state = SqlMonitorStateSource(CandidateEvaluationLogRepository()).read()
+
+    assert [row[2] for row in state["logs"][:2]] == [
+        (
+            "후보평가 저장: 종목=NVTS 최종점수=65.875 매수허용=예 주문제출=아니오 "
+            "매수판정=매수 허용 하드필터탈락=0 소프트조건탈락=1 VWAP/MA20상태=비활성화"
+        ),
+        (
+            "후보평가 저장: 종목=ANY 최종점수=55.5 매수허용=아니오 주문제출=아니오 "
+            "매수판정=과열 제한 초과 하드필터탈락=1 소프트조건탈락=1 VWAP/MA20상태=비활성화"
+        ),
     ]
 
 

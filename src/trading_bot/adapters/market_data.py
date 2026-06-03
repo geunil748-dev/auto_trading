@@ -43,6 +43,11 @@ class KisScreeningMarketData:
         self._names.update({item.ticker: item.name for item in rows if item.name})
         return rows
 
+    def ranked_trade_value(self, limit: int | None = None) -> list[RankedStock]:
+        rows = self.kis.ranked_trade_value(limit or 200)
+        self._names.update({item.ticker: item.name for item in rows if item.name})
+        return rows
+
     def candidate_snapshots(
         self,
         tickers: Iterable[str],
@@ -70,8 +75,8 @@ class KisScreeningMarketData:
                     previous_close_usd=_required_float(quote, "base", "BASE", "pcls", "PCLS"),
                     opening_price_change=_price_change_rate(quote),
                     opening_volume_ratio=_opening_volume_ratio(opening_volume, average_volume),
-                    turnover_rank=self._volume_ranks[ticker],
-                    gain_rank=self._gain_ranks[ticker],
+                    turnover_rank=_rank_or_fallback(self._volume_ranks, ticker),
+                    gain_rank=_rank_or_fallback(self._gain_ranks, ticker),
                     name=_candidate_name(ticker, quote, self._names),
                     opening_volume=opening_volume,
                     average_volume_20d=average_volume,
@@ -208,6 +213,12 @@ def _snapshot_failure_reason(stage: str, exc: Exception) -> str:
     if "missing numeric field" in message:
         return f"{stage}_missing_field"
     return f"{stage}_{_compact_reason(message)}"
+
+
+def _rank_or_fallback(ranks: Mapping[str, int], ticker: str) -> int:
+    if ticker in ranks:
+        return ranks[ticker]
+    return max(ranks.values(), default=0) + 50
 
 
 def _compact_reason(message: str) -> str:

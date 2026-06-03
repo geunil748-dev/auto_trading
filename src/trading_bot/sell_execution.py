@@ -6,6 +6,7 @@ from datetime import date
 
 from trading_bot.config import TradingSettings
 from trading_bot.models import BotLog, SellIntent, TradeRecord
+from trading_bot.performance_analysis import exit_label
 from trading_bot.ports import DailyRepository
 from trading_bot.strategy_metadata import strategy_metadata_from_settings
 
@@ -118,7 +119,7 @@ def _sell_log(intents: list[SellIntent]) -> str:
     details = [
         (
             f"{item.ticker} {item.quantity}주 @ ${item.limit_price_usd:,.2f} "
-            f"(사유 {item.exit_reason})"
+            f"(사유 {exit_label(item.exit_reason)})"
         )
         for item in intents
     ]

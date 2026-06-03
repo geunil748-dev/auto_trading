@@ -200,6 +200,52 @@ class EntryTimingEvaluation:
     condition_results: Mapping[str, bool | None] | None = None
 
 
+BUY_BLOCK_REASON_LABELS = {
+    "BUY_ALLOWED": "매수 허용",
+    "BREAKOUT_NOT_TRIGGERED": "돌파 미발생",
+    "BREAKOUT_CLOSE_FAILED": "5분봉 종가 돌파 미충족",
+    "FINAL_SCORE_BELOW_THRESHOLD": "최종 점수 기준 미달",
+    "ORDER_NOT_SUBMITTED": "주문 미제출",
+    "OVERHEAT_LIMIT_EXCEEDED": "과열 제한 초과",
+    "VOLUME_INCREASE_FAILED": "5분 거래량 증가 미충족",
+    "VWAP_MA20_FAILED": "VWAP/MA20 조건 미충족",
+    "VWAP_MA20_DATA_MISSING": "VWAP/MA20 데이터 없음",
+    "PULLBACK_REBREAK_FAILED": "눌림 후 재돌파 미충족",
+    "INVALID_ORDER_VALUE": "주문 금액 오류",
+    "INVALID_ACCOUNT_EQUITY": "계좌 평가금액 오류",
+    "POSITION_EXPOSURE_LIMIT": "종목별 노출 한도 초과",
+    "ACCOUNT_EXPOSURE_LIMIT": "계좌 노출 한도 초과",
+    "MARKET_BELOW_MA20": "시장 MA20 하회",
+    "FX_VOLATILITY": "환율 변동성 초과",
+    "DAILY_ACCOUNT_LOSS": "일 손실 한도 초과",
+    "OPEN_POSITION_LIMIT": "보유 종목 수 한도 초과",
+    "PENNY_STOCK": "가격 하한 미달",
+    "PRICE_CAP": "가격 상한 초과",
+    "OPENING_GAP": "시초 갭 초과",
+}
+
+VWAP_MA20_STATUS_LABELS = {
+    "DISABLED": "비활성화",
+    "SKIPPED_NO_DATA": "데이터 없음으로 건너뜀",
+    "PASS": "통과",
+    "FAIL": "실패",
+}
+
+CONDITION_MODE_LABELS = {
+    CONDITION_MODE_HARD_FILTER: "하드필터",
+    CONDITION_MODE_SOFT_SCORE: "소프트점수",
+    CONDITION_MODE_OFF: "꺼짐",
+}
+
+VWAP_MA20_TYPE_LABELS = {
+    VWAP_MA20_AND: "VWAP와 MA20 모두",
+    VWAP_MA20_MA20_ONLY: "MA20만",
+    VWAP_MA20_OFF: "꺼짐",
+    VWAP_MA20_VWAP_ONLY: "VWAP만",
+    "OR": "VWAP 또는 MA20",
+}
+
+
 def _entry_timing_evaluation(
     breakout: BreakoutInput,
     threshold: float,
@@ -588,15 +634,7 @@ def _safe_save_candidate_evaluation(
                 BotLog(
                     "INFO",
                     "candidate_evaluation",
-                    "candidate_evaluation_saved "
-                    f"symbol={evaluation.symbol} "
-                    f"final_score={evaluation.final_score} "
-                    f"buy_allowed={evaluation.buy_allowed} "
-                    f"order_submitted={evaluation.order_submitted} "
-                    f"buy_block_reason={evaluation.buy_block_reason or ''} "
-                    f"hard_filter_failed_count={evaluation.hard_filter_failed_count} "
-                    f"soft_condition_failed_count={evaluation.soft_condition_failed_count} "
-                    f"vwap_ma20_status={vwap_ma20_status}",
+                    _candidate_evaluation_saved_message(evaluation, vwap_ma20_status),
                     symbol=evaluation.symbol,
                     reject_reason=evaluation.buy_block_reason or "",
                     actual_value=evaluation.final_score,
@@ -608,14 +646,7 @@ def _safe_save_candidate_evaluation(
                     BotLog(
                         "INFO",
                         "entry_planner",
-                        "vwap_ma20_skipped_no_data "
-                        f"symbol={evaluation.symbol} "
-                        f"current_price={condition_results.get('current_price')} "
-                        f"condition_type={condition_results.get('vwapMa20ConditionType')} "
-                        f"condition_mode={condition_results.get('vwapMa20ConditionMode')} "
-                        f"has_vwap={condition_results.get('vwap_data_available')} "
-                        f"has_intraday_ma20={condition_results.get('intraday_ma20_data_available')} "
-                        "reason=VWAP_MA20_DATA_MISSING",
+                        _vwap_ma20_skipped_message(evaluation, condition_results),
                         symbol=evaluation.symbol,
                         reject_reason="VWAP_MA20_DATA_MISSING",
                         actual_value=evaluation.current_price,
@@ -626,16 +657,7 @@ def _safe_save_candidate_evaluation(
                     BotLog(
                         "INFO",
                         "entry_planner",
-                        "vwap_ma20_evaluated "
-                        f"symbol={evaluation.symbol} "
-                        f"current_price={condition_results.get('current_price')} "
-                        f"vwap_usd={condition_results.get('vwap_usd')} "
-                        f"intraday_ma20_usd={condition_results.get('intraday_ma20_usd')} "
-                        f"condition_type={condition_results.get('vwapMa20ConditionType')} "
-                        f"condition_mode={condition_results.get('vwapMa20ConditionMode')} "
-                        f"vwap_pass={condition_results.get('vwap_pass')} "
-                        f"ma20_pass={condition_results.get('ma20_pass')} "
-                        f"vwap_ma20_pass={condition_results.get('vwap_ma20_pass')}",
+                        _vwap_ma20_evaluated_message(evaluation, condition_results),
                         symbol=evaluation.symbol,
                         reject_reason="VWAP_MA20_EVALUATED",
                         actual_value=evaluation.current_price,
@@ -648,13 +670,108 @@ def _safe_save_candidate_evaluation(
                     BotLog(
                         "ERROR",
                         "candidate_evaluation",
-                        f"candidate_evaluation_save_failed symbol={evaluation.symbol} error={exc}",
+                        f"후보평가 저장 실패: 종목={evaluation.symbol} 오류={exc}",
                         symbol=evaluation.symbol,
                         reject_reason="CANDIDATE_EVALUATION_SAVE_FAILED",
                     )
                 )
             except Exception:
                 pass
+
+
+def _candidate_evaluation_saved_message(
+    evaluation: CandidateEvaluation,
+    vwap_ma20_status: object,
+) -> str:
+    return (
+        "후보평가 저장: "
+        f"종목={evaluation.symbol} "
+        f"최종점수={_value_label(evaluation.final_score)} "
+        f"매수허용={_bool_label(evaluation.buy_allowed)} "
+        f"주문제출={_bool_label(evaluation.order_submitted)} "
+        f"매수판정={_buy_block_reason_label(evaluation.buy_block_reason)} "
+        f"하드필터탈락={_value_label(evaluation.hard_filter_failed_count)} "
+        f"소프트조건탈락={_value_label(evaluation.soft_condition_failed_count)} "
+        f"VWAP/MA20상태={_vwap_ma20_status_label(vwap_ma20_status)}"
+    )
+
+
+def _vwap_ma20_skipped_message(
+    evaluation: CandidateEvaluation,
+    condition_results: Mapping[str, object],
+) -> str:
+    return (
+        "VWAP/MA20 데이터 부족: "
+        f"종목={evaluation.symbol} "
+        f"현재가={_value_label(condition_results.get('current_price'))} "
+        f"조건유형={_vwap_ma20_type_label(condition_results.get('vwapMa20ConditionType'))} "
+        f"조건모드={_condition_mode_label(condition_results.get('vwapMa20ConditionMode'))} "
+        f"VWAP데이터={_bool_label(condition_results.get('vwap_data_available'))} "
+        f"장중MA20데이터={_bool_label(condition_results.get('intraday_ma20_data_available'))} "
+        f"사유={_buy_block_reason_label('VWAP_MA20_DATA_MISSING')}"
+    )
+
+
+def _vwap_ma20_evaluated_message(
+    evaluation: CandidateEvaluation,
+    condition_results: Mapping[str, object],
+) -> str:
+    return (
+        "VWAP/MA20 평가: "
+        f"종목={evaluation.symbol} "
+        f"현재가={_value_label(condition_results.get('current_price'))} "
+        f"VWAP={_value_label(condition_results.get('vwap_usd'))} "
+        f"장중MA20={_value_label(condition_results.get('intraday_ma20_usd'))} "
+        f"조건유형={_vwap_ma20_type_label(condition_results.get('vwapMa20ConditionType'))} "
+        f"조건모드={_condition_mode_label(condition_results.get('vwapMa20ConditionMode'))} "
+        f"VWAP통과={_bool_label(condition_results.get('vwap_pass'))} "
+        f"MA20통과={_bool_label(condition_results.get('ma20_pass'))} "
+        f"종합통과={_bool_label(condition_results.get('vwap_ma20_pass'))}"
+    )
+
+
+def _buy_block_reason_label(reason: object) -> str:
+    code = str(reason or "").strip()
+    if not code:
+        return "-"
+    return BUY_BLOCK_REASON_LABELS.get(code, "미등록 사유")
+
+
+def _vwap_ma20_status_label(status: object) -> str:
+    code = str(status or "").strip()
+    if not code:
+        return "-"
+    return VWAP_MA20_STATUS_LABELS.get(code, "미등록 상태")
+
+
+def _condition_mode_label(mode: object) -> str:
+    code = str(mode or "").strip()
+    if not code:
+        return "-"
+    return CONDITION_MODE_LABELS.get(code, "미등록 모드")
+
+
+def _vwap_ma20_type_label(condition_type: object) -> str:
+    code = str(condition_type or "").strip()
+    if not code:
+        return "-"
+    return VWAP_MA20_TYPE_LABELS.get(code, "미등록 유형")
+
+
+def _bool_label(value: object) -> str:
+    if value is True:
+        return "예"
+    if value is False:
+        return "아니오"
+    return "-"
+
+
+def _value_label(value: object) -> str:
+    if value is None or value == "":
+        return "-"
+    if value is True or value is False:
+        return _bool_label(value)
+    return str(value)
 
 
 def _first_reason(reasons: tuple[str, ...]) -> str:

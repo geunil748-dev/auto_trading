@@ -762,6 +762,12 @@ def _side_text(value: Any) -> str:
 
 def _message_text(message: Any) -> str:
     text = str(message)
+    if text.startswith("candidate_evaluation_saved "):
+        return _candidate_evaluation_saved_text(text)
+    if text.startswith("vwap_ma20_skipped_no_data "):
+        return _vwap_ma20_skipped_log_text(text)
+    if text.startswith("vwap_ma20_evaluated "):
+        return _vwap_ma20_evaluated_log_text(text)
     if text.startswith("[PIPELINE] "):
         return _structured_log_text("후보 생성 단계", text, "[PIPELINE] ", _PIPELINE_LOG_LABELS)
     if text.startswith("[FILTER] "):
@@ -802,6 +808,90 @@ def _message_text(message: Any) -> str:
     if text.startswith("Entry blocked: "):
         return "진입 차단: " + _reason_text(text.removeprefix("Entry blocked: ").strip())
     return _replace_known_tokens(text)
+
+
+def _candidate_evaluation_saved_text(text: str) -> str:
+    pairs = dict(_key_value_pairs(text.removeprefix("candidate_evaluation_saved ")))
+    return (
+        "후보평가 저장: "
+        f"종목={pairs.get('symbol', '-')} "
+        f"최종점수={pairs.get('final_score', '-')} "
+        f"매수허용={_yes_no_text(pairs.get('buy_allowed'))} "
+        f"주문제출={_yes_no_text(pairs.get('order_submitted'))} "
+        f"매수판정={_candidate_reason_text(pairs.get('buy_block_reason'))} "
+        f"하드필터탈락={pairs.get('hard_filter_failed_count', '-')} "
+        f"소프트조건탈락={pairs.get('soft_condition_failed_count', '-')} "
+        f"VWAP/MA20상태={_candidate_status_text(pairs.get('vwap_ma20_status'))}"
+    )
+
+
+def _vwap_ma20_skipped_log_text(text: str) -> str:
+    pairs = dict(_key_value_pairs(text.removeprefix("vwap_ma20_skipped_no_data ")))
+    return (
+        "VWAP/MA20 데이터 부족: "
+        f"종목={pairs.get('symbol', '-')} "
+        f"현재가={pairs.get('current_price', '-')} "
+        f"조건유형={_candidate_condition_type_text(pairs.get('condition_type'))} "
+        f"조건모드={_candidate_condition_mode_text(pairs.get('condition_mode'))} "
+        f"VWAP데이터={_yes_no_text(pairs.get('has_vwap'))} "
+        f"장중MA20데이터={_yes_no_text(pairs.get('has_intraday_ma20'))} "
+        f"사유={_candidate_reason_text(pairs.get('reason'))}"
+    )
+
+
+def _vwap_ma20_evaluated_log_text(text: str) -> str:
+    pairs = dict(_key_value_pairs(text.removeprefix("vwap_ma20_evaluated ")))
+    return (
+        "VWAP/MA20 평가: "
+        f"종목={pairs.get('symbol', '-')} "
+        f"현재가={pairs.get('current_price', '-')} "
+        f"VWAP={pairs.get('vwap_usd', '-')} "
+        f"장중MA20={pairs.get('intraday_ma20_usd', '-')} "
+        f"조건유형={_candidate_condition_type_text(pairs.get('condition_type'))} "
+        f"조건모드={_candidate_condition_mode_text(pairs.get('condition_mode'))} "
+        f"VWAP통과={_yes_no_text(pairs.get('vwap_pass'))} "
+        f"MA20통과={_yes_no_text(pairs.get('ma20_pass'))} "
+        f"종합통과={_yes_no_text(pairs.get('vwap_ma20_pass'))}"
+    )
+
+
+def _candidate_reason_text(reason: str | None) -> str:
+    raw = str(reason or "").strip()
+    if not raw:
+        return "-"
+    return _CANDIDATE_REASON_TEXT.get(raw, _reason_text(raw))
+
+
+def _candidate_status_text(status: str | None) -> str:
+    raw = str(status or "").strip()
+    if not raw:
+        return "-"
+    return _CANDIDATE_STATUS_TEXT.get(raw, raw)
+
+
+def _candidate_condition_mode_text(mode: str | None) -> str:
+    raw = str(mode or "").strip()
+    if not raw:
+        return "-"
+    return _CANDIDATE_CONDITION_MODE_TEXT.get(raw, raw)
+
+
+def _candidate_condition_type_text(condition_type: str | None) -> str:
+    raw = str(condition_type or "").strip()
+    if not raw:
+        return "-"
+    return _CANDIDATE_CONDITION_TYPE_TEXT.get(raw, raw)
+
+
+def _yes_no_text(value: str | None) -> str:
+    raw = str(value or "").strip().lower()
+    if raw == "true":
+        return "예"
+    if raw == "false":
+        return "아니오"
+    if raw in {"none", "null", ""}:
+        return "-"
+    return str(value)
 
 
 def _structured_log_text(
@@ -925,10 +1015,53 @@ _REASON_TEXT = {
     "TRAILING_STOP": "트레일링 스탑",
 }
 
+_CANDIDATE_REASON_TEXT = {
+    **_REASON_TEXT,
+    "BUY_ALLOWED": "매수 허용",
+    "BREAKOUT_NOT_TRIGGERED": "돌파 미발생",
+    "BREAKOUT_CLOSE_FAILED": "5분봉 종가 돌파 미충족",
+    "FINAL_SCORE_BELOW_THRESHOLD": "최종 점수 기준 미달",
+    "ORDER_NOT_SUBMITTED": "주문 미제출",
+    "OVERHEAT_LIMIT_EXCEEDED": "과열 제한 초과",
+    "VOLUME_INCREASE_FAILED": "5분 거래량 증가 미충족",
+    "VWAP_MA20_FAILED": "VWAP/MA20 조건 미충족",
+    "VWAP_MA20_DATA_MISSING": "VWAP/MA20 데이터 없음",
+    "PULLBACK_REBREAK_FAILED": "눌림 후 재돌파 미충족",
+}
+
+_CANDIDATE_STATUS_TEXT = {
+    "DISABLED": "비활성화",
+    "SKIPPED_NO_DATA": "데이터 없음으로 건너뜀",
+    "PASS": "통과",
+    "FAIL": "실패",
+}
+
+_CANDIDATE_CONDITION_MODE_TEXT = {
+    "HARD_FILTER": "하드필터",
+    "SOFT_SCORE": "소프트점수",
+    "OFF": "꺼짐",
+}
+
+_CANDIDATE_CONDITION_TYPE_TEXT = {
+    "AND": "VWAP와 MA20 모두",
+    "OR": "VWAP 또는 MA20",
+    "VWAP_ONLY": "VWAP만",
+    "MA20_ONLY": "MA20만",
+    "OFF": "꺼짐",
+}
+
 _PIPELINE_LOG_LABELS = {
+    "requested_gainer_limit": "상승률 요청",
+    "received_gainer_count": "상승률 수신",
+    "requested_turnover_limit": "거래량 요청",
+    "received_turnover_count": "거래량 수신",
+    "requested_trade_value_limit": "거래대금 요청",
+    "received_trade_value_count": "거래대금 수신",
     "gainers_count": "상승률 랭킹",
     "volume_count": "거래량 랭킹",
+    "trade_value_count": "거래대금 랭킹",
     "intersection_count": "교집합",
+    "ranking_union_count": "합집합",
     "snapshot_success_count": "시세 조회 성공",
     "snapshot_fail_count": "시세 조회 실패",
     "risk_pass_count": "필터 통과 후보",
@@ -946,9 +1079,17 @@ _FILTER_LOG_LABELS = {
 }
 
 _PIPELINE_SUMMARY_LOG_LABELS = {
+    "requested_gainer_limit": "상승률 요청",
+    "received_gainer_count": "상승률 수신",
+    "requested_turnover_limit": "거래량 요청",
+    "received_turnover_count": "거래량 수신",
+    "requested_trade_value_limit": "거래대금 요청",
+    "received_trade_value_count": "거래대금 수신",
     "gainers": "상승률 랭킹",
     "volume": "거래량 랭킹",
+    "trade_value": "거래대금 랭킹",
     "intersection": "교집합",
+    "ranking_union": "합집합",
     "snapshot_success": "시세 조회 성공",
     "snapshot_fail": "시세 조회 실패",
     "risk_pass": "필터 통과 후보",
@@ -980,6 +1121,11 @@ _COUNT_LOG_KEYS = {
     "gainers_count",
     "intersection",
     "intersection_count",
+    "ranking_union",
+    "ranking_union_count",
+    "received_gainer_count",
+    "received_turnover_count",
+    "received_trade_value_count",
     "removed_by_gap",
     "removed_by_opening_change",
     "removed_by_price",
@@ -997,6 +1143,11 @@ _COUNT_LOG_KEYS = {
     "snapshot_success_count",
     "volume",
     "volume_count",
+    "requested_gainer_limit",
+    "requested_turnover_limit",
+    "requested_trade_value_limit",
+    "trade_value",
+    "trade_value_count",
 }
 
 _SNAPSHOT_REASON_TEXT = {

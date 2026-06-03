@@ -49,6 +49,7 @@ class MarketData:
         self.snapshot_requests: list[set[str]] = []
         self.gainers_limit: int | None = None
         self.turnover_limit: int | None = None
+        self.trade_value_limit: int | None = None
 
     def market_context(self) -> MarketContext:
         return self.context
@@ -60,6 +61,10 @@ class MarketData:
     def ranked_turnover(self, limit: int | None = None) -> tuple[RankedStock, ...]:
         self.turnover_limit = limit
         return (RankedStock("BBB", 1), RankedStock("AAA", 2), RankedStock("CCC", 3))
+
+    def ranked_trade_value(self, limit: int | None = None) -> tuple[RankedStock, ...]:
+        self.trade_value_limit = limit
+        return (RankedStock("DDD", 1), RankedStock("BBB", 2))
 
     def candidate_snapshots(self, tickers: set[str]) -> dict[str, CandidateSnapshot]:
         self.snapshot_requests.append(tickers)
@@ -82,6 +87,9 @@ class EmptyMarketData:
     def ranked_turnover(self, limit: int | None = None) -> tuple[RankedStock, ...]:
         return ()
 
+    def ranked_trade_value(self, limit: int | None = None) -> tuple[RankedStock, ...]:
+        return ()
+
     def candidate_snapshots(self, tickers: set[str]) -> dict[str, CandidateSnapshot]:
         self.snapshot_requests.append(tickers)
         return {}
@@ -100,6 +108,9 @@ class RelaxableMarketData:
 
     def ranked_turnover(self, limit: int | None = None) -> tuple[RankedStock, ...]:
         return (RankedStock("AAA", 1),)
+
+    def ranked_trade_value(self, limit: int | None = None) -> tuple[RankedStock, ...]:
+        return ()
 
     def candidate_snapshots(self, tickers: set[str]) -> dict[str, CandidateSnapshot]:
         self.snapshot_requests.append(tickers)
@@ -160,21 +171,23 @@ def test_pipeline_screens_scores_and_persists_selected_candidates() -> None:
     assert run.blocked_reason is None
     assert market_data.gainers_limit == 100
     assert market_data.turnover_limit == 100
-    assert market_data.snapshot_requests[0] == {"AAA", "BBB"}
+    assert market_data.trade_value_limit == 100
+    assert market_data.snapshot_requests[0] == {"AAA", "BBB", "CCC", "DDD", "OUT"}
     assert [item.candidate.ticker for item in repository.targets] == ["AAA", "BBB"]
     assert [item.score.ticker for item in repository.scores] == ["AAA", "BBB"]
     assert [item.ticker for item in run.selected] == ["AAA", "BBB"]
     messages = [log.message for log in repository.logs]
     assert repository.logs[-1].message == "Screened 2 targets and selected 2."
     assert "CANDIDATE_SNAPSHOT_SAVED: 후보 2건을 DB에 저장했습니다." in messages
-    assert "Filter rejects: none." in messages
+    assert "Filter rejects: MISSING_SNAPSHOT=3." in messages
     assert "[SAVE_TARGETS] candidate_count=2 trade_date=2026-05-22" in messages
     assert "[SAVE_SCORES] score_count=2 trade_date=2026-05-22" in messages
     assert (
         "[PIPELINE] requested_gainer_limit=100 received_gainer_count=3 "
         "requested_turnover_limit=100 received_turnover_count=3 "
-        "gainers_count=3 volume_count=3 intersection_count=2 "
-        "snapshot_success_count=2 snapshot_fail_count=0 risk_pass_count=2 "
+        "requested_trade_value_limit=100 received_trade_value_count=2 "
+        "gainers_count=3 volume_count=3 trade_value_count=2 intersection_count=2 "
+        "ranking_union_count=5 snapshot_success_count=2 snapshot_fail_count=3 risk_pass_count=2 "
         "scoring_pass_count=2 final_selected_count=2"
         in messages
     )
@@ -204,6 +217,7 @@ def test_pipeline_passes_custom_ranking_limits_to_market_data() -> None:
 
     assert market_data.gainers_limit == 250
     assert market_data.turnover_limit == 300
+    assert market_data.trade_value_limit == 300
 
 
 def test_pipeline_logs_and_skips_market_calls_when_global_gate_blocks_entry() -> None:
@@ -222,7 +236,7 @@ def test_pipeline_logs_and_skips_market_calls_when_global_gate_blocks_entry() ->
     assert run.blocked_reason == "MARKET_BELOW_MA20"
     assert [item.candidate.ticker for item in repository.targets] == ["AAA", "BBB"]
     assert repository.scores == []
-    assert market_data.snapshot_requests[0] == {"AAA", "BBB"}
+    assert market_data.snapshot_requests[0] == {"AAA", "BBB", "CCC", "DDD", "OUT"}
     assert repository.logs[-2:] == [
         BotLog("WARNING", "pipeline", "Entry blocked: MARKET_BELOW_MA20"),
         BotLog("INFO", "pipeline", "Screened 2 targets and selected 0."),

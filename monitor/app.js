@@ -912,7 +912,122 @@ function renderHoldingRow(holding) {
 }
 
 function renderLogRow([time, level, message]) {
-  return `<div class="log-row"><time>${escapeHtml(time)}</time><span class="log-level">${escapeHtml(level)}</span><span>${escapeHtml(message)}</span></div>`;
+  const displayMessage = translateLogMessage(message);
+  return `<div class="log-row"><time>${escapeHtml(time)}</time><span class="log-level">${escapeHtml(level)}</span><span>${escapeHtml(displayMessage)}</span></div>`;
+}
+
+function translateLogMessage(message) {
+  const text = String(message || "");
+  if (text.startsWith("candidate_evaluation_saved ")) {
+    const values = keyValuePairs(text.replace("candidate_evaluation_saved ", ""));
+    return [
+      "후보평가 저장:",
+      `종목=${values.symbol || "-"}`,
+      `최종점수=${values.final_score || "-"}`,
+      `매수허용=${yesNoText(values.buy_allowed)}`,
+      `주문제출=${yesNoText(values.order_submitted)}`,
+      `매수판정=${candidateReasonText(values.buy_block_reason)}`,
+      `하드필터탈락=${values.hard_filter_failed_count || "-"}`,
+      `소프트조건탈락=${values.soft_condition_failed_count || "-"}`,
+      `VWAP/MA20상태=${candidateStatusText(values.vwap_ma20_status)}`,
+    ].join(" ");
+  }
+  if (text.startsWith("vwap_ma20_skipped_no_data ")) {
+    const values = keyValuePairs(text.replace("vwap_ma20_skipped_no_data ", ""));
+    return [
+      "VWAP/MA20 데이터 부족:",
+      `종목=${values.symbol || "-"}`,
+      `현재가=${values.current_price || "-"}`,
+      `조건유형=${candidateConditionTypeText(values.condition_type)}`,
+      `조건모드=${candidateConditionModeText(values.condition_mode)}`,
+      `VWAP데이터=${yesNoText(values.has_vwap)}`,
+      `장중MA20데이터=${yesNoText(values.has_intraday_ma20)}`,
+      `사유=${candidateReasonText(values.reason)}`,
+    ].join(" ");
+  }
+  if (text.startsWith("vwap_ma20_evaluated ")) {
+    const values = keyValuePairs(text.replace("vwap_ma20_evaluated ", ""));
+    return [
+      "VWAP/MA20 평가:",
+      `종목=${values.symbol || "-"}`,
+      `현재가=${values.current_price || "-"}`,
+      `VWAP=${values.vwap_usd || "-"}`,
+      `장중MA20=${values.intraday_ma20_usd || "-"}`,
+      `조건유형=${candidateConditionTypeText(values.condition_type)}`,
+      `조건모드=${candidateConditionModeText(values.condition_mode)}`,
+      `VWAP통과=${yesNoText(values.vwap_pass)}`,
+      `MA20통과=${yesNoText(values.ma20_pass)}`,
+      `종합통과=${yesNoText(values.vwap_ma20_pass)}`,
+    ].join(" ");
+  }
+  return text;
+}
+
+function keyValuePairs(text) {
+  return String(text || "").split(/\s+/).reduce((pairs, part) => {
+    const index = part.indexOf("=");
+    if (index <= 0) return pairs;
+    pairs[part.slice(0, index)] = part.slice(index + 1);
+    return pairs;
+  }, {});
+}
+
+function yesNoText(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (text === "true") return "예";
+  if (text === "false") return "아니오";
+  if (!text || text === "none" || text === "null") return "-";
+  return String(value);
+}
+
+function candidateReasonText(reason) {
+  const labels = {
+    BUY_ALLOWED: "매수 허용",
+    BREAKOUT_NOT_TRIGGERED: "돌파 미발생",
+    BREAKOUT_CLOSE_FAILED: "5분봉 종가 돌파 미충족",
+    FINAL_SCORE_BELOW_THRESHOLD: "최종 점수 기준 미달",
+    ORDER_NOT_SUBMITTED: "주문 미제출",
+    OVERHEAT_LIMIT_EXCEEDED: "과열 제한 초과",
+    VOLUME_INCREASE_FAILED: "5분 거래량 증가 미충족",
+    VWAP_MA20_FAILED: "VWAP/MA20 조건 미충족",
+    VWAP_MA20_DATA_MISSING: "VWAP/MA20 데이터 없음",
+    PULLBACK_REBREAK_FAILED: "눌림 후 재돌파 미충족",
+  };
+  const text = String(reason || "").trim();
+  return text ? labels[text] || text : "-";
+}
+
+function candidateStatusText(status) {
+  const labels = {
+    DISABLED: "비활성화",
+    SKIPPED_NO_DATA: "데이터 없음으로 건너뜀",
+    PASS: "통과",
+    FAIL: "실패",
+  };
+  const text = String(status || "").trim();
+  return text ? labels[text] || text : "-";
+}
+
+function candidateConditionModeText(mode) {
+  const labels = {
+    HARD_FILTER: "하드필터",
+    SOFT_SCORE: "소프트점수",
+    OFF: "꺼짐",
+  };
+  const text = String(mode || "").trim();
+  return text ? labels[text] || text : "-";
+}
+
+function candidateConditionTypeText(type) {
+  const labels = {
+    AND: "VWAP와 MA20 모두",
+    OR: "VWAP 또는 MA20",
+    VWAP_ONLY: "VWAP만",
+    MA20_ONLY: "MA20만",
+    OFF: "꺼짐",
+  };
+  const text = String(type || "").trim();
+  return text ? labels[text] || text : "-";
 }
 
 function filterVisibleLogs(logs) {

@@ -72,7 +72,7 @@ def test_buy_intent_executor_submits_and_records_mock_orders() -> None:
         BotLog(
             "INFO",
             "execution",
-            "매수 주문 1건: AAA 2주 @ $10.50 (주문금액 $21.00, 배분 5.0%, 사유 OPENING_BREAKOUT)",
+            "매수 주문 1건: AAA 2주 @ $10.50 (주문금액 $21.00, 배분 5.0%, 사유 장초반 돌파)",
         )
     ]
 

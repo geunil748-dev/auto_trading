@@ -48,7 +48,7 @@ def test_sell_intent_executor_records_exit_reason() -> None:
         )
     ]
     assert repository.logs == [
-        BotLog("INFO", "execution", "매도 주문 1건: AAA 2주 @ $9.70 (사유 TRAILING_STOP)")
+        BotLog("INFO", "execution", "매도 주문 1건: AAA 2주 @ $9.70 (사유 트레일링 스탑)")
     ]
 
 

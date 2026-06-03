@@ -166,7 +166,7 @@ def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> N
         regular_session=lambda: True,
     )
 
-    assert "Submitted 1 end-of-day mock sell orders" in tasks.close_session()
+    assert "장마감 모의 매도 주문 1건 제출" in tasks.close_session()
     assert monitor.calls == [(["holding"], True)]
     assert executor.intents == [SellIntent("AAA", 2, 10.5, "EOD")]
     assert notice_calls == ["sent"]
@@ -187,7 +187,7 @@ def test_close_session_skips_after_regular_session(monkeypatch, tmp_path) -> Non
         regular_session=lambda: False,
     )
 
-    assert tasks.close_session() == "Skipped session close outside the regular US session."
+    assert tasks.close_session() == "미국 정규장 시간이 아니라 장마감 처리를 건너뜁니다."
     assert calls == []
 
 
@@ -211,7 +211,7 @@ def test_cancel_unfilled_submits_cancellations_and_refreshes_monitor(
         trading_day=lambda: True,
     )
 
-    assert tasks.cancel_unfilled() == "Cancelled 1 unfilled mock orders."
+    assert tasks.cancel_unfilled() == "미체결 모의 주문 1건 취소."
     assert calls == ["refresh"]
 
 
@@ -295,7 +295,7 @@ def test_market_closed_skips_scheduled_trading_and_writes_monitor_state(tmp_path
         trading_day=lambda: False,
     )
 
-    assert tasks.dry_run() == "Skipped screening because the US market is closed."
+    assert tasks.dry_run() == "미국 휴장일이라 후보 점검을 건너뜁니다."
     assert "\ubbf8\uad6d \uac70\ub798\uc77c" in state_path.read_text(encoding="utf-8")
 
 
@@ -324,8 +324,8 @@ def test_intraday_watch_submits_one_exit_and_remembers_pending_sells(
         regular_session=lambda: True,
     )
 
-    assert tasks.intraday_watch() == "Intraday watch submitted 1 mock sell orders."
-    assert tasks.intraday_watch() == "Intraday watch submitted 0 mock sell orders."
+    assert tasks.intraday_watch() == "1분 감시 완료: 모의 매도 주문 1건 제출."
+    assert tasks.intraday_watch() == "1분 감시 완료: 모의 매도 주문 0건 제출."
     assert monitor.highs == [10.0, 10.5]
     assert executor.calls == [[SellIntent("AAA", 2, 9.6, "STOP_LOSS")], []]
 
@@ -363,8 +363,8 @@ def test_intraday_recheck_screens_and_limits_additional_buys(monkeypatch, tmp_pa
         regular_session=lambda: True,
     )
 
-    assert "submitted 1 mock buy orders" in tasks.intraday_recheck()
-    assert "submitted 0 mock buy orders" in tasks.intraday_recheck()
+    assert "모의 매수 주문 1건 제출" in tasks.intraday_recheck()
+    assert "모의 매수 주문 0건 제출" in tasks.intraday_recheck()
     assert executor.calls == [
         [
             BuyIntent(
@@ -585,5 +585,5 @@ def test_intraday_recheck_blocks_add_on_when_order_is_unfilled(
         regular_session=lambda: True,
     )
 
-    assert "submitted 0 mock buy orders" in tasks.intraday_recheck()
+    assert "모의 매수 주문 0건 제출" in tasks.intraday_recheck()
     assert executor.calls == [[]]

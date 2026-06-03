@@ -60,13 +60,13 @@ def live_mock_tasks(
 
     def prepare_day() -> str:
         KisJsonClient(kis_settings).access_token()
-        return "KIS token prepared."
+        return "KIS 토큰 준비 완료."
 
     def dry_run() -> str:
         if not trading_day():
             # 미국 휴장일에는 주문뿐 아니라 후보 수집도 멈춰 화면에 스킵 상태를 남긴다.
             _write_closed_state(monitor_state)
-            return "Skipped screening because the US market is closed."
+            return "미국 휴장일이라 후보 점검을 건너뜁니다."
         current_settings = _current_settings(settings)
         runtime, repository = build_live_dry_run(current_settings, kis_settings)
         latest.result = runtime.run()
@@ -78,16 +78,16 @@ def live_mock_tasks(
             json.dumps(state_from_dry_run(latest.result), indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
-        return f"Dry run selected {len(latest.result.scoring.selected)} scores."
+        return f"후보 점검 완료: 선정 점수 {len(latest.result.scoring.selected)}건."
 
     def mock_buy() -> str:
         if not trading_day():
             _write_closed_state(monitor_state)
-            return "Skipped mock buys because the US market is closed."
+            return "미국 휴장일이라 모의 매수를 건너뜁니다."
         if latest.result is None or latest.repository is None:
             dry_run()
         if latest.result is None or latest.repository is None:
-            return "Skipped mock buys because screening did not run."
+            return "후보 점검이 실행되지 않아 모의 매수를 건너뜁니다."
         current_settings = _current_settings(settings)
         intents = _apply_stop_loss_entry_guards(
             list(latest.result.buy_intents),
@@ -97,18 +97,18 @@ def live_mock_tasks(
         trades = build_mock_buy_executor(kis_settings, latest.repository, current_settings).execute(intents)
         latest.buy_tickers.update(item.ticker for item in intents)
         _write_live_state(monitor_state, kis_settings)
-        return f"Submitted {len(trades)} mock buy orders."
+        return f"모의 매수 주문 {len(trades)}건 제출."
 
     def refresh_orders() -> str:
         if not trading_day():
             _write_closed_state(monitor_state)
-            return "Skipped order refresh because the US market is closed."
+            return "미국 휴장일이라 주문/체결 상태 갱신을 건너뜁니다."
         _write_live_state(monitor_state, kis_settings)
-        return "Refreshed mock order, fill, and holding monitor state."
+        return "모의 주문/체결/보유 상태를 갱신했습니다."
 
     def intraday_watch() -> str:
         if not regular_session():
-            return "Skipped intraday watch outside the regular US session."
+            return "미국 정규장 시간이 아니라 1분 감시를 건너뜁니다."
         current_settings = _current_settings(settings)
         accounts, monitor, repository = build_live_exit_poll(current_settings, kis_settings)
         positions = _remembered_highs(accounts.positions(), latest.highs)
@@ -144,11 +144,11 @@ def live_mock_tasks(
                 )
             ] + retry_logs,
         )
-        return f"Intraday watch submitted {len(trades)} mock sell orders."
+        return f"1분 감시 완료: 모의 매도 주문 {len(trades)}건 제출."
 
     def intraday_recheck() -> str:
         if not regular_session():
-            return "Skipped intraday recheck outside the regular US session."
+            return "미국 정규장 시간이 아니라 15분 재평가를 건너뜁니다."
         current_settings = _current_settings(settings)
         runtime, repository = build_live_dry_run(current_settings, kis_settings)
         fixed_opening = _fixed_opening_result(latest, current_settings)
@@ -220,25 +220,25 @@ def live_mock_tasks(
             ] + _cancel_logs(cancelled, current_settings.mock_unfilled_reorder_minutes),
         )
         return (
-            f"Intraday recheck selected {len(latest.result.scoring.selected)} scores "
-            f"and submitted {len(trades)} mock buy orders."
+            f"15분 재평가 완료: 선정 점수 {len(latest.result.scoring.selected)}건, "
+            f"모의 매수 주문 {len(trades)}건 제출."
         )
 
     def cancel_unfilled() -> str:
         if not trading_day():
             _write_closed_state(monitor_state)
-            return "Skipped unfilled order cancellation because the US market is closed."
+            return "미국 휴장일이라 미체결 주문 취소를 건너뜁니다."
         cancelled = _cancel_unfilled_orders(kis_settings)
         latest.cancelled_orders.extend(cancelled)
         _write_live_state(monitor_state, kis_settings)
-        return f"Cancelled {len(cancelled)} unfilled mock orders."
+        return f"미체결 모의 주문 {len(cancelled)}건 취소."
 
     def close_session() -> str:
         if not trading_day():
             _write_closed_state(monitor_state)
-            return "Skipped session close because the US market is closed."
+            return "미국 휴장일이라 장마감 처리를 건너뜁니다."
         if not regular_session():
-            return "Skipped session close outside the regular US session."
+            return "미국 정규장 시간이 아니라 장마감 처리를 건너뜁니다."
         cancelled = _cancel_unfilled_orders(kis_settings)
         latest.cancelled_orders.extend(cancelled)
         current_settings = _current_settings(settings)
@@ -260,8 +260,8 @@ def live_mock_tasks(
         )
         _send_market_close_notice()
         return (
-            f"Submitted {len(trades)} end-of-day mock sell orders "
-            f"and wrote {report_path}."
+            f"장마감 모의 매도 주문 {len(trades)}건 제출 및 "
+            f"보고서 작성 완료: {report_path}"
         )
 
     return DailyTasks(

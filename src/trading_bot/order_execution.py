@@ -8,6 +8,7 @@ from trading_bot.config import TradingSettings
 from trading_bot.models import BotLog, BuyIntent, TradeRecord
 from trading_bot.order_protection import QuoteReader, buy_order_protection_log
 from trading_bot.ports import DailyRepository
+from trading_bot.performance_analysis import split_entry_reason, strategy_label, tag_label
 from trading_bot.strategy_metadata import strategy_metadata_from_settings
 
 OrderSubmitter = Callable[[BuyIntent], dict[str, object]]
@@ -134,11 +135,17 @@ def _buy_log(intents: list[BuyIntent]) -> str:
         (
             f"{item.ticker} {item.quantity}주 @ ${item.limit_price_usd:,.2f} "
             f"(주문금액 ${item.order_value_usd:,.2f}, 배분 {item.allocation_fraction:.1%}, "
-            f"사유 {item.entry_reason})"
+            f"사유 {_entry_reason_label(item.entry_reason)})"
         )
         for item in intents
     ]
     return f"매수 주문 {len(intents)}건: " + "; ".join(details)
+
+
+def _entry_reason_label(reason: str) -> str:
+    strategy, tags = split_entry_reason(reason)
+    labels = [strategy_label(strategy)] + [tag_label(tag) for tag in tags]
+    return " + ".join(label for label in labels if label)
 
 
 def _mark_candidate_evaluation_order_submitted(
