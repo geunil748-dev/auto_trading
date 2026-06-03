@@ -40,6 +40,43 @@ def test_health_state_is_read_only_and_reports_components(tmp_path, monkeypatch)
     assert payload["scheduler"]["status"] == "recent"
 
 
+def test_scheduler_health_uses_recent_heartbeat_when_monitor_state_is_stale(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    state = tmp_path / "state.json"
+    state.write_text("{}", encoding="utf-8")
+    heartbeat = tmp_path / "scheduler_heartbeat.json"
+    heartbeat.write_text("{}", encoding="utf-8")
+    now = time.time()
+    os.utime(state, (now - 3600, now - 3600))
+    os.utime(heartbeat, (now, now))
+
+    monkeypatch.setattr("trading_bot.monitor_server._database_health", lambda: {"connected": True})
+    payload = _health_state(state)
+
+    assert payload["scheduler"]["status"] == "running"
+    assert payload["scheduler"]["heartbeat_status"] == "recent"
+    assert payload["scheduler"]["monitor_state_status"] == "stale"
+
+
+def test_scheduler_health_reports_stale_heartbeat(tmp_path, monkeypatch) -> None:
+    state = tmp_path / "state.json"
+    state.write_text("{}", encoding="utf-8")
+    heartbeat = tmp_path / "scheduler_heartbeat.json"
+    heartbeat.write_text("{}", encoding="utf-8")
+    now = time.time()
+    os.utime(state, (now, now))
+    os.utime(heartbeat, (now - 3600, now - 3600))
+
+    monkeypatch.setattr("trading_bot.monitor_server._database_health", lambda: {"connected": True})
+    payload = _health_state(state)
+
+    assert payload["scheduler"]["status"] == "stale_heartbeat"
+    assert payload["scheduler"]["heartbeat_status"] == "stale"
+    assert payload["scheduler"]["monitor_state_status"] == "recent"
+
+
 def test_monitor_repository_has_trade_history_schema_guard() -> None:
     repository = SqlServerMonitorRepository(lambda: object())
 

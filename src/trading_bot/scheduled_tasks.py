@@ -155,10 +155,15 @@ def live_mock_tasks(
         mode = _candidate_mode(current_settings)
         if mode == "fixed" and fixed_opening is not None:
             # 장초반 고정 모드에서는 기존 후보만 최신 가격 기준으로 재평가한다.
-            latest.result = _recheck_fixed_watchlist(runtime, fixed_opening, current_settings)
+            latest.result = _recheck_fixed_watchlist(
+                runtime,
+                fixed_opening,
+                current_settings,
+                repository,
+            )
         elif mode == "hybrid" and fixed_opening is not None:
             # 하이브리드는 장초반 고정 후보와 15분 신규 후보 상위권을 합쳐 감시한다.
-            latest.result = _hybrid_recheck(runtime, fixed_opening, current_settings)
+            latest.result = _hybrid_recheck(runtime, fixed_opening, current_settings, repository)
         else:
             # 15분 재수집 모드에서는 매번 새 후보를 수집해 점수를 다시 계산한다.
             latest.result = runtime.run()
@@ -420,18 +425,26 @@ def _fixed_opening_result(
     return latest.opening_result
 
 
-def _recheck_fixed_watchlist(runtime, latest_result: DryRunResult, settings: TradingSettings) -> DryRunResult:
+def _recheck_fixed_watchlist(
+    runtime,
+    latest_result: DryRunResult,
+    settings: TradingSettings,
+    repository,
+) -> DryRunResult:
     account = runtime.accounts.current_account()
     selected = latest_result.scoring.selected[: settings.opening_fixed_candidate_limit]
     breakout_inputs = {
         item.ticker: runtime.breakout.breakout_input(item.ticker)
         for item in selected
     }
-    intents = plan_buy_intents(
+    intents = _plan_buy_intents_with_evaluation(
         selected,
         breakout_inputs,
         account,
         settings,
+        repository=repository,
+        trade_date=_scoring_trade_date(latest_result.scoring),
+        source="fixed_recheck",
     )
     return DryRunResult(account, latest_result.scoring, tuple(intents))
 
@@ -440,6 +453,7 @@ def _hybrid_recheck(
     runtime,
     opening_result: DryRunResult,
     settings: TradingSettings,
+    repository,
 ) -> DryRunResult:
     refreshed = runtime.run()
     account = runtime.accounts.current_account()
@@ -448,7 +462,15 @@ def _hybrid_recheck(
         item.ticker: runtime.breakout.breakout_input(item.ticker)
         for item in selected
     }
-    intents = plan_buy_intents(selected, breakout_inputs, account, settings)
+    intents = _plan_buy_intents_with_evaluation(
+        selected,
+        breakout_inputs,
+        account,
+        settings,
+        repository=repository,
+        trade_date=_scoring_trade_date(refreshed.scoring),
+        source="hybrid_recheck",
+    )
     return DryRunResult(account, refreshed.scoring, tuple(intents))
 
 
@@ -468,6 +490,36 @@ def _hybrid_selected_scores(
         combined[score.ticker] = score
     ranked = sorted(combined.values(), key=lambda item: (-item.total_score, item.ticker))
     return tuple(ranked[: settings.hybrid_candidate_limit])
+
+
+def _plan_buy_intents_with_evaluation(
+    selected,
+    breakout_inputs,
+    account,
+    settings,
+    *,
+    repository,
+    trade_date,
+    source: str,
+) -> list[BuyIntent]:
+    try:
+        return plan_buy_intents(
+            selected,
+            breakout_inputs,
+            account,
+            settings,
+            repository=repository,
+            trade_date=trade_date,
+            source=source,
+        )
+    except TypeError as exc:
+        if "unexpected keyword" not in str(exc):
+            raise
+        return plan_buy_intents(selected, breakout_inputs, account, settings)
+
+
+def _scoring_trade_date(scoring) -> object:
+    return getattr(scoring, "trade_date", current_trade_date())
 
 
 def _tag_mode_intents(intents: list[BuyIntent], mode: str) -> list[BuyIntent]:

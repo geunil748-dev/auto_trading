@@ -86,6 +86,7 @@ class _DashboardStateReader:
             mock["recentTrades"] = sql_state.get("recentTrades", [])
             mock["entryProfitSnapshots"] = sql_state.get("entryProfitSnapshots", [])
             mock["entryProfitSnapshotStats"] = sql_state.get("entryProfitSnapshotStats", {})
+            mock["trading_stats"] = sql_state.get("trading_stats", {})
             if isinstance(mock.get("account"), dict):
                 mock["account"]["realizedProfitUsd"] = (
                     sql_state.get("summary", {}).get("realizedProfitUsd", "$0.00")
@@ -101,6 +102,7 @@ class _DashboardStateReader:
                 real["connected"] = True
                 real["error"] = ""
         state["date"] = sql_state.get("date")
+        state["trading_stats"] = sql_state.get("trading_stats", {})
         state["sql"] = sql_state
         return state
 
@@ -124,6 +126,7 @@ def _accounts_from_cached_state(raw_state: dict[str, object]) -> dict[str, objec
                 "fills": raw_state.get("fills", []),
                 "logs": raw_state.get("logs", []),
                 "trades": raw_state.get("trades", []),
+                "trading_stats": raw_state.get("trading_stats", {}),
             },
             "real": {
                 "label": "실투자",
@@ -311,22 +314,59 @@ def _handler(
                 settings_payload = save_runtime_risk_settings(
                     _setting_float(body, "stopLossPercent", current),
                     _setting_float(body, "takeProfitPercent", current),
-                    _optional_float(body.get("minTotalScore")),
-                    _optional_float(body.get("minPriceUsd")),
-                    _optional_float(body.get("maxPriceUsd")),
-                    _optional_float(body.get("minOpeningPriceChangePercent")),
-                    _optional_float(body.get("minVolumeRatio")),
-                    _optional_float(body.get("maxOpeningGapPercent")),
-                    _optional_bool(body.get("refreshIntradayCandidates")),
-                    _optional_text(body.get("candidateSelectionMode")),
-                    _optional_bool(body.get("partialTakeProfitEnabled")),
-                    _optional_float(body.get("trailingStopActivationPercent")),
-                    _optional_float(body.get("maxEntryPriceChangePercent")),
-                    _optional_float(body.get("breakoutHoldMinutes")),
-                    _optional_bool(body.get("require5mCloseAboveBreakout")),
-                    _optional_bool(body.get("require5mVolumeIncrease")),
-                    _optional_bool(body.get("requireVwapOrMa20")),
-                    _optional_bool(body.get("requirePullbackRebreak")),
+                    min_total_score=_optional_float(body.get("minTotalScore")),
+                    min_price_usd=_optional_float(body.get("minPriceUsd")),
+                    max_price_usd=_optional_float(body.get("maxPriceUsd")),
+                    min_opening_price_change_percent=_optional_float(
+                        body.get("minOpeningPriceChangePercent")
+                    ),
+                    min_volume_ratio=_optional_float(body.get("minVolumeRatio")),
+                    max_opening_gap_percent=_optional_float(body.get("maxOpeningGapPercent")),
+                    refresh_intraday_candidates=_optional_bool(
+                        body.get("refreshIntradayCandidates")
+                    ),
+                    candidate_selection_mode=_optional_text(body.get("candidateSelectionMode")),
+                    partial_take_profit_enabled=_optional_bool(
+                        body.get("partialTakeProfitEnabled")
+                    ),
+                    trailing_stop_activation_percent=_optional_float(
+                        body.get("trailingStopActivationPercent")
+                    ),
+                    max_entry_price_change_percent=_optional_float(
+                        body.get("maxEntryPriceChangePercent")
+                    ),
+                    breakout_hold_minutes=_optional_float(body.get("breakoutHoldMinutes")),
+                    require_5m_close_above_breakout=_optional_bool(
+                        body.get("require5mCloseAboveBreakout")
+                    ),
+                    require_5m_volume_increase=_optional_bool(
+                        body.get("require5mVolumeIncrease")
+                    ),
+                    min_5m_volume_increase_percent=_optional_float(
+                        body.get("min5mVolumeIncreasePercent")
+                    ),
+                    require_vwap_or_ma20=_optional_bool(body.get("requireVwapOrMa20")),
+                    require_pullback_rebreak=_optional_bool(
+                        body.get("requirePullbackRebreak")
+                    ),
+                    gainer_ranking_limit=_optional_int(body.get("gainerRankingLimit")),
+                    turnover_ranking_limit=_optional_int(body.get("turnoverRankingLimit")),
+                    overheat_limit_condition_mode=_optional_text(
+                        body.get("overheatLimitConditionMode")
+                    ),
+                    breakout_close_condition_mode=_optional_text(
+                        body.get("breakoutCloseConditionMode")
+                    ),
+                    volume_increase_condition_mode=_optional_text(
+                        body.get("volumeIncreaseConditionMode")
+                    ),
+                    vwap_ma20_condition_mode=_optional_text(
+                        body.get("vwapMa20ConditionMode")
+                    ),
+                    vwap_ma20_condition_type=_optional_text(body.get("vwapMa20ConditionType")),
+                    pullback_rebreak_condition_mode=_optional_text(
+                        body.get("pullbackRebreakConditionMode")
+                    ),
                 )
             except Exception as exc:
                 self._write_json({"ok": False, "error": str(exc)}, status=400)
@@ -396,19 +436,52 @@ def _database_health() -> dict[str, object]:
 
 
 def _scheduler_health(state_path: Path) -> dict[str, object]:
+    heartbeat_path = state_path.parent / "scheduler_heartbeat.json"
+    heartbeat_age_seconds = _file_age_seconds(heartbeat_path)
+    monitor_state_age_seconds = _file_age_seconds(state_path)
+    if heartbeat_age_seconds is not None:
+        heartbeat_status = "recent" if heartbeat_age_seconds <= 120 else "stale"
+        return {
+            "status": "running" if heartbeat_status == "recent" else "stale_heartbeat",
+            "heartbeat_exists": True,
+            "heartbeat_age_seconds": heartbeat_age_seconds,
+            "heartbeat_status": heartbeat_status,
+            "monitor_state_exists": state_path.exists(),
+            "monitor_state_age_seconds": monitor_state_age_seconds,
+            "monitor_state_status": _age_status(monitor_state_age_seconds, 600),
+        }
     if not state_path.exists():
         return {
             "status": "missing_state",
+            "heartbeat_exists": False,
+            "heartbeat_age_seconds": None,
+            "heartbeat_status": "missing",
             "monitor_state_exists": False,
             "monitor_state_age_seconds": None,
+            "monitor_state_status": "missing",
         }
-    age_seconds = max(int(time.time() - state_path.stat().st_mtime), 0)
-    status = "recent" if age_seconds <= 600 else "stale"
+    status = _age_status(monitor_state_age_seconds, 600)
     return {
         "status": status,
+        "heartbeat_exists": False,
+        "heartbeat_age_seconds": None,
+        "heartbeat_status": "missing",
         "monitor_state_exists": True,
-        "monitor_state_age_seconds": age_seconds,
+        "monitor_state_age_seconds": monitor_state_age_seconds,
+        "monitor_state_status": status,
     }
+
+
+def _file_age_seconds(path: Path) -> int | None:
+    if not path.exists():
+        return None
+    return max(int(time.time() - path.stat().st_mtime), 0)
+
+
+def _age_status(age_seconds: int | None, recent_seconds: int) -> str:
+    if age_seconds is None:
+        return "missing"
+    return "recent" if age_seconds <= recent_seconds else "stale"
 
 
 def _read_monitor_state(reader: Any) -> dict[str, object]:

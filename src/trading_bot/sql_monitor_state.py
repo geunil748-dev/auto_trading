@@ -41,6 +41,7 @@ class SqlMonitorStateSource:
             "candidateSnapshot": _candidate_snapshot_status(
                 self.repository.candidate_snapshot_status()
             ),
+            "trading_stats": _trading_stats(self.repository.recent_trading_stats()),
             "targets": [
                 _target(row, scores.get(row[0]), missing_score_decision)
                 for row in self.repository.latest_targets()
@@ -173,6 +174,32 @@ def _candidate_snapshot_status(row: tuple[Any, ...]) -> dict[str, object]:
         "last_candidate_snapshot_message": _message_text(message),
         "sample_warning": sample_warning,
     }
+
+
+def _trading_stats(row: tuple[Any, ...]) -> dict[str, object]:
+    total_days = int(_number(row[0])) if len(row) > 0 else 0
+    candidate_days = int(_number(row[1])) if len(row) > 1 else 0
+    scoring_days = int(_number(row[2])) if len(row) > 2 else 0
+    strict_filter_days = int(_number(row[3])) if len(row) > 3 else 0
+    selected_days = int(_number(row[4])) if len(row) > 4 else 0
+    return {
+        "lookback_days": 30,
+        "total_trading_days": total_days,
+        "candidate_days": candidate_days,
+        "candidate_rate": _rate_percent(candidate_days, total_days),
+        "scoring_days": scoring_days,
+        "scoring_rate": _rate_percent(scoring_days, total_days),
+        "strict_filter_days": strict_filter_days,
+        "strict_filter_rate": _rate_percent(strict_filter_days, total_days),
+        "selected_days": selected_days,
+        "selected_rate": _rate_percent(selected_days, total_days),
+    }
+
+
+def _rate_percent(value: int, total: int) -> float:
+    if total <= 0:
+        return 0.0
+    return round(value / total * 100, 1)
 
 
 def _target_decision(
@@ -735,6 +762,28 @@ def _side_text(value: Any) -> str:
 
 def _message_text(message: Any) -> str:
     text = str(message)
+    if text.startswith("[PIPELINE] "):
+        return _structured_log_text("후보 생성 단계", text, "[PIPELINE] ", _PIPELINE_LOG_LABELS)
+    if text.startswith("[FILTER] "):
+        return _structured_log_text("필터 제외 현황", text, "[FILTER] ", _FILTER_LOG_LABELS)
+    if text.startswith("[PIPELINE_SUMMARY] "):
+        return _structured_log_text(
+            "후보 생성 요약",
+            text,
+            "[PIPELINE_SUMMARY] ",
+            _PIPELINE_SUMMARY_LOG_LABELS,
+        )
+    if text.startswith("[SAVE_TARGETS] "):
+        return _structured_log_text("후보 저장", text, "[SAVE_TARGETS] ", _SAVE_TARGETS_LOG_LABELS)
+    if text.startswith("[SAVE_SCORES] "):
+        return _structured_log_text("점수 저장", text, "[SAVE_SCORES] ", _SAVE_SCORES_LOG_LABELS)
+    if text.startswith("[MISSING_SNAPSHOT] "):
+        return _structured_log_text(
+            "시세 스냅샷 누락",
+            text,
+            "[MISSING_SNAPSHOT] ",
+            _MISSING_SNAPSHOT_LOG_LABELS,
+        )
     if text.startswith("Screened ") and " targets and selected " in text:
         parts = text.rstrip(".").split()
         if len(parts) >= 6:
@@ -753,6 +802,56 @@ def _message_text(message: Any) -> str:
     if text.startswith("Entry blocked: "):
         return "진입 차단: " + _reason_text(text.removeprefix("Entry blocked: ").strip())
     return _replace_known_tokens(text)
+
+
+def _structured_log_text(
+    title: str,
+    text: str,
+    prefix: str,
+    labels: dict[str, str],
+) -> str:
+    parts = [
+        _display_log_pair(key, value, labels)
+        for key, value in _key_value_pairs(text.removeprefix(prefix))
+    ]
+    return f"{title}: " + (", ".join(parts) if parts else text)
+
+
+def _key_value_pairs(text: str) -> list[tuple[str, str]]:
+    pairs = []
+    for chunk in text.split():
+        if "=" not in chunk:
+            continue
+        key, value = chunk.split("=", 1)
+        pairs.append((key.strip(), value.strip()))
+    return pairs
+
+
+def _display_log_pair(key: str, value: str, labels: dict[str, str]) -> str:
+    label = labels.get(key, key)
+    if key == "reason":
+        return f"{label} {_snapshot_reason_text(value)}"
+    if key in _COUNT_LOG_KEYS:
+        return f"{label} {value}건"
+    if key == "duration_ms":
+        return f"{label} {value}ms"
+    return f"{label} {value}"
+
+
+def _snapshot_reason_text(reason: str) -> str:
+    if reason in _SNAPSHOT_REASON_TEXT:
+        return _SNAPSHOT_REASON_TEXT[reason]
+    if reason.startswith("quote_http_error_"):
+        return f"호가 조회 HTTP 오류 {reason.removeprefix('quote_http_error_')}"
+    if reason.startswith("daily_prices_http_error_"):
+        return f"일봉 조회 HTTP 오류 {reason.removeprefix('daily_prices_http_error_')}"
+    if reason.startswith("quote_"):
+        suffix = reason.removeprefix("quote_")
+        return "호가 조회 실패: " + _SNAPSHOT_REASON_TEXT.get(suffix, suffix)
+    if reason.startswith("daily_prices_"):
+        suffix = reason.removeprefix("daily_prices_")
+        return "일봉 조회 실패: " + _SNAPSHOT_REASON_TEXT.get(suffix, suffix)
+    return _SNAPSHOT_REASON_TEXT.get(reason, _reason_text(reason))
 
 
 def _reason_count(part: str) -> str:
@@ -786,9 +885,14 @@ def _mode_text(mode: Any) -> str:
 
 _REASON_TEXT = {
     "ACCOUNT_EXPOSURE_LIMIT": "계좌 투자비중 초과",
+    "API_ERROR": "API 오류",
+    "CANDIDATE_SNAPSHOT_EMPTY": "후보 스냅샷 없음",
+    "CANDIDATE_SNAPSHOT_SAVE_FAILED": "후보 스냅샷 저장 실패",
+    "CANDIDATE_SNAPSHOT_SAVED": "후보 스냅샷 저장 완료",
     "DAILY_ACCOUNT_LOSS": "일일 손실 제한 도달",
     "EOD": "장마감 매도",
     "FX_VOLATILITY": "환율 변동성 초과",
+    "INSUFFICIENT_SAMPLE_FOR_STRATEGY_DECISION": "전략 판단 표본 부족",
     "INVALID_ACCOUNT_EQUITY": "계좌 평가금액 확인 불가",
     "INVALID_ORDER_VALUE": "주문 금액 오류",
     "CHART_POSITIVE": "차트 조건 양호",
@@ -812,7 +916,94 @@ _REASON_TEXT = {
     "PYRAMIDING": "불타기 추가매수",
     "RANKED_LIST": "랭킹 후보",
     "REFRESH_CANDIDATE": "15분 신규 후보",
+    "RETRY": "재시도",
+    "ORDER_FAILED": "주문 실패",
+    "QUOTE_LOOKUP_FAILED": "호가 조회 실패",
+    "STRICT_FILTER_NO_CANDIDATES": "엄격 필터 후보 부족",
     "STOP_LOSS": "손절",
     "TAKE_PROFIT": "익절",
     "TRAILING_STOP": "트레일링 스탑",
+}
+
+_PIPELINE_LOG_LABELS = {
+    "gainers_count": "상승률 랭킹",
+    "volume_count": "거래량 랭킹",
+    "intersection_count": "교집합",
+    "snapshot_success_count": "시세 조회 성공",
+    "snapshot_fail_count": "시세 조회 실패",
+    "risk_pass_count": "필터 통과 후보",
+    "scoring_pass_count": "점수 통과 후보",
+    "final_selected_count": "최종 선정 후보",
+}
+
+_FILTER_LOG_LABELS = {
+    "removed_by_price": "가격 조건 제외",
+    "removed_by_gap": "갭 조건 제외",
+    "removed_by_volume_ratio": "거래량 비율 제외",
+    "removed_by_opening_change": "장초반 상승률 제외",
+    "removed_by_score": "점수 기준 제외",
+    "final_count": "최종 후보",
+}
+
+_PIPELINE_SUMMARY_LOG_LABELS = {
+    "gainers": "상승률 랭킹",
+    "volume": "거래량 랭킹",
+    "intersection": "교집합",
+    "snapshot_success": "시세 조회 성공",
+    "snapshot_fail": "시세 조회 실패",
+    "risk_pass": "필터 통과 후보",
+    "score_pass": "점수 통과 후보",
+    "saved": "DB 저장 후보",
+    "duration_ms": "소요 시간",
+}
+
+_SAVE_TARGETS_LOG_LABELS = {
+    "candidate_count": "후보 수",
+    "trade_date": "거래일",
+}
+
+_SAVE_SCORES_LOG_LABELS = {
+    "score_count": "점수 수",
+    "trade_date": "거래일",
+}
+
+_MISSING_SNAPSHOT_LOG_LABELS = {
+    "ticker": "종목",
+    "reason": "사유",
+}
+
+_COUNT_LOG_KEYS = {
+    "candidate_count",
+    "final_count",
+    "final_selected_count",
+    "gainers",
+    "gainers_count",
+    "intersection",
+    "intersection_count",
+    "removed_by_gap",
+    "removed_by_opening_change",
+    "removed_by_price",
+    "removed_by_score",
+    "removed_by_volume_ratio",
+    "risk_pass",
+    "risk_pass_count",
+    "saved",
+    "score_count",
+    "score_pass",
+    "scoring_pass_count",
+    "snapshot_fail",
+    "snapshot_fail_count",
+    "snapshot_success",
+    "snapshot_success_count",
+    "volume",
+    "volume_count",
+}
+
+_SNAPSHOT_REASON_TEXT = {
+    "empty": "응답 없음",
+    "insufficient": "데이터 부족",
+    "missing_field": "필수 숫자 필드 누락",
+    "timeout": "시간 초과",
+    "daily_prices_empty": "일봉 데이터 없음",
+    "daily_prices_insufficient": "일봉 데이터 부족",
 }

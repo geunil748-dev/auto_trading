@@ -1,4 +1,24 @@
 /* 페이지별 패널 배치 */
+:root {
+  --panel: var(--surface);
+  --panel-2: #101923;
+  --border: var(--line);
+  --accent: var(--teal);
+  --danger: var(--red);
+  --warning: var(--amber);
+  --success: var(--green);
+  --setting-radius: 8px;
+  --setting-gap: 12px;
+  --settings-paper: var(--bg);
+  --settings-paper-card: var(--surface);
+  --settings-paper-border: var(--line);
+  --settings-paper-muted: var(--muted);
+  --settings-paper-text: var(--text);
+  --settings-paper-field: #101c27;
+  --settings-paper-tile: rgb(88 199 213 / 13%);
+  --settings-paper-tile-border: rgb(88 199 213 / 52%);
+}
+
 .work-grid {
   display: grid;
   grid-template-columns: minmax(560px, 1.4fr) minmax(360px, 1fr);
@@ -10,6 +30,7 @@ body[data-page="dashboard"] .logs,
 body[data-page="dashboard"] .orders,
 body[data-page="dashboard"] .fills,
 body[data-page="dashboard"] .candidate-history,
+body[data-page="dashboard"] .trading-stats-panel,
 body[data-page="dashboard"] .run-summary,
 body[data-page="dashboard"] .entry-reason-stats,
 body[data-page="dashboard"] .backtest-panel,
@@ -26,6 +47,7 @@ body[data-page="activity"] .account-error,
 body[data-page="activity"] .candidates,
 body[data-page="activity"] .holdings,
 body[data-page="activity"] .candidate-history,
+body[data-page="activity"] .trading-stats-panel,
 body[data-page="activity"] .run-summary,
 body[data-page="activity"] .entry-reason-stats,
 body[data-page="activity"] .backtest-panel,
@@ -50,6 +72,7 @@ body[data-page="candidateHistory"] .holdings,
 body[data-page="candidateHistory"] .logs,
 body[data-page="candidateHistory"] .orders,
 body[data-page="candidateHistory"] .fills,
+body[data-page="candidateHistory"] .trading-stats-panel,
 body[data-page="candidateHistory"] .run-summary,
 body[data-page="candidateHistory"] .entry-reason-stats,
 body[data-page="candidateHistory"] .backtest-panel,
@@ -65,11 +88,36 @@ body[data-page="candidateHistory"] .candidate-history {
   min-height: 250px;
 }
 
+body[data-page="tradingStats"] .account-summary,
+body[data-page="tradingStats"] .account-error,
+body[data-page="tradingStats"] .history-bar,
+body[data-page="tradingStats"] .candidates,
+body[data-page="tradingStats"] .holdings,
+body[data-page="tradingStats"] .candidate-history,
+body[data-page="tradingStats"] .run-summary,
+body[data-page="tradingStats"] .entry-reason-stats,
+body[data-page="tradingStats"] .backtest-panel,
+body[data-page="tradingStats"] .settings-panel,
+body[data-page="tradingStats"] .logs,
+body[data-page="tradingStats"] .orders,
+body[data-page="tradingStats"] .fills {
+  display: none;
+}
+
+body[data-page="tradingStats"] .work-grid {
+  grid-template-columns: minmax(320px, 1fr);
+}
+
+body[data-page="tradingStats"] .trading-stats-panel {
+  min-height: 250px;
+}
+
 body[data-page="runSummary"] .account-summary,
 body[data-page="runSummary"] .account-error,
 body[data-page="runSummary"] .candidates,
 body[data-page="runSummary"] .holdings,
 body[data-page="runSummary"] .candidate-history,
+body[data-page="runSummary"] .trading-stats-panel,
 body[data-page="runSummary"] .logs,
 body[data-page="runSummary"] .orders,
 body[data-page="runSummary"] .fills,
@@ -93,6 +141,7 @@ body[data-page="entryReasonStats"] .history-bar,
 body[data-page="entryReasonStats"] .candidates,
 body[data-page="entryReasonStats"] .holdings,
 body[data-page="entryReasonStats"] .candidate-history,
+body[data-page="entryReasonStats"] .trading-stats-panel,
 body[data-page="entryReasonStats"] .run-summary,
 body[data-page="entryReasonStats"] .logs,
 body[data-page="entryReasonStats"] .orders,
@@ -155,6 +204,7 @@ body[data-page="settings"] .history-bar,
 body[data-page="settings"] .candidates,
 body[data-page="settings"] .holdings,
 body[data-page="settings"] .candidate-history,
+body[data-page="settings"] .trading-stats-panel,
 body[data-page="settings"] .run-summary,
 body[data-page="settings"] .entry-reason-stats,
 body[data-page="settings"] .backtest-panel,
@@ -165,7 +215,7 @@ body[data-page="settings"] .fills {
 }
 
 body[data-page="settings"] .work-grid {
-  grid-template-columns: minmax(320px, 1180px);
+  grid-template-columns: minmax(320px, 1fr);
 }
 
 body[data-page="backtest"] .account-summary,
@@ -173,6 +223,7 @@ body[data-page="backtest"] .account-error,
 body[data-page="backtest"] .candidates,
 body[data-page="backtest"] .holdings,
 body[data-page="backtest"] .candidate-history,
+body[data-page="backtest"] .trading-stats-panel,
 body[data-page="backtest"] .run-summary,
 body[data-page="backtest"] .entry-reason-stats,
 body[data-page="backtest"] .settings-panel,
@@ -220,52 +271,83 @@ body[data-page="backtest"] .work-grid {
 
 .settings-panel {
   min-height: 220px;
+  background: var(--settings-paper);
+  color: var(--settings-paper-text);
+}
+
+.settings-panel .panel-head h2 {
+  color: var(--settings-paper-text);
+}
+
+.settings-panel .panel-head .eyebrow {
+  color: var(--teal);
 }
 
 .settings-stack {
   display: grid;
-  grid-template-columns: minmax(280px, 0.78fr) minmax(520px, 1.22fr);
+  grid-template-columns: repeat(2, minmax(360px, 1fr));
   align-items: start;
   max-width: none;
-  gap: 18px;
+  gap: 16px;
 }
 
 .settings-form {
   display: grid;
-  gap: 14px;
-  padding: 16px;
-  border: 1px solid var(--line);
+  overflow: hidden;
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--settings-paper-border);
   border-radius: 8px;
-  background: rgb(10 20 30 / 22%);
+  background: var(--settings-paper-card);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
 }
 
 .filter-settings-form {
-  gap: 16px;
+  gap: var(--setting-gap);
 }
 
 .buy-sell-settings-form {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
 }
 
 .buy-sell-settings-form .settings-group-head,
-.buy-sell-settings-form .setting-wide,
 .buy-sell-settings-form button,
 .buy-sell-settings-form .settings-status {
   grid-column: 1 / -1;
 }
 
-.settings-section {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  padding: 14px;
-  border: 1px solid rgb(88 199 213 / 16%);
-  border-radius: 8px;
-  background: rgb(7 15 23 / 20%);
+.buy-sell-settings-form .setting-wide {
+  grid-column: span 2;
 }
 
-.settings-section .settings-group-head,
-.settings-section .setting-wide,
+.settings-row {
+  display: grid;
+  gap: 14px 12px;
+  align-items: end;
+}
+
+.settings-row-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-row-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.settings-row-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.buy-sell-settings-form .settings-row-3,
+.buy-sell-settings-form .settings-row-4,
+.filter-settings-form .settings-row-3 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.filter-settings-form .setting-wide {
+  grid-column: 1 / -1;
+}
+
 #filterSettingsForm button,
 #filterSettingsForm .settings-status {
   grid-column: 1 / -1;
@@ -273,32 +355,122 @@ body[data-page="backtest"] .work-grid {
 
 .settings-group-head {
   display: grid;
-  gap: 4px;
+  gap: 6px;
+  padding: 18px 20px 16px;
+  border-bottom: 1px solid var(--settings-paper-border);
 }
 
 .settings-group-head strong {
-  color: var(--text);
+  color: var(--settings-paper-text);
   font-size: 1rem;
 }
 
 .settings-group-head span {
-  color: var(--muted);
+  color: var(--settings-paper-muted);
   font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.settings-subsection {
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+
+.settings-group-head + .settings-subsection {
+  border-top: 0;
+}
+
+.settings-section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 20px;
+}
+
+.settings-section-title strong {
+  color: var(--settings-paper-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.settings-section-title span {
+  color: var(--settings-paper-muted);
+  font-size: 0.75rem;
 }
 
 .settings-form label {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   color: var(--muted);
-  font-size: 0.86rem;
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
 .settings-form label.check-input {
   display: flex;
   align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  color: var(--settings-paper-text);
+}
+
+.condition-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  min-height: 38px;
-  color: var(--text);
+}
+
+.condition-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: start;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px 12px;
+  border: 1px solid rgb(88 199 213 / 18%);
+  border-radius: 8px;
+  background: rgb(9 18 27 / 74%);
+}
+
+.condition-row:has(input:checked) {
+  border-color: var(--settings-paper-tile-border);
+  background: var(--settings-paper-tile);
+}
+
+.condition-row.is-disabled {
+  opacity: 0.68;
+}
+
+.condition-row.is-disabled select {
+  cursor: not-allowed;
+}
+
+.condition-row-vwap label:nth-child(3) {
+  grid-column: 1;
+}
+
+.condition-row label {
+  min-width: 0;
+}
+
+.condition-row .check-input {
+  min-height: 24px;
+  align-self: start;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.condition-help {
+  margin: -2px 0 0;
+  color: var(--settings-paper-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
 }
 
 .check-input input {
@@ -311,32 +483,85 @@ body[data-page="backtest"] .work-grid {
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
-  gap: 8px;
+  gap: 0;
+  overflow: hidden;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--settings-paper-field);
 }
 
 .percent-input input {
   width: 100%;
+  min-height: 36px;
   padding: 0 12px;
+  border: 0;
+  background: #101c27;
+  color: var(--settings-paper-text);
+  font-size: 1rem;
 }
 
 .settings-form select {
   width: 100%;
   min-height: 38px;
   padding: 0 12px;
-  color: var(--text);
+  color: var(--settings-paper-text);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 7px;
   background: #101c27;
+  font-size: 0.92rem;
+}
+
+.settings-form input {
+  border-color: var(--line);
+}
+
+.settings-form input:focus,
+.settings-form select:focus {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 2px rgb(88 199 213 / 16%);
+  outline: none;
+}
+
+.percent-input:focus-within {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 2px rgb(88 199 213 / 16%);
 }
 
 .percent-input b {
+  display: inline-flex;
+  align-items: center;
+  align-self: stretch;
+  padding: 0 9px;
+  border-left: 1px solid var(--line);
+  background: var(--surface-2);
   color: var(--teal);
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .settings-status {
   min-height: 20px;
-  color: var(--muted);
-  font-size: 0.86rem;
+  margin: 0;
+  padding: 0 20px 16px;
+  color: var(--green);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.settings-form button {
+  min-height: 38px;
+  margin: 20px 20px 12px;
+  border-color: var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--settings-paper-text);
+  font-weight: 800;
+}
+
+.settings-form button:hover {
+  border-color: var(--teal);
+  background: rgb(88 199 213 / 10%);
 }
 
 .title-line {
@@ -421,6 +646,34 @@ body[data-page="backtest"] .work-grid {
 .account-summary dd {
   margin: 0;
   font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.trading-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+
+.trading-stats-grid dl {
+  min-height: 82px;
+  margin: 0;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--teal);
+  border-radius: 8px;
+  background: rgb(17 26 34 / 86%);
+}
+
+.trading-stats-grid dt {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.trading-stats-grid dd {
+  margin: 0;
+  font-size: 1.18rem;
   font-weight: 700;
 }
 
@@ -866,8 +1119,21 @@ body[data-page="activity"] .logs.is-collapsed {
   }
 
   .settings-stack,
-  #filterSettingsForm {
+  #filterSettingsForm,
+  .buy-sell-settings-form,
+  .condition-grid,
+  .settings-row,
+  .condition-row,
+  .condition-row-vwap {
     grid-template-columns: 1fr;
+  }
+
+  .buy-sell-settings-form .setting-wide {
+    grid-column: 1 / -1;
+  }
+
+  .condition-row-vwap label:nth-child(3) {
+    grid-column: 1;
   }
 
   .account-summary {

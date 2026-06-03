@@ -12,11 +12,6 @@ const defaultMonitorApiUrl = String.fromEnvironment(
   defaultValue: 'http://192.168.0.7:4174/api/state',
 );
 
-const monitorBearerToken = String.fromEnvironment(
-  'MONITOR_BEARER_TOKEN',
-  defaultValue: '',
-);
-
 class MonitorApp extends StatelessWidget {
   const MonitorApp({super.key});
 
@@ -77,12 +72,6 @@ class _MonitorHomeState extends State<MonitorHome> {
       final uri = Uri.parse(defaultMonitorApiUrl);
       final client = HttpClient();
       final request = await client.getUrl(uri);
-      if (monitorBearerToken.isNotEmpty) {
-        request.headers.set(
-          HttpHeaders.authorizationHeader,
-          'Bearer $monitorBearerToken',
-        );
-      }
       final response = await request.close();
       final text = await response.transform(utf8.decoder).join();
       client.close();

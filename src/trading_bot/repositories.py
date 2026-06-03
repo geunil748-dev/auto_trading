@@ -8,6 +8,7 @@ from typing import Any, Protocol
 from trading_bot.config import TradingSettings
 from trading_bot.models import (
     BotLog,
+    CandidateEvaluation,
     DailyScore,
     DailyTarget,
     EntryProfitSnapshot,
@@ -298,6 +299,61 @@ class SqlServerDailyRepository:
                 log.actual_value,
                 log.threshold_value,
             ),
+        )
+
+    def save_candidate_evaluations(self, evaluations: Iterable[CandidateEvaluation]) -> None:
+        rows = [_candidate_evaluation_row(item) for item in evaluations]
+        if not rows:
+            return
+        self._ensure_candidate_evaluations_table()
+        self._executemany(
+            """
+            INSERT INTO candidate_evaluations
+                (run_id, evaluation_time, trading_date, source, symbol, symbol_name,
+                 current_price, volume, dollar_volume, price_change_percent,
+                 opening_gap_percent, price_rank, volume_rank, relaxation_level,
+                 min_price, max_price, price_change_top, volume_top,
+                 min_selection_score, min_opening_price_change_percent,
+                 min_volume_ratio, max_opening_gap_percent, selection_score,
+                 soft_score_adjustment, final_score, overheat_condition_mode,
+                 breakout_close_condition_mode, volume_increase_condition_mode,
+                 vwap_ma20_condition_mode, vwap_ma20_condition_type,
+                 pullback_rebreak_condition_mode, overheat_pass, breakout_close_pass,
+                 volume_increase_pass, vwap_pass, ma20_pass, vwap_ma20_pass,
+                 pullback_rebreak_pass, final_score_pass, buy_allowed,
+                 order_submitted, order_id, buy_block_reason, buy_block_reasons,
+                 hard_filter_failed_count, soft_condition_failed_count,
+                 final_decision, settings_snapshot_json, condition_result_json,
+                 raw_candidate_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+
+    def mark_candidate_evaluation_order_submitted(
+        self,
+        ticker: str,
+        trade_date: date,
+        order_id: str | None = None,
+    ) -> None:
+        self._ensure_candidate_evaluations_table()
+        self._execute(
+            """
+            UPDATE candidate_evaluations
+            SET order_submitted = 1,
+                order_id = COALESCE(?, order_id),
+                final_decision = 'ORDER_SUBMITTED',
+                updated_at = SYSUTCDATETIME()
+            WHERE id = (
+                SELECT TOP (1) id
+                FROM candidate_evaluations
+                WHERE symbol = ?
+                  AND trading_date = ?
+                  AND buy_allowed = 1
+                ORDER BY evaluation_time DESC, id DESC
+            )
+            """,
+            (order_id, ticker, trade_date),
         )
 
     def save_daily_run_summary(
@@ -1348,6 +1404,88 @@ class SqlServerDailyRepository:
             """,
         )
 
+    def _ensure_candidate_evaluations_table(self) -> None:
+        self._execute_statement(
+            """
+            IF OBJECT_ID(N'dbo.candidate_evaluations', N'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.candidate_evaluations (
+                    id BIGINT IDENTITY PRIMARY KEY,
+                    run_id NVARCHAR(64) NULL,
+                    evaluation_time DATETIME2 NOT NULL,
+                    trading_date DATE NULL,
+                    source NVARCHAR(64) NULL,
+                    symbol NVARCHAR(32) NOT NULL,
+                    symbol_name NVARCHAR(128) NULL,
+                    current_price DECIMAL(18, 4) NULL,
+                    volume BIGINT NULL,
+                    dollar_volume DECIMAL(20, 4) NULL,
+                    price_change_percent DECIMAL(10, 4) NULL,
+                    opening_gap_percent DECIMAL(10, 4) NULL,
+                    price_rank INT NULL,
+                    volume_rank INT NULL,
+                    relaxation_level INT NULL,
+                    min_price DECIMAL(18, 4) NULL,
+                    max_price DECIMAL(18, 4) NULL,
+                    price_change_top INT NULL,
+                    volume_top INT NULL,
+                    min_selection_score DECIMAL(10, 4) NULL,
+                    min_opening_price_change_percent DECIMAL(10, 4) NULL,
+                    min_volume_ratio DECIMAL(10, 4) NULL,
+                    max_opening_gap_percent DECIMAL(10, 4) NULL,
+                    selection_score DECIMAL(10, 4) NULL,
+                    soft_score_adjustment DECIMAL(10, 4) NULL,
+                    final_score DECIMAL(10, 4) NULL,
+                    overheat_condition_mode NVARCHAR(32) NULL,
+                    breakout_close_condition_mode NVARCHAR(32) NULL,
+                    volume_increase_condition_mode NVARCHAR(32) NULL,
+                    vwap_ma20_condition_mode NVARCHAR(32) NULL,
+                    vwap_ma20_condition_type NVARCHAR(32) NULL,
+                    pullback_rebreak_condition_mode NVARCHAR(32) NULL,
+                    overheat_pass BIT NULL,
+                    breakout_close_pass BIT NULL,
+                    volume_increase_pass BIT NULL,
+                    vwap_pass BIT NULL,
+                    ma20_pass BIT NULL,
+                    vwap_ma20_pass BIT NULL,
+                    pullback_rebreak_pass BIT NULL,
+                    final_score_pass BIT NULL,
+                    buy_allowed BIT NOT NULL DEFAULT 0,
+                    order_submitted BIT NOT NULL DEFAULT 0,
+                    order_id NVARCHAR(128) NULL,
+                    buy_block_reason NVARCHAR(256) NULL,
+                    buy_block_reasons NVARCHAR(MAX) NULL,
+                    hard_filter_failed_count INT NULL,
+                    soft_condition_failed_count INT NULL,
+                    final_decision NVARCHAR(64) NULL,
+                    settings_snapshot_json NVARCHAR(MAX) NULL,
+                    condition_result_json NVARCHAR(MAX) NULL,
+                    raw_candidate_json NVARCHAR(MAX) NULL,
+                    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                    updated_at DATETIME2 NULL
+                );
+            END
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_candidate_evaluations_time' AND object_id = OBJECT_ID('dbo.candidate_evaluations'))
+                CREATE INDEX IX_candidate_evaluations_time ON dbo.candidate_evaluations (evaluation_time)
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_candidate_evaluations_symbol_time' AND object_id = OBJECT_ID('dbo.candidate_evaluations'))
+                CREATE INDEX IX_candidate_evaluations_symbol_time ON dbo.candidate_evaluations (symbol, evaluation_time)
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_candidate_evaluations_trading_date' AND object_id = OBJECT_ID('dbo.candidate_evaluations'))
+                CREATE INDEX IX_candidate_evaluations_trading_date ON dbo.candidate_evaluations (trading_date)
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_candidate_evaluations_buy_allowed' AND object_id = OBJECT_ID('dbo.candidate_evaluations'))
+                CREATE INDEX IX_candidate_evaluations_buy_allowed ON dbo.candidate_evaluations (buy_allowed)
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_candidate_evaluations_order_submitted' AND object_id = OBJECT_ID('dbo.candidate_evaluations'))
+                CREATE INDEX IX_candidate_evaluations_order_submitted ON dbo.candidate_evaluations (order_submitted)
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_candidate_evaluations_run_id' AND object_id = OBJECT_ID('dbo.candidate_evaluations'))
+                CREATE INDEX IX_candidate_evaluations_run_id ON dbo.candidate_evaluations (run_id)
+            """,
+        )
+
     def _execute(self, sql: str, row: tuple[Any, ...]) -> None:
         with closing(self.connect()) as connection:
             connection.cursor().execute(sql, row)
@@ -1525,6 +1663,68 @@ class SqlServerMonitorRepository:
         status = status_rows[0][0] if status_rows else ""
         message = status_rows[0][1] if status_rows else ""
         return (len(date_rows), latest_date, latest_count, status, message)
+
+    def recent_trading_stats(self, limit: int = 30) -> tuple[Any, ...]:
+        try:
+            rows = self._query(
+                """
+                SELECT
+                    COUNT(1) AS total_trading_days,
+                    COALESCE(SUM(candidate_day), 0) AS candidate_days,
+                    COALESCE(SUM(scoring_day), 0) AS scoring_days,
+                    COALESCE(SUM(strict_filter_day), 0) AS strict_filter_days,
+                    COALESCE(SUM(selected_day), 0) AS selected_days
+                FROM (
+                    SELECT
+                        d.trade_date,
+                        CASE WHEN EXISTS (
+                        SELECT 1 FROM daily_target dt
+                        WHERE dt.trade_date = d.trade_date
+                        ) THEN 1 ELSE 0 END AS candidate_day,
+                        CASE WHEN EXISTS (
+                            SELECT 1 FROM scoring sc
+                            WHERE sc.trade_date = d.trade_date
+                        ) THEN 1 ELSE 0 END AS scoring_day,
+                        CASE WHEN EXISTS (
+                            SELECT 1 FROM bot_log bl
+                            WHERE bl.trade_date = d.trade_date
+                              AND bl.message LIKE '%STRICT_FILTER_NO_CANDIDATES%'
+                        ) THEN 1 ELSE 0 END AS strict_filter_day,
+                        CASE WHEN (
+                            EXISTS (
+                                SELECT 1 FROM scoring selected_score
+                                WHERE selected_score.trade_date = d.trade_date
+                                  AND selected_score.is_selected = 1
+                            )
+                            OR EXISTS (
+                                SELECT 1 FROM bot_log selected_log
+                                WHERE selected_log.trade_date = d.trade_date
+                                  AND selected_log.message LIKE '%final_selected_count=[1-9]%'
+                            )
+                        ) THEN 1 ELSE 0 END AS selected_day
+                    FROM (
+                        SELECT TOP (?) trade_date
+                        FROM (
+                            SELECT trade_date FROM daily_target WHERE trade_date IS NOT NULL
+                            UNION
+                            SELECT trade_date FROM listed_target_snapshot WHERE trade_date IS NOT NULL
+                            UNION
+                            SELECT trade_date FROM scoring WHERE trade_date IS NOT NULL
+                            UNION
+                            SELECT trade_date FROM bot_log WHERE trade_date IS NOT NULL
+                            UNION
+                            SELECT trade_date FROM daily_run_summary WHERE trade_date IS NOT NULL
+                        ) raw_days
+                        GROUP BY trade_date
+                        ORDER BY trade_date DESC
+                    ) d
+                ) stats
+                """,
+                (limit,),
+            )
+        except Exception:
+            return (0, 0, 0, 0, 0)
+        return rows[0] if rows else (0, 0, 0, 0, 0)
 
     def _latest_daily_targets(self, limit: int) -> list[tuple[Any, ...]]:
         target_date = current_trade_date()
@@ -2194,15 +2394,15 @@ class SqlServerMonitorRepository:
         except Exception:
             return []
 
-    def history_logs(self, trade_date: date, limit: int = 200) -> list[tuple[Any, ...]]:
+    def history_logs(self, trade_date: date) -> list[tuple[Any, ...]]:
         return self._query(
             """
-            SELECT TOP (?) created_at, log_level, message
+            SELECT created_at, log_level, message
             FROM bot_log
             WHERE trade_date = ?
             ORDER BY created_at DESC
             """,
-            (limit, trade_date),
+            (trade_date,),
         )
 
     def history_run_summaries(self, trade_date: date, limit: int = 20) -> list[tuple[Any, ...]]:
@@ -2289,6 +2489,67 @@ def _order_snapshot_row(
         price if filled > 0 else None,
         time_text if filled > 0 else "",
     )
+
+
+def _candidate_evaluation_row(item: CandidateEvaluation) -> tuple[Any, ...]:
+    return (
+        item.run_id,
+        item.evaluation_time,
+        item.trading_date,
+        item.source,
+        item.symbol,
+        item.symbol_name,
+        item.current_price,
+        item.volume,
+        item.dollar_volume,
+        item.price_change_percent,
+        item.opening_gap_percent,
+        item.price_rank,
+        item.volume_rank,
+        item.relaxation_level,
+        item.min_price,
+        item.max_price,
+        item.price_change_top,
+        item.volume_top,
+        item.min_selection_score,
+        item.min_opening_price_change_percent,
+        item.min_volume_ratio,
+        item.max_opening_gap_percent,
+        item.selection_score,
+        item.soft_score_adjustment,
+        item.final_score,
+        item.overheat_condition_mode,
+        item.breakout_close_condition_mode,
+        item.volume_increase_condition_mode,
+        item.vwap_ma20_condition_mode,
+        item.vwap_ma20_condition_type,
+        item.pullback_rebreak_condition_mode,
+        _bit(item.overheat_pass),
+        _bit(item.breakout_close_pass),
+        _bit(item.volume_increase_pass),
+        _bit(item.vwap_pass),
+        _bit(item.ma20_pass),
+        _bit(item.vwap_ma20_pass),
+        _bit(item.pullback_rebreak_pass),
+        _bit(item.final_score_pass),
+        _bit(item.buy_allowed),
+        _bit(item.order_submitted),
+        item.order_id,
+        item.buy_block_reason,
+        item.buy_block_reasons,
+        item.hard_filter_failed_count,
+        item.soft_condition_failed_count,
+        item.final_decision,
+        item.settings_snapshot_json,
+        item.condition_result_json,
+        item.raw_candidate_json,
+    )
+
+
+def _bit(value: bool | None) -> int | None:
+    if value is None:
+        return None
+    return 1 if value else 0
 
 
 def _number(value: Any) -> float:

@@ -16,7 +16,7 @@ from trading_bot.intraday_backtest import IntradayBar
 def test_backtest_compare_uses_fixed_baseline_by_default() -> None:
     settings = _backtest_base_settings()
 
-    assert settings.min_price_usd == 5.0
+    assert settings.min_price_usd == 10.0
     assert settings.max_price_usd == 50.0
     assert settings.min_opening_price_change == 0.03
     assert settings.min_volume_ratio == 1.5
@@ -81,12 +81,12 @@ def test_backtest_compare_reports_applied_settings_and_reproducible_baseline(
     payload = _run_backtest_compare(10, 10000.0)
 
     assert payload["settings_source"] == "fixed_baseline"
-    assert payload["baseline_settings"]["min_price_usd"] == 5.0
+    assert payload["baseline_settings"]["min_price_usd"] == 10.0
     assert payload["baseline_settings"]["min_total_score"] == 40.0
     strict = payload["strategies"]["strict_filter"]
     modes = payload["candidateModeComparison"]
     assert strict["trades"] == 80
-    assert strict["settings"]["min_price_usd"] == 5.0
+    assert strict["settings"]["min_price_usd"] == 10.0
     assert strict["settings"]["max_price_usd"] == 50.0
     assert strict["settings"]["min_opening_price_change"] == 0.03
     assert strict["settings"]["min_volume_ratio"] == 1.5
@@ -105,7 +105,7 @@ def test_reset_runtime_settings_writes_strict_baseline(monkeypatch) -> None:
     before_after = [
         TradingSettings(min_price_usd=1.0, max_price_usd=150.0),
         TradingSettings(
-            min_price_usd=5.0,
+            min_price_usd=10.0,
             max_price_usd=50.0,
             min_opening_price_change=0.03,
             min_volume_ratio=1.5,
@@ -130,7 +130,7 @@ def test_reset_runtime_settings_writes_strict_baseline(monkeypatch) -> None:
     payload = _reset_runtime_settings("strict_baseline")
 
     assert payload["before"]["min_price_usd"] == 1.0
-    assert payload["after"]["min_price_usd"] == 5.0
+    assert payload["after"]["min_price_usd"] == 10.0
     assert calls["stop_loss_percent"] == 5.0
     assert calls["take_profit_percent"] == 5.0
     assert calls["min_total_score"] == 40.0

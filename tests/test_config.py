@@ -49,6 +49,107 @@ def test_load_settings_reads_real_trading_safety_limits(monkeypatch) -> None:
     assert settings.real_max_daily_order_krw == 150000
 
 
+def test_load_settings_reads_ranking_limits(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in (
+        "MSSQL_DSN",
+        "MSSQL_HOST",
+        "MSSQL_DATABASE",
+        "MSSQL_USERNAME",
+        "MSSQL_PASSWORD",
+    ):
+        monkeypatch.setenv(name, "")
+    monkeypatch.setenv("GAINER_RANKING_LIMIT", "240")
+    monkeypatch.setenv("TURNOVER_RANKING_LIMIT", "260")
+
+    settings = load_settings()
+
+    assert settings.gainer_ranking_limit == 240
+    assert settings.turnover_ranking_limit == 260
+
+
+def test_load_settings_defaults_to_fixed_candidate_watch(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in (
+        "MSSQL_DSN",
+        "MSSQL_HOST",
+        "MSSQL_DATABASE",
+        "MSSQL_USERNAME",
+        "MSSQL_PASSWORD",
+        "REFRESH_INTRADAY_CANDIDATES",
+        "CANDIDATE_SELECTION_MODE",
+    ):
+        monkeypatch.setenv(name, "")
+
+    settings = load_settings()
+
+    assert settings.refresh_intraday_candidates is False
+    assert settings.candidate_selection_mode == "fixed"
+    assert runtime_risk_settings_payload(settings)["refreshIntradayCandidates"] is False
+    assert runtime_risk_settings_payload(settings)["candidateSelectionMode"] == "fixed"
+
+
+def test_load_settings_defaults_vwap_ma20_condition_off(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("trading_bot.config.load_dotenv", None)
+    for name in (
+        "MSSQL_DSN",
+        "MSSQL_HOST",
+        "MSSQL_DATABASE",
+        "MSSQL_USERNAME",
+        "MSSQL_PASSWORD",
+        "REQUIRE_VWAP_OR_MA20",
+        "VWAP_MA20_CONDITION_MODE",
+        "VWAP_MA20_CONDITION_TYPE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    settings = load_settings()
+    payload = runtime_risk_settings_payload(settings)
+
+    assert settings.require_vwap_or_ma20 is False
+    assert settings.vwap_ma20_condition_mode == "HARD_FILTER"
+    assert settings.vwap_ma20_condition_type == "OR"
+    assert payload["requireVwapOrMa20"] is False
+    assert payload["vwapMa20ConditionMode"] == "HARD_FILTER"
+    assert payload["vwapMa20ConditionType"] == "OR"
+
+
+def test_load_settings_uses_candidate_collection_defaults(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("trading_bot.config.load_dotenv", None)
+    for name in (
+        "MSSQL_DSN",
+        "MSSQL_HOST",
+        "MSSQL_DATABASE",
+        "MSSQL_USERNAME",
+        "MSSQL_PASSWORD",
+        "MIN_PRICE_USD",
+        "MAX_PRICE_USD",
+        "GAINER_RANKING_LIMIT",
+        "TURNOVER_RANKING_LIMIT",
+        "MIN_TOTAL_SCORE",
+        "MIN_OPENING_PRICE_CHANGE",
+        "MIN_VOLUME_RATIO",
+        "MAX_OPENING_GAP",
+        "MIN_5M_VOLUME_INCREASE_PERCENT",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    settings = load_settings()
+
+    assert settings.min_price_usd == 10
+    assert settings.max_price_usd == 300
+    assert settings.gainer_ranking_limit == 500
+    assert settings.turnover_ranking_limit == 500
+    assert settings.min_total_score == 35
+    assert settings.min_opening_price_change == 0.0
+    assert settings.min_volume_ratio == 1.0
+    assert settings.max_opening_gap == 0.30
+    assert settings.min_5m_volume_increase_percent == 5.0
+    assert runtime_risk_settings_payload(settings)["min5mVolumeIncreasePercent"] == 5.0
+
+
 def test_load_settings_reads_unfilled_reorder_policies(monkeypatch) -> None:
     monkeypatch.setenv("MOCK_UNFILLED_REORDER_MINUTES", "2")
     monkeypatch.setenv("MOCK_UNFILLED_REORDER_LIMIT", "1")
@@ -191,7 +292,7 @@ def test_runtime_risk_settings_override_env_values(tmp_path, monkeypatch) -> Non
         7.5,
         12.0,
         40,
-        2,
+        10,
         120,
         1.5,
         0.8,
@@ -206,6 +307,8 @@ def test_runtime_risk_settings_override_env_values(tmp_path, monkeypatch) -> Non
         True,
         True,
         True,
+        220,
+        230,
     )
 
     settings = load_settings()
@@ -213,11 +316,13 @@ def test_runtime_risk_settings_override_env_values(tmp_path, monkeypatch) -> Non
     assert settings.max_position_loss == -0.075
     assert settings.take_profit_rate == 0.12
     assert settings.min_total_score == 40
-    assert settings.min_price_usd == 2
+    assert settings.min_price_usd == 10
     assert settings.max_price_usd == 120
     assert settings.min_opening_price_change == 0.015
     assert settings.min_volume_ratio == 0.8
     assert settings.max_opening_gap == 0.25
+    assert settings.gainer_ranking_limit == 220
+    assert settings.turnover_ranking_limit == 230
     assert settings.partial_take_profit_enabled is False
     assert settings.trailing_stop_activation_rate == 0.04
     assert settings.refresh_intraday_candidates is True
@@ -226,6 +331,8 @@ def test_runtime_risk_settings_override_env_values(tmp_path, monkeypatch) -> Non
     assert runtime_risk_settings_payload(settings)["minTotalScore"] == 40
     assert runtime_risk_settings_payload(settings)["minOpeningPriceChangePercent"] == 1.5
     assert runtime_risk_settings_payload(settings)["maxOpeningGapPercent"] == 25
+    assert runtime_risk_settings_payload(settings)["gainerRankingLimit"] == 220
+    assert runtime_risk_settings_payload(settings)["turnoverRankingLimit"] == 230
     assert runtime_risk_settings_payload(settings)["refreshIntradayCandidates"] is True
     assert runtime_risk_settings_payload(settings)["candidateSelectionMode"] == "hybrid"
     assert runtime_risk_settings_payload(settings)["partialTakeProfitEnabled"] is False
@@ -239,3 +346,65 @@ def test_runtime_risk_settings_override_env_values(tmp_path, monkeypatch) -> Non
     assert runtime_risk_settings_payload(settings)["strategyPreset"] == "current"
     assert runtime_risk_settings_payload(settings)["allowRelaxedCandidateFilter"] is True
     assert runtime_risk_settings_payload(settings)["enablePyramiding"] is False
+
+
+def test_runtime_risk_settings_rejects_min_price_below_ten(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in (
+        "MSSQL_DSN",
+        "MSSQL_HOST",
+        "MSSQL_DATABASE",
+        "MSSQL_USERNAME",
+        "MSSQL_PASSWORD",
+    ):
+        monkeypatch.setenv(name, "")
+
+    try:
+        save_runtime_risk_settings(
+            5,
+            10,
+            min_price_usd=9.99,
+            max_price_usd=150,
+        )
+    except ValueError as exc:
+        assert "최저 가격은 10 이상" in str(exc)
+    else:
+        raise AssertionError("min_price_usd below 10 must be rejected")
+
+
+def test_runtime_risk_settings_persist_condition_modes(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in (
+        "MSSQL_DSN",
+        "MSSQL_HOST",
+        "MSSQL_DATABASE",
+        "MSSQL_USERNAME",
+        "MSSQL_PASSWORD",
+    ):
+        monkeypatch.setenv(name, "")
+
+    save_runtime_risk_settings(
+        5,
+        10,
+        overheat_limit_condition_mode="HARD_FILTER",
+        breakout_close_condition_mode="SOFT_SCORE",
+        volume_increase_condition_mode="LOG_ONLY",
+        min_5m_volume_increase_percent=7.5,
+        vwap_ma20_condition_mode="HARD_FILTER",
+        vwap_ma20_condition_type="AND",
+        pullback_rebreak_condition_mode="OFF",
+    )
+
+    settings = load_settings()
+    payload = runtime_risk_settings_payload(settings)
+
+    assert settings.breakout_close_condition_mode == "SOFT_SCORE"
+    assert settings.volume_increase_condition_mode == "LOG_ONLY"
+    assert settings.min_5m_volume_increase_percent == 7.5
+    assert settings.vwap_ma20_condition_mode == "HARD_FILTER"
+    assert settings.vwap_ma20_condition_type == "AND"
+    assert settings.pullback_rebreak_condition_mode == "OFF"
+    assert payload["breakoutCloseConditionMode"] == "SOFT_SCORE"
+    assert payload["volumeIncreaseConditionMode"] == "LOG_ONLY"
+    assert payload["min5mVolumeIncreasePercent"] == 7.5
+    assert payload["vwapMa20ConditionType"] == "AND"

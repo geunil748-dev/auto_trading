@@ -41,5 +41,8 @@ class DryRunRuntime:
             breakout_inputs,
             account,
             self.settings,
+            repository=getattr(self.pipeline, "repository", None),
+            trade_date=scoring.trade_date,
+            source="dry_run",
         )
         return DryRunResult(account, scoring, tuple(intents))

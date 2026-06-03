@@ -13,9 +13,11 @@ __pycache__/
 logs/
 *.log
 monitor/state.json
+monitor/scheduler_heartbeat.json
 monitor/server.*.log
 monitor/real_trading_control.json
 monitor/trading_settings.json
+monitor/trading_settings.backup.*.json
 monitor/reports/
 mobile/stock_monitor_app/.dart_tool/
 mobile/stock_monitor_app/build/

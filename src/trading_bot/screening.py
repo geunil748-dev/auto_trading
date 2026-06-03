@@ -187,40 +187,28 @@ def _first_passing_stage(
 def _price_stages(settings: TradingSettings) -> tuple[tuple[float, float], ...]:
     return (
         (settings.min_price_usd, settings.max_price_usd),
-        (3.0, 80.0),
-        (1.0, 100.0),
-        (0.5, 150.0),
+        (max(5.0, min(settings.min_price_usd, 10.0)), max(settings.max_price_usd, 300.0)),
     )
 
 
 def _opening_change_stages(settings: TradingSettings) -> tuple[float, ...]:
     return (
         settings.min_opening_price_change,
-        0.02,
-        0.01,
         0.0,
-        -0.05,
     )
 
 
 def _volume_stages(settings: TradingSettings) -> tuple[float, ...]:
     return (
         settings.min_volume_ratio,
-        1.2,
         1.0,
-        0.7,
-        0.5,
-        0.0,
     )
 
 
 def _gap_stages(settings: TradingSettings) -> tuple[float, ...]:
     return (
         settings.max_opening_gap,
-        0.25,
-        0.30,
-        0.40,
-        1.00,
+        min(max(settings.max_opening_gap, 0.30), 0.35),
     )
 
 

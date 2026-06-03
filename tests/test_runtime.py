@@ -3,6 +3,7 @@ from datetime import date
 from trading_bot.config import TradingSettings
 from trading_bot.models import (
     AccountState,
+    BreakoutInput,
     CandidateSnapshot,
     DailyScore,
     DailyTarget,
@@ -34,9 +35,16 @@ class Accounts:
 
 
 class Breakout:
-    def breakout_input(self, ticker: str) -> tuple[float, float, float, float]:
+    def breakout_input(self, ticker: str) -> BreakoutInput:
         assert ticker == "AAA"
-        return (13, 11, 12, 8)
+        return BreakoutInput(
+            last_price_usd=13,
+            open_price_usd=11,
+            previous_high_usd=12,
+            previous_low_usd=8,
+            current_5m_volume=106_000,
+            previous_5m_average_volume=100_000,
+        )
 
 
 def test_dry_run_runtime_plans_buy_intents_and_monitor_state() -> None:

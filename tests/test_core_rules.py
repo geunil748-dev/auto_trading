@@ -1,7 +1,11 @@
+import json
+from datetime import date
+
 from trading_bot.config import TradingSettings
 from trading_bot.execution import trailing_stop_triggered, update_high
 from trading_bot.entry_planner import plan_buy_intents
 from trading_bot.exit_planner import plan_position_exits
+from trading_bot.in_memory import InMemoryDailyRepository
 from trading_bot.models import (
     AccountState,
     BreakoutInput,
@@ -76,7 +80,7 @@ def test_global_gate_uses_market_priority_before_fx() -> None:
 
 def test_defensive_gate_blocks_gap_and_price_outliers() -> None:
     assert defensive_candidate_gate(candidate("LOW", price=4.99), SETTINGS).reason == "PENNY_STOCK"
-    assert defensive_candidate_gate(candidate("GAP", open_price=12.1), SETTINGS).reason == "OPENING_GAP"
+    assert defensive_candidate_gate(candidate("GAP", open_price=13.1), SETTINGS).reason == "OPENING_GAP"
     assert defensive_candidate_gate(candidate("OK"), SETTINGS).allowed
 
 
@@ -91,7 +95,7 @@ def test_screening_keeps_rank_intersection_with_opening_filters() -> None:
         [RankedStock("AAA", 3), RankedStock("BBB", 2), RankedStock("CCC", 1)],
         [RankedStock("AAA", 2), RankedStock("BBB", 1)],
         snapshots,
-        SETTINGS,
+        TradingSettings(min_volume_ratio=1.5),
     )
 
     assert [item.ticker for item in selected] == ["AAA"]
@@ -191,6 +195,8 @@ def test_opening_change_only_relax_keeps_other_filters_strict() -> None:
             allow_relaxed_candidate_filter=False,
             relax_opening_change_only=True,
             min_selected_candidates=1,
+            min_volume_ratio=1.5,
+            max_opening_gap=0.20,
         ),
     )
 
@@ -309,6 +315,461 @@ def test_entry_planner_can_require_extra_intraday_confirmation() -> None:
     assert [item.ticker for item in intents] == ["OK"]
 
 
+def test_entry_planner_soft_score_condition_does_not_block_entry() -> None:
+    settings = TradingSettings(
+        require_5m_close_above_breakout=True,
+        breakout_close_condition_mode="SOFT_SCORE",
+        require_5m_volume_increase=False,
+    )
+
+    intents = plan_buy_intents(
+        [ScoreRecord("SOFT", 95, 90)],
+        {
+            "SOFT": BreakoutInput(
+                last_price_usd=12.5,
+                open_price_usd=10,
+                previous_high_usd=12,
+                previous_low_usd=8,
+                recent_5m_close_usd=11.5,
+            ),
+        },
+        account(),
+        settings,
+    )
+
+    assert [item.ticker for item in intents] == ["SOFT"]
+    assert "soft BREAKOUT_CLOSE_FAILED" in intents[0].entry_reason_detail
+
+
+def test_entry_planner_hard_filter_condition_blocks_entry() -> None:
+    settings = TradingSettings(
+        require_5m_close_above_breakout=True,
+        breakout_close_condition_mode="HARD_FILTER",
+        require_5m_volume_increase=False,
+    )
+
+    intents = plan_buy_intents(
+        [ScoreRecord("HARD", 95, 90)],
+        {
+            "HARD": BreakoutInput(
+                last_price_usd=12.5,
+                open_price_usd=10,
+                previous_high_usd=12,
+                previous_low_usd=8,
+                recent_5m_close_usd=11.5,
+            ),
+        },
+        account(),
+        settings,
+    )
+
+    assert intents == []
+
+
+def test_entry_planner_saves_unbought_hard_filter_evaluation() -> None:
+    repository = InMemoryDailyRepository()
+    settings = TradingSettings(
+        require_5m_close_above_breakout=True,
+        breakout_close_condition_mode="HARD_FILTER",
+        require_5m_volume_increase=False,
+    )
+
+    intents = plan_buy_intents(
+        [ScoreRecord("HARD", 95, 90)],
+        {
+            "HARD": BreakoutInput(
+                last_price_usd=12.5,
+                open_price_usd=10,
+                previous_high_usd=12,
+                previous_low_usd=8,
+                recent_5m_close_usd=11.5,
+            ),
+        },
+        account(),
+        settings,
+        repository=repository,
+        trade_date=date(2026, 5, 22),
+    )
+
+    assert intents == []
+    evaluation = repository.candidate_evaluations[0]
+    assert evaluation.symbol == "HARD"
+    assert evaluation.buy_allowed is False
+    assert evaluation.buy_block_reason == "BREAKOUT_CLOSE_FAILED"
+    assert json.loads(evaluation.buy_block_reasons) == ["BREAKOUT_CLOSE_FAILED"]
+    assert evaluation.hard_filter_failed_count == 1
+    assert evaluation.soft_condition_failed_count == 0
+
+
+def test_entry_planner_saves_bought_and_soft_score_evaluation() -> None:
+    repository = InMemoryDailyRepository()
+    settings = TradingSettings(
+        require_5m_close_above_breakout=True,
+        breakout_close_condition_mode="SOFT_SCORE",
+        require_5m_volume_increase=False,
+    )
+
+    intents = plan_buy_intents(
+        [ScoreRecord("SOFT", 95, 90)],
+        {
+            "SOFT": BreakoutInput(
+                last_price_usd=12.5,
+                open_price_usd=10,
+                previous_high_usd=12,
+                previous_low_usd=8,
+                recent_5m_close_usd=11.5,
+            ),
+        },
+        account(),
+        settings,
+        repository=repository,
+        trade_date=date(2026, 5, 22),
+    )
+
+    assert [item.ticker for item in intents] == ["SOFT"]
+    evaluation = repository.candidate_evaluations[0]
+    assert evaluation.buy_allowed is True
+    assert evaluation.buy_block_reason == "BUY_ALLOWED"
+    assert evaluation.soft_score_adjustment == -5.0
+    assert evaluation.hard_filter_failed_count == 0
+    assert evaluation.soft_condition_failed_count == 1
+    condition_json = json.loads(evaluation.condition_result_json)
+    assert condition_json["failed_soft_reasons"] == ["BREAKOUT_CLOSE_FAILED"]
+
+
+def test_entry_planner_requires_configured_5m_volume_increase_percent() -> None:
+    settings = TradingSettings(
+        require_5m_volume_increase=True,
+        volume_increase_condition_mode="HARD_FILTER",
+        min_5m_volume_increase_percent=5.0,
+    )
+
+    def intents_for(symbol: str, current_volume: float):
+        return plan_buy_intents(
+            [ScoreRecord(symbol, 95, 90)],
+            {
+                symbol: BreakoutInput(
+                    last_price_usd=12.5,
+                    open_price_usd=10,
+                    previous_high_usd=12,
+                    previous_low_usd=8,
+                    current_5m_volume=current_volume,
+                    previous_5m_average_volume=100_000,
+                ),
+            },
+            account(),
+            settings,
+        )
+
+    assert intents_for("TINY", 100_001) == []
+    assert intents_for("THREE", 103_000) == []
+    assert [item.ticker for item in intents_for("SIX", 106_000)] == ["SIX"]
+
+
+def test_entry_planner_records_insufficient_5m_volume_data_without_zero_division() -> None:
+    repository = InMemoryDailyRepository()
+    settings = TradingSettings(
+        require_5m_volume_increase=True,
+        volume_increase_condition_mode="SOFT_SCORE",
+        min_5m_volume_increase_percent=5.0,
+    )
+
+    intents = plan_buy_intents(
+        [ScoreRecord("ZERO", 95, 90)],
+        {
+            "ZERO": BreakoutInput(
+                last_price_usd=12.5,
+                open_price_usd=10,
+                previous_high_usd=12,
+                previous_low_usd=8,
+                current_5m_volume=10_000,
+                previous_5m_average_volume=0,
+            ),
+        },
+        account(),
+        settings,
+        repository=repository,
+        trade_date=date(2026, 5, 22),
+    )
+
+    assert [item.ticker for item in intents] == ["ZERO"]
+    evaluation = repository.candidate_evaluations[0]
+    assert evaluation.buy_allowed is True
+    assert evaluation.soft_score_adjustment == -5.0
+    condition_json = json.loads(evaluation.condition_result_json)
+    assert condition_json["recent_5m_volume"] == 10_000
+    assert condition_json["previous_5m_volume"] == 0
+    assert condition_json["volume_increase_percent"] is None
+    assert condition_json["min5mVolumeIncreasePercent"] == 5.0
+    assert condition_json["volume_increase_pass"] is False
+    assert condition_json["volume_increase_insufficient"] is True
+
+
+def test_entry_planner_hard_filter_blocks_failed_5m_volume_increase() -> None:
+    repository = InMemoryDailyRepository()
+    settings = TradingSettings(
+        require_5m_volume_increase=True,
+        volume_increase_condition_mode="HARD_FILTER",
+        min_5m_volume_increase_percent=5.0,
+    )
+
+    intents = plan_buy_intents(
+        [ScoreRecord("VOLHARD", 95, 90)],
+        {
+            "VOLHARD": BreakoutInput(
+                last_price_usd=12.5,
+                open_price_usd=10,
+                previous_high_usd=12,
+                previous_low_usd=8,
+                current_5m_volume=103_000,
+                previous_5m_average_volume=100_000,
+            ),
+        },
+        account(),
+        settings,
+        repository=repository,
+        trade_date=date(2026, 5, 22),
+    )
+
+    assert intents == []
+    evaluation = repository.candidate_evaluations[0]
+    assert evaluation.buy_allowed is False
+    assert evaluation.buy_block_reason == "VOLUME_INCREASE_FAILED"
+    condition_json = json.loads(evaluation.condition_result_json)
+    assert condition_json["volume_increase_percent"] == 3.0
+    assert condition_json["volume_increase_pass"] is False
+
+
+def test_entry_planner_records_vwap_ma20_or_pass_with_vwap_only_data() -> None:
+    repository = InMemoryDailyRepository()
+    settings = TradingSettings(
+        require_vwap_or_ma20=True,
+        vwap_ma20_condition_mode="HARD_FILTER",
+        vwap_ma20_condition_type="OR",
+    )
+
+    intents = plan_buy_intents(
+        [ScoreRecord("VWAP", 95, 90)],
+        {
+            "VWAP": BreakoutInput(
+                last_price_usd=12.5,
+                open_price_usd=10,
+                previous_high_usd=12,
+                previous_low_usd=8,
+                vwap_usd=12.0,
+                intraday_ma20_usd=13.0,
+            ),
+        },
+        account(),
+        settings,
+        repository=repository,
+        trade_date=date(2026, 5, 22),
+    )
+
+    assert [item.ticker for item in intents] == ["VWAP"]
+    condition_json = json.loads(repository.candidate_evaluations[0].condition_result_json)
+    assert condition_json["vwap_ma20_evaluation_status"] == "PASS"
+    assert condition_json["vwap_pass"] is True
+    assert condition_json["ma20_pass"] is False
+    assert condition_json["vwap_ma20_pass"] is True
+    assert condition_json["vwap_ma20_compare_operator"] == ">="
+
+
+def test_entry_planner_records_vwap_ma20_or_fail_with_data() -> None:
+    repository = InMemoryDailyRepository()
+    settings = TradingSettings(
+        require_vwap_or_ma20=True,
+        vwap_ma20_condition_mode="HARD_FILTER",
+        vwap_ma20_condition_type="OR",
+    )
+
+    intents = plan_buy_intents(
+        [ScoreRecord("VMFAIL", 95, 90)],
+        {
+            "VMFAIL": BreakoutInput(
+                last_price_usd=12.5,
+                open_price_usd=10,
+                previous_high_usd=12,
+                previous_low_usd=8,
+                vwap_usd=13.0,
+                intraday_ma20_usd=13.5,
+            ),
+        },
+        account(),
+        settings,
+        repository=repository,
+        trade_date=date(2026, 5, 22),
+    )
+
+    assert intents == []
+    evaluation = repository.candidate_evaluations[0]
+    assert evaluation.buy_allowed is False
+    assert evaluation.buy_block_reason == "VWAP_MA20_FAILED"
+    condition_json = json.loads(evaluation.condition_result_json)
+    assert condition_json["vwap_ma20_evaluation_status"] == "FAIL"
+    assert condition_json["vwap_ma20_pass"] is False
+
+
+def test_entry_planner_records_vwap_ma20_skipped_no_data_without_blocking() -> None:
+    repository = InMemoryDailyRepository()
+    settings = TradingSettings(
+        require_vwap_or_ma20=True,
+        vwap_ma20_condition_mode="HARD_FILTER",
+        vwap_ma20_condition_type="OR",
+    )
+
+    intents = plan_buy_intents(
+        [ScoreRecord("NODATA", 95, 90)],
+        {
+            "NODATA": BreakoutInput(
+                last_price_usd=12.5,
+                open_price_usd=10,
+                previous_high_usd=12,
+                previous_low_usd=8,
+            ),
+        },
+        account(),
+        settings,
+        repository=repository,
+        trade_date=date(2026, 5, 22),
+    )
+
+    assert [item.ticker for item in intents] == ["NODATA"]
+    evaluation = repository.candidate_evaluations[0]
+    assert evaluation.buy_allowed is True
+    assert evaluation.vwap_ma20_pass is None
+    condition_json = json.loads(evaluation.condition_result_json)
+    assert condition_json["vwap_ma20_evaluation_status"] == "SKIPPED_NO_DATA"
+    assert condition_json["vwap_ma20_pass"] is None
+    assert condition_json["vwap_data_available"] is False
+    assert condition_json["intraday_ma20_data_available"] is False
+    assert condition_json["ma20_insufficient"] is True
+
+
+def test_entry_planner_vwap_ma20_soft_score_failure_only_adjusts_score() -> None:
+    repository = InMemoryDailyRepository()
+    settings = TradingSettings(
+        require_5m_volume_increase=False,
+        require_vwap_or_ma20=True,
+        vwap_ma20_condition_mode="SOFT_SCORE",
+        vwap_ma20_condition_type="AND",
+    )
+
+    intents = plan_buy_intents(
+        [ScoreRecord("VMSOFT", 95, 90)],
+        {
+            "VMSOFT": BreakoutInput(
+                last_price_usd=12.5,
+                open_price_usd=10,
+                previous_high_usd=12,
+                previous_low_usd=8,
+                vwap_usd=12.0,
+                intraday_ma20_usd=13.0,
+            ),
+        },
+        account(),
+        settings,
+        repository=repository,
+        trade_date=date(2026, 5, 22),
+    )
+
+    assert [item.ticker for item in intents] == ["VMSOFT"]
+    evaluation = repository.candidate_evaluations[0]
+    assert evaluation.buy_allowed is True
+    assert evaluation.soft_score_adjustment == -5.0
+    condition_json = json.loads(evaluation.condition_result_json)
+    assert condition_json["vwap_ma20_evaluation_status"] == "FAIL"
+    assert condition_json["vwap_ma20_pass"] is False
+
+
+def test_entry_planner_vwap_ma20_only_modes_and_disabled_status() -> None:
+    base = {
+        "ONLY": BreakoutInput(
+            last_price_usd=12.5,
+            open_price_usd=10,
+            previous_high_usd=12,
+            previous_low_usd=8,
+            vwap_usd=12.0,
+            intraday_ma20_usd=13.0,
+        )
+    }
+
+    vwap_repository = InMemoryDailyRepository()
+    ma20_repository = InMemoryDailyRepository()
+    off_repository = InMemoryDailyRepository()
+
+    assert plan_buy_intents(
+        [ScoreRecord("ONLY", 95, 90)],
+        base,
+        account(),
+        TradingSettings(require_vwap_or_ma20=True, vwap_ma20_condition_type="VWAP_ONLY"),
+        repository=vwap_repository,
+        trade_date=date(2026, 5, 22),
+    )
+    assert plan_buy_intents(
+        [ScoreRecord("ONLY", 95, 90)],
+        base,
+        account(),
+        TradingSettings(
+            require_vwap_or_ma20=True,
+            vwap_ma20_condition_type="MA20_ONLY",
+            vwap_ma20_condition_mode="SOFT_SCORE",
+        ),
+        repository=ma20_repository,
+        trade_date=date(2026, 5, 22),
+    )
+    assert plan_buy_intents(
+        [ScoreRecord("ONLY", 95, 90)],
+        base,
+        account(),
+        TradingSettings(require_vwap_or_ma20=False),
+        repository=off_repository,
+        trade_date=date(2026, 5, 22),
+    )
+
+    assert json.loads(vwap_repository.candidate_evaluations[0].condition_result_json)[
+        "vwap_ma20_evaluation_status"
+    ] == "PASS"
+    assert json.loads(ma20_repository.candidate_evaluations[0].condition_result_json)[
+        "vwap_ma20_evaluation_status"
+    ] == "FAIL"
+    assert json.loads(off_repository.candidate_evaluations[0].condition_result_json)[
+        "vwap_ma20_evaluation_status"
+    ] == "DISABLED"
+
+
+def test_entry_planner_default_vwap_ma20_off_does_not_block_or_adjust_score() -> None:
+    repository = InMemoryDailyRepository()
+
+    intents = plan_buy_intents(
+        [ScoreRecord("OFFDEFAULT", 95, 90)],
+        {
+            "OFFDEFAULT": BreakoutInput(
+                last_price_usd=12.5,
+                open_price_usd=10,
+                previous_high_usd=12,
+                previous_low_usd=8,
+                vwap_usd=20.0,
+                intraday_ma20_usd=21.0,
+            ),
+        },
+        account(),
+        TradingSettings(require_5m_volume_increase=False),
+        repository=repository,
+        trade_date=date(2026, 5, 22),
+    )
+
+    assert [item.ticker for item in intents] == ["OFFDEFAULT"]
+    evaluation = repository.candidate_evaluations[0]
+    assert evaluation.buy_allowed is True
+    assert evaluation.soft_score_adjustment == 0.0
+    assert evaluation.buy_block_reason == "BUY_ALLOWED"
+    condition_json = json.loads(evaluation.condition_result_json)
+    assert condition_json["vwap_ma20_evaluation_status"] == "DISABLED"
+    assert "VWAP_MA20_FAILED" not in condition_json["failed_hard_reasons"]
+    assert "VWAP_MA20_FAILED" not in condition_json["failed_soft_reasons"]
+
+
 def test_entry_planner_ignores_unavailable_intraday_confirmation_data() -> None:
     settings = TradingSettings(
         breakout_hold_minutes=2,
@@ -331,7 +792,7 @@ def test_entry_planner_ignores_unavailable_intraday_confirmation_data() -> None:
 def test_exit_planner_prioritizes_eod_hard_stop_partial_profit_and_trailing_stop() -> None:
     positions = [
         PositionState("LOSS", 10, 2, 9.4, 11),
-        PositionState("PROFIT", 10, 2, 10.5, 10.5),
+        PositionState("PROFIT", 10, 2, 11.0, 11.0),
         PositionState("TRAIL", 10, 3, 10.27, 10.6),
         PositionState("HOLD", 10, 1, 10.4, 10.6),
     ]
@@ -351,7 +812,7 @@ def test_exit_planner_prioritizes_eod_hard_stop_partial_profit_and_trailing_stop
 
 def test_exit_planner_does_not_repeat_partial_take_profit() -> None:
     exits = plan_position_exits(
-        [PositionState("PROFIT", 10, 2, 10.5, 10.5)],
+        [PositionState("PROFIT", 10, 2, 11.0, 11.0)],
         SETTINGS,
         partial_take_profit_tickers={"PROFIT"},
     )
@@ -361,7 +822,7 @@ def test_exit_planner_does_not_repeat_partial_take_profit() -> None:
 
 def test_exit_planner_uses_full_take_profit_when_partial_profit_is_disabled() -> None:
     exits = plan_position_exits(
-        [PositionState("PROFIT", 10, 2, 10.5, 10.5)],
+        [PositionState("PROFIT", 10, 2, 11.0, 11.0)],
         TradingSettings(partial_take_profit_enabled=False),
     )
 

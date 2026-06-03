@@ -1,4 +1,17 @@
 // 기본 상태
+const emptyTradingStats = {
+  lookback_days: 30,
+  total_trading_days: 0,
+  candidate_days: 0,
+  candidate_rate: 0,
+  scoring_days: 0,
+  scoring_rate: 0,
+  strict_filter_days: 0,
+  strict_filter_rate: 0,
+  selected_days: 0,
+  selected_rate: 0,
+};
+
 const emptyAccount = {
   connected: false,
   error: "",
@@ -22,6 +35,7 @@ const emptyAccount = {
   recentTrades: [],
   entryProfitSnapshots: [],
   entryProfitSnapshotStats: {},
+  trading_stats: emptyTradingStats,
   logs: [],
   trades: [],
 };
@@ -93,19 +107,29 @@ const trailingStopActivationInput = document.querySelector("#trailingStopActivat
 const minTotalScoreInput = document.querySelector("#minTotalScore");
 const minPriceUsdInput = document.querySelector("#minPriceUsd");
 const maxPriceUsdInput = document.querySelector("#maxPriceUsd");
+const gainerRankingLimitInput = document.querySelector("#gainerRankingLimit");
+const turnoverRankingLimitInput = document.querySelector("#turnoverRankingLimit");
 const minOpeningPriceChangeInput = document.querySelector("#minOpeningPriceChangePercent");
 const minVolumeRatioInput = document.querySelector("#minVolumeRatio");
 const maxOpeningGapInput = document.querySelector("#maxOpeningGapPercent");
 const intradayCandidateModeInput = document.querySelector("#intradayCandidateMode");
 const maxEntryPriceChangeInput = document.querySelector("#maxEntryPriceChangePercent");
+const overheatLimitConditionModeInput = document.querySelector("#overheatLimitConditionMode");
 const breakoutHoldMinutesInput = document.querySelector("#breakoutHoldMinutes");
 const require5mCloseInput = document.querySelector("#require5mCloseAboveBreakout");
+const breakoutCloseConditionModeInput = document.querySelector("#breakoutCloseConditionMode");
 const require5mVolumeInput = document.querySelector("#require5mVolumeIncrease");
+const min5mVolumeIncreaseInput = document.querySelector("#min5mVolumeIncreasePercent");
+const volumeIncreaseConditionModeInput = document.querySelector("#volumeIncreaseConditionMode");
 const requireVwapOrMa20Input = document.querySelector("#requireVwapOrMa20");
+const vwapMa20ConditionModeInput = document.querySelector("#vwapMa20ConditionMode");
+const vwapMa20ConditionTypeInput = document.querySelector("#vwapMa20ConditionType");
 const requirePullbackRebreakInput = document.querySelector("#requirePullbackRebreak");
+const pullbackRebreakConditionModeInput = document.querySelector("#pullbackRebreakConditionMode");
 const riskSettingsStatus = document.querySelector("#riskSettingsStatus");
 const filterSettingsStatus = document.querySelector("#filterSettingsStatus");
 const sellAllButton = document.querySelector("#sellAllPositions");
+const showNoBuyLogsInput = document.querySelector("#showNoBuyLogs");
 const showNoSellLogsInput = document.querySelector("#showNoSellLogs");
 const panelToggleButtons = document.querySelectorAll("[data-collapse-target]");
 
@@ -128,6 +152,9 @@ customBacktestTickerInput?.addEventListener("keydown", (event) => {
   if (event.key === "Enter") loadBacktest();
 });
 refreshHistoryButton?.addEventListener("click", loadHistory);
+showNoBuyLogsInput?.addEventListener("change", () => {
+  render(currentState);
+});
 showNoSellLogsInput?.addEventListener("change", () => {
   render(currentState);
 });
@@ -140,6 +167,7 @@ historyDateInput?.addEventListener("change", () => {
 });
 riskSettingsForm?.addEventListener("submit", saveRiskSettings);
 filterSettingsForm?.addEventListener("submit", saveFilterSettings);
+requireVwapOrMa20Input?.addEventListener("change", syncVwapMa20Controls);
 sellAllButton?.addEventListener("click", submitSellAllPositions);
 window.runtimeControls?.bind(toggleRealOrderUnlock);
 tabButtons.forEach((button) => {
@@ -185,7 +213,12 @@ async function loadState() {
     if (currentState.date && historyDateInput && !historyDateTouched) {
       historyDateInput.value = currentState.date;
     }
-    setAuthStatus(bearerToken() ? "인증된 모니터입니다." : "");
+    if (currentState.runtime?.monitorAuth?.tokenConfigured === false) {
+      clearSavedMonitorToken();
+      setAuthStatus("");
+    } else {
+      setAuthStatus(bearerToken() ? "인증된 모니터입니다." : "");
+    }
   } catch {
     currentState = fallbackState;
     setAuthStatus("모니터 토큰을 확인해 주세요.");
@@ -364,11 +397,18 @@ async function saveRiskSettings(event) {
       partialTakeProfitEnabled: Boolean(partialTakeProfitInput?.checked),
       trailingStopActivationPercent: Number(trailingStopActivationInput?.value || 0),
       maxEntryPriceChangePercent: Number(maxEntryPriceChangeInput?.value || 0),
+      overheatLimitConditionMode: overheatLimitConditionModeInput?.value || "HARD_FILTER",
       breakoutHoldMinutes: Number(breakoutHoldMinutesInput?.value || 0),
       require5mCloseAboveBreakout: Boolean(require5mCloseInput?.checked),
+      breakoutCloseConditionMode: breakoutCloseConditionModeInput?.value || "SOFT_SCORE",
       require5mVolumeIncrease: Boolean(require5mVolumeInput?.checked),
+      min5mVolumeIncreasePercent: Number(min5mVolumeIncreaseInput?.value || 0),
+      volumeIncreaseConditionMode: volumeIncreaseConditionModeInput?.value || "SOFT_SCORE",
       requireVwapOrMa20: Boolean(requireVwapOrMa20Input?.checked),
+      vwapMa20ConditionMode: vwapMa20ConditionModeInput?.value || "HARD_FILTER",
+      vwapMa20ConditionType: vwapMa20ConditionTypeInput?.value || "OR",
       requirePullbackRebreak: Boolean(requirePullbackRebreakInput?.checked),
+      pullbackRebreakConditionMode: pullbackRebreakConditionModeInput?.value || "SOFT_SCORE",
     });
     applyRiskSettings(payload.settings || {});
     setRiskSettingsStatus("매수/매도 조건을 저장했습니다. 다음 감시 루프부터 반영됩니다.");
@@ -388,6 +428,8 @@ async function saveFilterSettings(event) {
       minTotalScore: Number(minTotalScoreInput?.value || 0),
       minPriceUsd: Number(minPriceUsdInput?.value || 0),
       maxPriceUsd: Number(maxPriceUsdInput?.value || 0),
+      gainerRankingLimit: Number(gainerRankingLimitInput?.value || 0),
+      turnoverRankingLimit: Number(turnoverRankingLimitInput?.value || 0),
       minOpeningPriceChangePercent: Number(minOpeningPriceChangeInput?.value || 0),
       minVolumeRatio: Number(minVolumeRatioInput?.value || 0),
       maxOpeningGapPercent: Number(maxOpeningGapInput?.value || 0),
@@ -518,6 +560,11 @@ function bearerToken() {
   return (tokenInput?.value || "").trim();
 }
 
+function clearSavedMonitorToken() {
+  localStorage.removeItem(tokenStorageKey);
+  if (tokenInput) tokenInput.value = "";
+}
+
 function fetchOptions(url, options = {}) {
   const token = bearerToken();
   if (!token || !url.startsWith("/api/")) return options;
@@ -561,6 +608,12 @@ function applyRiskSettings(settings) {
   if (maxPriceUsdInput && settings.maxPriceUsd != null) {
     maxPriceUsdInput.value = formatPriceInput(settings.maxPriceUsd);
   }
+  if (gainerRankingLimitInput && settings.gainerRankingLimit != null) {
+    gainerRankingLimitInput.value = formatCountInput(settings.gainerRankingLimit);
+  }
+  if (turnoverRankingLimitInput && settings.turnoverRankingLimit != null) {
+    turnoverRankingLimitInput.value = formatCountInput(settings.turnoverRankingLimit);
+  }
   if (minOpeningPriceChangeInput && settings.minOpeningPriceChangePercent != null) {
     minOpeningPriceChangeInput.value = formatPercentInput(settings.minOpeningPriceChangePercent);
   }
@@ -577,21 +630,50 @@ function applyRiskSettings(settings) {
   if (maxEntryPriceChangeInput && settings.maxEntryPriceChangePercent != null) {
     maxEntryPriceChangeInput.value = formatPercentInput(settings.maxEntryPriceChangePercent);
   }
+  if (overheatLimitConditionModeInput && settings.overheatLimitConditionMode) {
+    overheatLimitConditionModeInput.value = settings.overheatLimitConditionMode;
+  }
   if (breakoutHoldMinutesInput && settings.breakoutHoldMinutes != null) {
     breakoutHoldMinutesInput.value = formatScoreInput(settings.breakoutHoldMinutes);
   }
   if (require5mCloseInput && settings.require5mCloseAboveBreakout != null) {
     require5mCloseInput.checked = Boolean(settings.require5mCloseAboveBreakout);
   }
+  if (breakoutCloseConditionModeInput && settings.breakoutCloseConditionMode) {
+    breakoutCloseConditionModeInput.value = settings.breakoutCloseConditionMode;
+  }
   if (require5mVolumeInput && settings.require5mVolumeIncrease != null) {
     require5mVolumeInput.checked = Boolean(settings.require5mVolumeIncrease);
+  }
+  if (min5mVolumeIncreaseInput && settings.min5mVolumeIncreasePercent != null) {
+    min5mVolumeIncreaseInput.value = formatPercentInput(settings.min5mVolumeIncreasePercent);
+  }
+  if (volumeIncreaseConditionModeInput && settings.volumeIncreaseConditionMode) {
+    volumeIncreaseConditionModeInput.value = settings.volumeIncreaseConditionMode;
   }
   if (requireVwapOrMa20Input && settings.requireVwapOrMa20 != null) {
     requireVwapOrMa20Input.checked = Boolean(settings.requireVwapOrMa20);
   }
+  if (vwapMa20ConditionModeInput && settings.vwapMa20ConditionMode) {
+    vwapMa20ConditionModeInput.value = settings.vwapMa20ConditionMode;
+  }
+  if (vwapMa20ConditionTypeInput && settings.vwapMa20ConditionType) {
+    vwapMa20ConditionTypeInput.value = settings.vwapMa20ConditionType;
+  }
+  syncVwapMa20Controls();
   if (requirePullbackRebreakInput && settings.requirePullbackRebreak != null) {
     requirePullbackRebreakInput.checked = Boolean(settings.requirePullbackRebreak);
   }
+  if (pullbackRebreakConditionModeInput && settings.pullbackRebreakConditionMode) {
+    pullbackRebreakConditionModeInput.value = settings.pullbackRebreakConditionMode;
+  }
+}
+
+function syncVwapMa20Controls() {
+  const enabled = Boolean(requireVwapOrMa20Input?.checked);
+  if (vwapMa20ConditionModeInput) vwapMa20ConditionModeInput.disabled = !enabled;
+  if (vwapMa20ConditionTypeInput) vwapMa20ConditionTypeInput.disabled = !enabled;
+  document.querySelector(".condition-row-vwap")?.classList.toggle("is-disabled", !enabled);
 }
 
 function formatPercentInput(value) {
@@ -608,6 +690,10 @@ function formatPriceInput(value) {
 
 function formatRatioInput(value) {
   return Number(value).toFixed(2).replace(/0$/, "").replace(/\.0$/, "");
+}
+
+function formatCountInput(value) {
+  return String(Math.trunc(Number(value)));
 }
 
 function selectedHistoryDate() {
@@ -651,6 +737,7 @@ function render(state) {
   const accountState = state.accounts?.[activeAccount] || emptyAccount;
   renderRuntime(state.runtime || fallbackState.runtime);
   renderSummary(accountState);
+  renderTradingStats(accountState.trading_stats || state.trading_stats || emptyTradingStats);
   renderTables(accountState);
   renderPage();
 }
@@ -686,6 +773,41 @@ function renderSummary(accountState) {
   const error = document.querySelector("#accountError");
   error.hidden = !accountState.error;
   error.textContent = accountState.error || "";
+}
+
+function renderTradingStats(stats = emptyTradingStats) {
+  const totalDays = numericStat(stats.total_trading_days);
+  setText("#statsTradingDays", `${totalDays}일`);
+  setText(
+    "#statsCandidateRate",
+    tradingRateText(stats.candidate_days, stats.candidate_rate, totalDays),
+  );
+  setText(
+    "#statsScoringRate",
+    tradingRateText(stats.scoring_days, stats.scoring_rate, totalDays),
+  );
+  setText(
+    "#statsStrictFilterRate",
+    tradingRateText(stats.strict_filter_days, stats.strict_filter_rate, totalDays),
+  );
+  setText(
+    "#statsSelectedRate",
+    tradingRateText(stats.selected_days, stats.selected_rate, totalDays),
+  );
+}
+
+function tradingRateText(days, rate, totalDays) {
+  return `${percentText(rate)} (${numericStat(days)}/${numericStat(totalDays)}일)`;
+}
+
+function percentText(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${number.toFixed(1)}%` : "-";
+}
+
+function numericStat(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
 }
 
 function renderTables(accountState) {
@@ -794,8 +916,16 @@ function renderLogRow([time, level, message]) {
 }
 
 function filterVisibleLogs(logs) {
-  if (showNoSellLogsInput?.checked) return logs;
-  return logs.filter((row) => !isNoSellOrderLog(row?.[2]));
+  return logs.filter((row) => {
+    const message = row?.[2];
+    if (!showNoBuyLogsInput?.checked && isNoBuyOrderLog(message)) return false;
+    if (!showNoSellLogsInput?.checked && isNoSellOrderLog(message)) return false;
+    return true;
+  });
+}
+
+function isNoBuyOrderLog(message) {
+  return String(message || "").includes("매수 주문 0건: 실행할 매수 후보가 없습니다.");
 }
 
 function isNoSellOrderLog(message) {

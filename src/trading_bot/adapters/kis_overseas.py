@@ -27,7 +27,7 @@ class KisOverseasClient:
         self.http = http
         self.exchange_code = exchange_code
 
-    def ranked_gainers(self, limit: int = 100) -> list[RankedStock]:
+    def ranked_gainers(self, limit: int = 200) -> list[RankedStock]:
         payload = self.http.get(
             PRICE_FLUCT_PATH,
             PRICE_FLUCT_TR_ID,
@@ -42,7 +42,7 @@ class KisOverseasClient:
         )
         return _rank_rows(_output_rows(payload), limit)
 
-    def ranked_trade_volume(self, limit: int = 100) -> list[RankedStock]:
+    def ranked_trade_volume(self, limit: int = 200) -> list[RankedStock]:
         payload = self.http.get(
             TRADE_VOLUME_PATH,
             TRADE_VOLUME_TR_ID,

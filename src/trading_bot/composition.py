@@ -14,6 +14,7 @@ from trading_bot.adapters.scoring import NewsChartScoringProvider
 from trading_bot.adapters.yahoo_news import YahooFinanceNewsSource
 from trading_bot.clocks import SystemClock
 from trading_bot.config import KisSettings, TradingSettings
+from trading_bot.models import BotLog
 from trading_bot.order_execution import BuyIntentExecutor
 from trading_bot.persistence import build_daily_repository, build_news_cache_repository
 from trading_bot.pipeline import ScreeningScoringPipeline
@@ -43,7 +44,12 @@ def build_live_dry_run(
         YahooChartScorer().score,
     )
     pipeline = ScreeningScoringPipeline(
-        KisScreeningMarketData(kis, YahooMarketContextSource(), KisDailyVolumeHistory(kis)),
+        KisScreeningMarketData(
+            kis,
+            YahooMarketContextSource(),
+            KisDailyVolumeHistory(kis),
+            on_snapshot_error=_snapshot_error_logger(repository),
+        ),
         scoring,
         accounts,
         repository,
@@ -109,3 +115,21 @@ def build_mock_sell_executor(
     submitter = KisMockSellSubmitter(kis, kis_settings)
     clock = SystemClock()
     return SellIntentExecutor(submitter.submit, repository, clock.today, settings=settings)
+
+
+def _snapshot_error_logger(repository: DailyRepository):
+    def log_missing_snapshot(ticker: str, reason: str) -> None:
+        try:
+            repository.save_log(
+                BotLog(
+                    "WARNING",
+                    "screening",
+                    f"[MISSING_SNAPSHOT] ticker={ticker} reason={reason}",
+                    symbol=ticker,
+                    reject_reason="MISSING_SNAPSHOT",
+                )
+            )
+        except Exception:
+            return
+
+    return log_missing_snapshot

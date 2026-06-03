@@ -14,6 +14,7 @@ from trading_bot.adapters.yahoo_news import YahooFinanceNewsSource
 from trading_bot.config import KisSettings, TradingSettings, save_runtime_risk_settings
 from trading_bot.models import (
     BotLog,
+    CandidateEvaluation,
     CandidateSnapshot,
     DailyScore,
     DailyTarget,
@@ -264,6 +265,58 @@ def test_sql_repository_writes_daily_run_summary() -> None:
     assert len(cursor.calls[1][1][4]) == 64
     assert '"strategyVersion": "LEGACY_RELAXED"' in cursor.calls[1][1][5]
     assert cursor.calls[1][1][6:12] == (12.5, 3.4, 2, 1, 4, 3)
+
+
+def test_sql_repository_writes_candidate_evaluation_and_update() -> None:
+    cursors: list[Cursor] = []
+
+    def connect() -> Connection:
+        cursor = Cursor()
+        cursors.append(cursor)
+        return Connection(cursor)
+
+    repository = SqlServerDailyRepository(connect)
+    repository.save_candidate_evaluations(
+        [
+            CandidateEvaluation(
+                run_id="run-1",
+                evaluation_time=datetime(2026, 5, 22, 13, 30, tzinfo=timezone.utc),
+                trading_date=date(2026, 5, 22),
+                source="dry_run",
+                symbol="AAA",
+                current_price=12.5,
+                selection_score=42.0,
+                soft_score_adjustment=-5.0,
+                final_score=37.0,
+                overheat_condition_mode="HARD_FILTER",
+                breakout_close_condition_mode="SOFT_SCORE",
+                volume_increase_condition_mode="SOFT_SCORE",
+                vwap_ma20_condition_mode="HARD_FILTER",
+                vwap_ma20_condition_type="OR",
+                pullback_rebreak_condition_mode="SOFT_SCORE",
+                breakout_close_pass=False,
+                final_score_pass=True,
+                buy_allowed=False,
+                buy_block_reason="VWAP_MA20_FAILED",
+                buy_block_reasons='["VWAP_MA20_FAILED"]',
+                hard_filter_failed_count=1,
+                soft_condition_failed_count=1,
+                final_decision="VWAP_MA20_FAILED",
+            )
+        ]
+    )
+    repository.mark_candidate_evaluation_order_submitted("AAA", date(2026, 5, 22), "1001")
+
+    assert "CREATE TABLE dbo.candidate_evaluations" in cursors[0].calls[0][0]
+    assert "IX_candidate_evaluations_time" in cursors[0].calls[0][0]
+    assert "INSERT INTO candidate_evaluations" in cursors[1].calls[0][0]
+    row = cursors[1].calls[0][1][0]
+    assert row[0] == "run-1"
+    assert row[4] == "AAA"
+    assert row[23:25] == (-5.0, 37.0)
+    assert row[39:44] == (0, 0, None, "VWAP_MA20_FAILED", '["VWAP_MA20_FAILED"]')
+    assert "UPDATE candidate_evaluations" in cursors[3].calls[0][0]
+    assert cursors[3].calls[0][1] == ("1001", "AAA", date(2026, 5, 22))
 
 
 def test_sql_monitor_run_summaries_ignore_history_date() -> None:

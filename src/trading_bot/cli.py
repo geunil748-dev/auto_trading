@@ -546,7 +546,7 @@ def _backtest_base_settings(use_runtime_settings: bool = False) -> TradingSettin
     if use_runtime_settings:
         return load_settings()
     return TradingSettings(
-        min_price_usd=5.0,
+        min_price_usd=10.0,
         max_price_usd=50.0,
         min_opening_price_change=0.03,
         min_volume_ratio=1.5,

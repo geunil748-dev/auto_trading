@@ -146,6 +146,60 @@ class BuyIntent:
 
 
 @dataclass(frozen=True)
+class CandidateEvaluation:
+    run_id: str | None
+    evaluation_time: datetime
+    trading_date: date | None
+    source: str | None
+    symbol: str
+    symbol_name: str = ""
+    current_price: float | None = None
+    volume: int | None = None
+    dollar_volume: float | None = None
+    price_change_percent: float | None = None
+    opening_gap_percent: float | None = None
+    price_rank: int | None = None
+    volume_rank: int | None = None
+    relaxation_level: int | None = None
+    min_price: float | None = None
+    max_price: float | None = None
+    price_change_top: int | None = None
+    volume_top: int | None = None
+    min_selection_score: float | None = None
+    min_opening_price_change_percent: float | None = None
+    min_volume_ratio: float | None = None
+    max_opening_gap_percent: float | None = None
+    selection_score: float | None = None
+    soft_score_adjustment: float | None = None
+    final_score: float | None = None
+    overheat_condition_mode: str | None = None
+    breakout_close_condition_mode: str | None = None
+    volume_increase_condition_mode: str | None = None
+    vwap_ma20_condition_mode: str | None = None
+    vwap_ma20_condition_type: str | None = None
+    pullback_rebreak_condition_mode: str | None = None
+    overheat_pass: bool | None = None
+    breakout_close_pass: bool | None = None
+    volume_increase_pass: bool | None = None
+    vwap_pass: bool | None = None
+    ma20_pass: bool | None = None
+    vwap_ma20_pass: bool | None = None
+    pullback_rebreak_pass: bool | None = None
+    final_score_pass: bool | None = None
+    buy_allowed: bool = False
+    order_submitted: bool = False
+    order_id: str | None = None
+    buy_block_reason: str | None = None
+    buy_block_reasons: str | None = None
+    hard_filter_failed_count: int | None = None
+    soft_condition_failed_count: int | None = None
+    final_decision: str | None = None
+    settings_snapshot_json: str | None = None
+    condition_result_json: str | None = None
+    raw_candidate_json: str | None = None
+
+
+@dataclass(frozen=True)
 class SellIntent:
     ticker: str
     quantity: int

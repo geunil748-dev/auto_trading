@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>자동매매 모니터</title>
     <link rel="stylesheet" href="./styles.css?v=32" />
-    <link rel="stylesheet" href="./panels.css?v=44" />
+    <link rel="stylesheet" href="./panels.css?v=55" />
   </head>
   <body>
     <div class="app-frame">
@@ -25,6 +25,9 @@
         </button>
         <button class="nav-item" type="button" data-page="candidateHistory" data-icon="후">
           <span>후보 리스트</span>
+        </button>
+        <button class="nav-item" type="button" data-page="tradingStats" data-icon="지">
+          <span>운영 지표</span>
         </button>
         <button class="nav-item" type="button" data-page="runSummary" data-icon="결">
           <span>일별 운용 결과</span>
@@ -97,11 +100,11 @@
             <dd id="openPositions">-</dd>
           </dl>
           <dl>
-            <dt>수익률</dt>
+            <dt>누적 수익률</dt>
             <dd id="dailyProfitRate">-</dd>
           </dl>
           <dl>
-            <dt>실현손익</dt>
+            <dt>누적 실현손익</dt>
             <dd id="realizedProfitUsd">-</dd>
           </dl>
         </section>
@@ -123,12 +126,6 @@
               <div>
                 <p class="eyebrow">API 수집</p>
                 <h2>리스트업 종목</h2>
-              </div>
-              <div class="panel-actions">
-                <span class="button-spinner external-spinner" data-spinner-for="refreshState" aria-hidden="true"></span>
-                <button id="refreshState" class="ghost-action" type="button">
-                  <span>새로고침</span>
-                </button>
               </div>
             </div>
             <div class="table-wrap">
@@ -166,7 +163,7 @@
                     <th>보유주가</th>
                     <th>평단가</th>
                     <th>장 시작가</th>
-                    <th>장 마감가</th>
+                    <th>현재가</th>
                     <th>총가격</th>
                     <th>관리</th>
                   </tr>
@@ -208,6 +205,37 @@
                 </thead>
                 <tbody id="candidateHistoryRows"></tbody>
               </table>
+            </div>
+          </article>
+
+          <article class="panel trading-stats-panel">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">최근 30거래일</p>
+                <h2>운영 지표</h2>
+              </div>
+            </div>
+            <div class="trading-stats-grid" aria-label="최근 30거래일 운영 지표">
+              <dl>
+                <dt>최근 거래일</dt>
+                <dd id="statsTradingDays">-</dd>
+              </dl>
+              <dl>
+                <dt>후보 생성률</dt>
+                <dd id="statsCandidateRate">-</dd>
+              </dl>
+              <dl>
+                <dt>scoring 생성률</dt>
+                <dd id="statsScoringRate">-</dd>
+              </dl>
+              <dl>
+                <dt>STRICT 필터 발생률</dt>
+                <dd id="statsStrictFilterRate">-</dd>
+              </dl>
+              <dl>
+                <dt>최종 후보 생성률</dt>
+                <dd id="statsSelectedRate">-</dd>
+              </dl>
             </div>
           </article>
 
@@ -404,122 +432,255 @@
                   <strong>매수 매도 조건</strong>
                   <span>실제 주문 직전 매수 타이밍과 보유 종목 매도 기준에 함께 적용됩니다.</span>
                 </div>
-                <label>
-                  <span>손절 비율</span>
-                  <div class="percent-input">
-                    <input id="stopLossPercent" type="number" min="0.1" max="50" step="0.1" />
-                    <b>%</b>
+                <section class="settings-subsection">
+                  <div class="settings-section-title">
+                    <strong>리스크 관리</strong>
+                    <span>청산 기준과 이익 보호 설정</span>
                   </div>
-                </label>
-                <label>
-                  <span>익절 비율</span>
-                  <div class="percent-input">
-                    <input id="takeProfitPercent" type="number" min="0.1" max="50" step="0.1" />
-                    <b>%</b>
+                  <div class="settings-row settings-row-4">
+                    <label>
+                      <span>손절 비율</span>
+                      <div class="percent-input">
+                        <input id="stopLossPercent" type="number" min="0.1" max="50" step="0.1" />
+                        <b>%</b>
+                      </div>
+                    </label>
+                    <label>
+                      <span>익절 비율</span>
+                      <div class="percent-input">
+                        <input id="takeProfitPercent" type="number" min="0.1" max="50" step="0.1" />
+                        <b>%</b>
+                      </div>
+                    </label>
+                    <label class="check-input">
+                      <input id="partialTakeProfitEnabled" type="checkbox" />
+                      <span>분할 익절</span>
+                    </label>
+                    <label>
+                      <span>트레일링 시작</span>
+                      <div class="percent-input">
+                        <input id="trailingStopActivationPercent" type="number" min="0" max="50" step="0.1" />
+                        <b>%</b>
+                      </div>
+                    </label>
                   </div>
-                </label>
-                <label>
-                  <span>매수 과열 상한</span>
-                  <div class="percent-input">
-                    <input id="maxEntryPriceChangePercent" type="number" min="0" max="500" step="0.1" />
-                    <b>%</b>
+                </section>
+                <section class="settings-subsection">
+                  <div class="settings-section-title">
+                    <strong>진입 제한</strong>
+                    <span>과열 구간과 돌파 유지 조건</span>
                   </div>
-                </label>
-                <label>
-                  <span>돌파 유지 시간</span>
-                  <div class="percent-input">
-                    <input id="breakoutHoldMinutes" type="number" min="0" max="60" step="1" />
-                    <b>분</b>
+                  <div class="settings-row settings-row-3">
+                    <label>
+                      <span>매수 과열 상한</span>
+                      <div class="percent-input">
+                        <input id="maxEntryPriceChangePercent" type="number" min="0" max="500" step="0.1" />
+                        <b>%</b>
+                      </div>
+                    </label>
+                    <label>
+                      <span>과열 조건</span>
+                      <select id="overheatLimitConditionMode">
+                        <option value="HARD_FILTER" title="실패 시 매수 차단">실패 시 매수 차단</option>
+                        <option value="SOFT_SCORE" title="실패해도 매수 차단하지 않고 final_score에 감산 반영">실패 시 점수 감산</option>
+                        <option value="LOG_ONLY" title="실패해도 매수 차단/점수 감산 없음">기록만 남김</option>
+                        <option value="OFF" title="조건 무시">조건 무시</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>돌파 유지 시간</span>
+                      <div class="percent-input">
+                        <input id="breakoutHoldMinutes" type="number" min="0" max="60" step="1" />
+                        <b>분</b>
+                      </div>
+                    </label>
                   </div>
-                </label>
-                <label class="check-input setting-wide">
-                  <input id="partialTakeProfitEnabled" type="checkbox" />
-                  <span>분할 익절 사용</span>
-                </label>
-                <label>
-                  <span>트레일링 시작 수익률</span>
-                  <div class="percent-input">
-                    <input id="trailingStopActivationPercent" type="number" min="0" max="50" step="0.1" />
-                    <b>%</b>
+                </section>
+                <section class="settings-subsection">
+                  <div class="settings-section-title">
+                    <strong>진입 확인 조건</strong>
+                    <span>조건별 적용 강도는 차단, 감산, 기록, 끔 중 선택합니다.</span>
                   </div>
-                </label>
-                <label class="check-input setting-wide">
-                  <input id="require5mCloseAboveBreakout" type="checkbox" />
-                  <span>최근 5분봉 종가가 돌파선 위일 때만 매수</span>
-                </label>
-                <label class="check-input setting-wide">
-                  <input id="require5mVolumeIncrease" type="checkbox" />
-                  <span>최근 5분 거래량 증가 확인 후 매수</span>
-                </label>
-                <label class="check-input setting-wide">
-                  <input id="requireVwapOrMa20" type="checkbox" />
-                  <span>VWAP 또는 장중 20선 위일 때만 매수</span>
-                </label>
-                <label class="check-input setting-wide">
-                  <input id="requirePullbackRebreak" type="checkbox" />
-                  <span>눌림 후 재돌파 확인 후 매수</span>
-                </label>
+                  <div class="condition-grid">
+                    <div class="condition-row">
+                      <label class="check-input">
+                        <input id="require5mCloseAboveBreakout" type="checkbox" />
+                        <span>5분봉 종가 돌파 조건</span>
+                      </label>
+                      <label>
+                        <span>모드</span>
+                        <select id="breakoutCloseConditionMode">
+                          <option value="SOFT_SCORE" title="실패해도 매수 차단하지 않고 final_score에 감산 반영">실패 시 점수 감산</option>
+                          <option value="HARD_FILTER" title="실패 시 매수 차단">실패 시 매수 차단</option>
+                          <option value="LOG_ONLY" title="실패해도 매수 차단/점수 감산 없음">기록만 남김</option>
+                          <option value="OFF" title="조건 무시">조건 무시</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div class="condition-row">
+                      <label class="check-input">
+                        <input id="require5mVolumeIncrease" type="checkbox" />
+                        <span>5분 거래량 증가 조건</span>
+                      </label>
+                      <label>
+                        <span>모드</span>
+                        <select id="volumeIncreaseConditionMode">
+                          <option value="SOFT_SCORE" title="실패해도 매수 차단하지 않고 final_score에 감산 반영">실패 시 점수 감산</option>
+                          <option value="HARD_FILTER" title="실패 시 매수 차단">실패 시 매수 차단</option>
+                          <option value="LOG_ONLY" title="실패해도 매수 차단/점수 감산 없음">기록만 남김</option>
+                          <option value="OFF" title="조건 무시">조건 무시</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>5분 거래량 증가 기준</span>
+                        <div class="percent-input">
+                          <input id="min5mVolumeIncreasePercent" type="number" min="0" max="500" step="0.1" />
+                          <b>%</b>
+                        </div>
+                      </label>
+                    </div>
+                    <div class="condition-row condition-row-vwap">
+                      <label class="check-input">
+                        <input id="requireVwapOrMa20" type="checkbox" />
+                        <span>VWAP/장중 20선 이상 조건</span>
+                      </label>
+                      <label>
+                        <span>모드</span>
+                        <select id="vwapMa20ConditionMode">
+                          <option value="HARD_FILTER" title="실패 시 매수 차단">실패 시 매수 차단</option>
+                          <option value="SOFT_SCORE" title="실패해도 매수 차단하지 않고 final_score에 감산 반영">실패 시 점수 감산</option>
+                          <option value="LOG_ONLY" title="실패해도 매수 차단/점수 감산 없음">기록만 남김</option>
+                          <option value="OFF" title="조건 무시">조건 무시</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>방식</span>
+                        <select id="vwapMa20ConditionType">
+                          <option value="OR">OR</option>
+                          <option value="AND">AND</option>
+                          <option value="VWAP_ONLY">VWAP</option>
+                          <option value="MA20_ONLY">20선</option>
+                          <option value="OFF">끔</option>
+                        </select>
+                      </label>
+                      <p class="condition-help">
+                        OR 선택 시 현재가가 VWAP 이상 또는 장중 20선 이상이면 통과합니다. 실시간 값이 없으면 SKIPPED_NO_DATA로 기록되며 차단 조건으로 작동하지 않습니다. 실시간 VWAP/20MA 계산 구현 전까지는 기본 OFF를 권장합니다.
+                      </p>
+                    </div>
+                    <div class="condition-row">
+                      <label class="check-input">
+                        <input id="requirePullbackRebreak" type="checkbox" />
+                        <span>눌림 후 재돌파 조건</span>
+                      </label>
+                      <label>
+                        <span>모드</span>
+                        <select id="pullbackRebreakConditionMode">
+                          <option value="SOFT_SCORE" title="실패해도 매수 차단하지 않고 final_score에 감산 반영">실패 시 점수 감산</option>
+                          <option value="HARD_FILTER" title="실패 시 매수 차단">실패 시 매수 차단</option>
+                          <option value="LOG_ONLY" title="실패해도 매수 차단/점수 감산 없음">기록만 남김</option>
+                          <option value="OFF" title="조건 무시">조건 무시</option>
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+                </section>
                 <button id="saveRiskSettings" type="submit">매수/매도 조건 저장</button>
                 <p id="riskSettingsStatus" class="settings-status"></p>
               </form>
 
               <form class="settings-form filter-settings-form" id="filterSettingsForm">
-                <div class="settings-section collect-settings">
-                  <div class="settings-group-head">
-                    <strong>종목 수집 조건</strong>
-                    <span>후보 리스트업과 점수 선별에 적용됩니다.</span>
-                  </div>
-                  <label class="setting-wide">
-                    <span>후보 선정 방식</span>
-                    <select id="intradayCandidateMode">
-                      <option value="refresh">15분마다 새 후보 수집</option>
-                      <option value="fixed">장초반 후보 고정 감시</option>
-                      <option value="hybrid">장초반+15분 새로운 종목 수집</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>최저 가격</span>
-                    <div class="percent-input">
-                      <input id="minPriceUsd" type="number" min="0.01" step="0.01" />
-                      <b>$</b>
-                    </div>
-                  </label>
-                  <label>
-                    <span>최고 가격</span>
-                    <div class="percent-input">
-                      <input id="maxPriceUsd" type="number" min="0.01" step="0.01" />
-                      <b>$</b>
-                    </div>
-                  </label>
-                  <label>
-                    <span>선정점수</span>
-                    <div class="percent-input">
-                      <input id="minTotalScore" type="number" min="0" max="100" step="1" />
-                      <b>점</b>
-                    </div>
-                  </label>
-                  <label>
-                    <span>장초반 상승률</span>
-                    <div class="percent-input">
-                      <input id="minOpeningPriceChangePercent" type="number" min="0" max="500" step="0.1" />
-                      <b>%</b>
-                    </div>
-                  </label>
-                  <label>
-                    <span>거래량 비율</span>
-                    <div class="percent-input">
-                      <input id="minVolumeRatio" type="number" min="0.1" max="100" step="0.1" />
-                      <b>배</b>
-                    </div>
-                  </label>
-                  <label>
-                    <span>시가 갭 상한</span>
-                    <div class="percent-input">
-                      <input id="maxOpeningGapPercent" type="number" min="0" max="500" step="0.1" />
-                      <b>%</b>
-                    </div>
-                  </label>
+                <div class="settings-group-head">
+                  <strong>종목 수집 조건</strong>
+                  <span>후보 리스트업과 점수 선별에 적용됩니다.</span>
                 </div>
+                <section class="settings-subsection">
+                  <div class="settings-section-title">
+                    <strong>후보 선정</strong>
+                    <span>수집 방식과 가격 범위</span>
+                  </div>
+                  <div class="settings-row settings-row-3">
+                    <label class="setting-wide">
+                      <span>후보 선정 방식</span>
+                      <select id="intradayCandidateMode">
+                        <option value="refresh">15분마다 새 후보 수집</option>
+                        <option value="fixed">장초반 후보 고정 감시</option>
+                        <option value="hybrid">장초반+15분 새로운 종목 수집</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>최저 가격</span>
+                      <div class="percent-input">
+                        <input id="minPriceUsd" type="number" min="10" step="0.01" />
+                        <b>$</b>
+                      </div>
+                    </label>
+                    <label>
+                      <span>최고 가격</span>
+                      <div class="percent-input">
+                        <input id="maxPriceUsd" type="number" min="0.01" step="0.01" />
+                        <b>$</b>
+                      </div>
+                    </label>
+                  </div>
+                </section>
+                <section class="settings-subsection">
+                  <div class="settings-section-title">
+                    <strong>랭킹/점수</strong>
+                    <span>랭킹 수집 범위와 최저 점수</span>
+                  </div>
+                  <div class="settings-row settings-row-3">
+                    <label>
+                      <span>상승률 TOP</span>
+                      <div class="percent-input">
+                        <input id="gainerRankingLimit" type="number" min="1" max="1000" step="1" />
+                        <b>건</b>
+                      </div>
+                    </label>
+                    <label>
+                      <span>거래량 TOP</span>
+                      <div class="percent-input">
+                        <input id="turnoverRankingLimit" type="number" min="1" max="1000" step="1" />
+                        <b>건</b>
+                      </div>
+                    </label>
+                    <label>
+                      <span>선정점수</span>
+                      <div class="percent-input">
+                        <input id="minTotalScore" type="number" min="0" max="100" step="1" />
+                        <b>점</b>
+                      </div>
+                    </label>
+                  </div>
+                </section>
+                <section class="settings-subsection">
+                  <div class="settings-section-title">
+                    <strong>장초반 필터</strong>
+                    <span>초반 변동성과 거래량 기준</span>
+                  </div>
+                  <div class="settings-row settings-row-3">
+                    <label>
+                      <span>장초반 상승률</span>
+                      <div class="percent-input">
+                        <input id="minOpeningPriceChangePercent" type="number" min="0" max="500" step="0.1" />
+                        <b>%</b>
+                      </div>
+                    </label>
+                    <label>
+                      <span>거래량 비율</span>
+                      <div class="percent-input">
+                        <input id="minVolumeRatio" type="number" min="0.1" max="100" step="0.1" />
+                        <b>배</b>
+                      </div>
+                    </label>
+                    <label>
+                      <span>시가 갭 상한</span>
+                      <div class="percent-input">
+                        <input id="maxOpeningGapPercent" type="number" min="0" max="500" step="0.1" />
+                        <b>%</b>
+                      </div>
+                    </label>
+                  </div>
+                </section>
 
                 <button id="saveFilterSettings" type="submit">종목 수집 조건 저장</button>
                 <p id="filterSettingsStatus" class="settings-status"></p>
@@ -583,6 +744,10 @@
               </div>
               <div class="panel-actions logs-actions">
                 <label class="log-filter-toggle">
+                  <input type="checkbox" id="showNoBuyLogs" />
+                  <span>매수 0건 로그 표시</span>
+                </label>
+                <label class="log-filter-toggle">
                   <input type="checkbox" id="showNoSellLogs" />
                   <span>매도 0건 로그 표시</span>
                 </label>
@@ -597,6 +762,6 @@
       </main>
     </div>
     <script src="./runtime-controls.js?v=3"></script>
-    <script src="./app.js?v=66"></script>
+    <script src="./app.js?v=70"></script>
   </body>
 </html>

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime, time
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -16,10 +16,12 @@ class KisScreeningMarketData:
         kis: KisOverseasClient,
         context: ScreeningContextSource,
         history: CandidateHistorySource,
+        on_snapshot_error: Callable[[str, str], None] | None = None,
     ) -> None:
         self.kis = kis
         self.context = context
         self.history = history
+        self.on_snapshot_error = on_snapshot_error
         self._gain_ranks: dict[str, int] = {}
         self._volume_ranks: dict[str, int] = {}
         self._names: dict[str, str] = {}
@@ -27,15 +29,15 @@ class KisScreeningMarketData:
     def market_context(self) -> MarketContext:
         return self.context.market_context()
 
-    def ranked_gainers(self) -> list[RankedStock]:
-        rows = self.kis.ranked_gainers()
+    def ranked_gainers(self, limit: int | None = None) -> list[RankedStock]:
+        rows = self.kis.ranked_gainers(limit or 200)
         self._gain_ranks = {item.ticker: item.rank for item in rows}
         self._names.update({item.ticker: item.name for item in rows if item.name})
         return rows
 
-    def ranked_turnover(self) -> list[RankedStock]:
+    def ranked_turnover(self, limit: int | None = None) -> list[RankedStock]:
         # 현재 사용 가능한 해외 랭킹 API는 거래량 기준이므로 거래대금 대용으로 사용한다.
-        rows = self.kis.ranked_trade_volume()
+        rows = self.kis.ranked_trade_volume(limit or 200)
         self._volume_ranks = {item.ticker: item.rank for item in rows}
         self._names.update({item.ticker: item.name for item in rows if item.name})
         return rows
@@ -46,8 +48,10 @@ class KisScreeningMarketData:
     ) -> Mapping[str, CandidateSnapshot]:
         snapshots: dict[str, CandidateSnapshot] = {}
         for ticker in tickers:
+            stage = "quote"
             try:
                 quote = self.kis.quote(ticker)
+                stage = "opening_volume"
                 opening_volume = _required_float(
                     quote,
                     "tvol",
@@ -55,7 +59,9 @@ class KisScreeningMarketData:
                     "acml_vol",
                     "ACML_VOL",
                 )
+                stage = "daily_prices"
                 average_volume = self.history.average_daily_volume(ticker, 20)
+                stage = "snapshot_fields"
                 snapshots[ticker] = CandidateSnapshot(
                     ticker=ticker,
                     price_usd=_required_float(quote, "last", "LAST"),
@@ -69,9 +75,18 @@ class KisScreeningMarketData:
                     opening_volume=opening_volume,
                     average_volume_20d=average_volume,
                 )
-            except Exception:
+            except Exception as exc:
+                self._report_snapshot_error(ticker, _snapshot_failure_reason(stage, exc))
                 continue
         return snapshots
+
+    def _report_snapshot_error(self, ticker: str, reason: str) -> None:
+        if self.on_snapshot_error is None:
+            return
+        try:
+            self.on_snapshot_error(ticker, reason)
+        except Exception:
+            return
 
 
 class KisDailyVolumeHistory:
@@ -176,3 +191,24 @@ def _first_text(row: dict[str, Any], *fields: str) -> str:
         if value not in (None, ""):
             return str(value).strip()
     return ""
+
+
+def _snapshot_failure_reason(stage: str, exc: Exception) -> str:
+    message = str(exc)
+    code = getattr(exc, "code", None)
+    if code is not None:
+        return f"{stage}_http_error_{code}"
+    if isinstance(exc, TimeoutError):
+        return f"{stage}_timeout"
+    if "has fewer than" in message:
+        return "daily_prices_insufficient"
+    if "no daily price history" in message:
+        return "daily_prices_empty"
+    if "missing numeric field" in message:
+        return f"{stage}_missing_field"
+    return f"{stage}_{_compact_reason(message)}"
+
+
+def _compact_reason(message: str) -> str:
+    cleaned = "_".join(message.strip().split())
+    return cleaned[:120] or "unknown_error"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -27,8 +29,40 @@ def run_scheduler(monitor_state: Path) -> None:
         scheduler,
         tasks,
     )
+    _register_heartbeat(scheduler, monitor_state.parent / "scheduler_heartbeat.json")
     _register_startup_recovery(scheduler, tasks)
     scheduler.start()
+
+
+def _register_heartbeat(scheduler, heartbeat_path: Path) -> None:
+    _write_scheduler_heartbeat(heartbeat_path)
+    scheduler.add_job(
+        _write_scheduler_heartbeat,
+        "interval",
+        minutes=1,
+        args=[heartbeat_path],
+        id="scheduler_heartbeat",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
+
+def _write_scheduler_heartbeat(heartbeat_path: Path) -> str:
+    heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+    heartbeat_path.write_text(
+        json.dumps(
+            {
+                "status": "running",
+                "pid": os.getpid(),
+                "updated_at": datetime.now(ZoneInfo("Asia/Seoul")).isoformat(),
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return "Scheduler heartbeat updated."
 
 
 def _register_startup_recovery(scheduler, tasks: DailyTasks) -> None:

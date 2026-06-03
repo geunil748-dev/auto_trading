@@ -36,6 +36,9 @@ class Repository:
             "CANDIDATE_SNAPSHOT_SAVED: 후보 56건을 DB에 저장했습니다.",
         )
 
+    def recent_trading_stats(self, limit: int = 30) -> tuple[object, ...]:
+        return (4, 3, 2, 1, 1)
+
     def latest_trades(self) -> list[tuple[object, ...]]:
         return [
             (
@@ -205,12 +208,24 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
         "minimum_required_candidate_days": 10,
         "minimum_required_trade_count": 30,
         "last_candidate_snapshot_status": "정보",
-        "last_candidate_snapshot_message": "CANDIDATE_SNAPSHOT_SAVED: 후보 56건을 DB에 저장했습니다.",
+        "last_candidate_snapshot_message": "후보 스냅샷 저장 완료: 후보 56건을 DB에 저장했습니다.",
         "sample_warning": (
             "INSUFFICIENT_SAMPLE_FOR_STRATEGY_DECISION: "
             "후보 기준일 또는 거래 수가 부족하여 전략 성과 판단에 사용할 수 없습니다. "
             "최소 후보 기준일 10일 이상, 거래 수 30건 이상을 권장합니다."
         ),
+    }
+    assert state["trading_stats"] == {
+        "lookback_days": 30,
+        "total_trading_days": 4,
+        "candidate_days": 3,
+        "candidate_rate": 75.0,
+        "scoring_days": 2,
+        "scoring_rate": 50.0,
+        "strict_filter_days": 1,
+        "strict_filter_rate": 25.0,
+        "selected_days": 1,
+        "selected_rate": 25.0,
     }
     assert state["account"] == {
         "cashUsd": "$1,000.00",
@@ -369,6 +384,71 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
         "profitUsd": "+$15.50",
         "strategyVersion": "-",
     }
+
+
+def test_sql_monitor_state_translates_structured_log_messages() -> None:
+    class StructuredLogRepository(Repository):
+        def latest_logs(self) -> list[tuple[object, ...]]:
+            return [
+                (
+                    "22:50:00",
+                    "INFO",
+                    "[PIPELINE] gainers_count=100 volume_count=100 intersection_count=5 "
+                    "snapshot_success_count=5 snapshot_fail_count=0 risk_pass_count=0 "
+                    "scoring_pass_count=0 final_selected_count=0",
+                ),
+                (
+                    "22:50:01",
+                    "INFO",
+                    "[FILTER] removed_by_price=3 removed_by_gap=1 removed_by_volume_ratio=1 "
+                    "removed_by_opening_change=0 removed_by_score=0 final_count=0",
+                ),
+                (
+                    "22:50:02",
+                    "INFO",
+                    "[PIPELINE_SUMMARY] gainers=100 volume=100 intersection=5 "
+                    "snapshot_success=5 snapshot_fail=0 risk_pass=0 score_pass=0 "
+                    "saved=0 duration_ms=1234",
+                ),
+                (
+                    "22:50:03",
+                    "INFO",
+                    "[SAVE_TARGETS] candidate_count=5 trade_date=2026-06-01",
+                ),
+                (
+                    "22:50:04",
+                    "INFO",
+                    "[SAVE_SCORES] score_count=5 trade_date=2026-06-01",
+                ),
+                (
+                    "22:50:05",
+                    "WARNING",
+                    "[MISSING_SNAPSHOT] ticker=AAPL reason=daily_prices_empty",
+                ),
+            ]
+
+    state = SqlMonitorStateSource(StructuredLogRepository()).read()
+
+    assert [row[2] for row in state["logs"]] == [
+        (
+            "후보 생성 단계: 상승률 랭킹 100건, 거래량 랭킹 100건, 교집합 5건, "
+            "시세 조회 성공 5건, 시세 조회 실패 0건, 필터 통과 후보 0건, "
+            "점수 통과 후보 0건, 최종 선정 후보 0건"
+        ),
+        (
+            "필터 제외 현황: 가격 조건 제외 3건, 갭 조건 제외 1건, "
+            "거래량 비율 제외 1건, 장초반 상승률 제외 0건, 점수 기준 제외 0건, "
+            "최종 후보 0건"
+        ),
+        (
+            "후보 생성 요약: 상승률 랭킹 100건, 거래량 랭킹 100건, 교집합 5건, "
+            "시세 조회 성공 5건, 시세 조회 실패 0건, 필터 통과 후보 0건, "
+            "점수 통과 후보 0건, DB 저장 후보 0건, 소요 시간 1234ms"
+        ),
+        "후보 저장: 후보 수 5건, 거래일 2026-06-01",
+        "점수 저장: 점수 수 5건, 거래일 2026-06-01",
+        "시세 스냅샷 누락: 종목 AAPL, 사유 일봉 데이터 없음",
+    ]
 
 
 def test_sql_monitor_history_includes_daily_run_summary() -> None:

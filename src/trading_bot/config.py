@@ -11,6 +11,7 @@ except ImportError:  # pragma: no cover - 로컬 규칙 테스트에서 선택 �
     load_dotenv = None
 
 RUNTIME_SETTINGS_PATH = Path("monitor/trading_settings.json")
+MIN_PRICE_USD_FLOOR = 10.0
 
 # 화면에서 조정 가능한 매매 설정 키. 런타임 저장소와 .env 값을 같은 이름으로 맞춘다.
 RUNTIME_SETTING_KEYS = {
@@ -25,17 +26,26 @@ RUNTIME_SETTING_KEYS = {
     "min_total_score",
     "min_price_usd",
     "max_price_usd",
+    "gainer_ranking_limit",
+    "turnover_ranking_limit",
     "min_opening_price_change",
     "min_volume_ratio",
     "max_opening_gap",
     "refresh_intraday_candidates",
     "candidate_selection_mode",
     "max_entry_price_change",
+    "overheat_limit_condition_mode",
     "breakout_hold_minutes",
     "require_5m_close_above_breakout",
+    "breakout_close_condition_mode",
     "require_5m_volume_increase",
+    "min_5m_volume_increase_percent",
+    "volume_increase_condition_mode",
     "require_vwap_or_ma20",
+    "vwap_ma20_condition_mode",
+    "vwap_ma20_condition_type",
     "require_pullback_rebreak",
+    "pullback_rebreak_condition_mode",
     "stop_loss_cooldown_minutes",
     "max_consecutive_stop_loss_count",
     "max_bid_ask_spread_rate",
@@ -65,20 +75,44 @@ STRATEGY_PRESETS = {
 PARTIAL_FILL_POLICY_KEEP = "KEEP_REMAINING"
 PARTIAL_FILL_POLICY_CANCEL = "CANCEL_REMAINING"
 PARTIAL_FILL_POLICIES = {PARTIAL_FILL_POLICY_KEEP, PARTIAL_FILL_POLICY_CANCEL}
+CONDITION_MODE_OFF = "OFF"
+CONDITION_MODE_LOG_ONLY = "LOG_ONLY"
+CONDITION_MODE_SOFT_SCORE = "SOFT_SCORE"
+CONDITION_MODE_HARD_FILTER = "HARD_FILTER"
+CONDITION_MODES = {
+    CONDITION_MODE_OFF,
+    CONDITION_MODE_LOG_ONLY,
+    CONDITION_MODE_SOFT_SCORE,
+    CONDITION_MODE_HARD_FILTER,
+}
+VWAP_MA20_OR = "OR"
+VWAP_MA20_AND = "AND"
+VWAP_MA20_VWAP_ONLY = "VWAP_ONLY"
+VWAP_MA20_MA20_ONLY = "MA20_ONLY"
+VWAP_MA20_OFF = "OFF"
+VWAP_MA20_TYPES = {
+    VWAP_MA20_OR,
+    VWAP_MA20_AND,
+    VWAP_MA20_VWAP_ONLY,
+    VWAP_MA20_MA20_ONLY,
+    VWAP_MA20_OFF,
+}
 
 
 @dataclass(frozen=True)
 class TradingSettings:
     mock_trading: bool = True
-    min_price_usd: float = 5.0
-    max_price_usd: float = 50.0
+    min_price_usd: float = MIN_PRICE_USD_FLOOR
+    max_price_usd: float = 300.0
+    gainer_ranking_limit: int = 500
+    turnover_ranking_limit: int = 500
     max_open_positions: int = 5
     min_selected_candidates: int = 3
     max_selected_candidates: int = 5
     max_account_exposure: float = 0.80
     max_position_exposure: float = 0.20
     max_position_loss: float = -0.05
-    take_profit_rate: float = 0.05
+    take_profit_rate: float = 0.10
     strategy_preset: str = STRATEGY_PRESET_CURRENT
     allow_relaxed_candidate_filter: bool = True
     relax_opening_change_only: bool = False
@@ -87,26 +121,33 @@ class TradingSettings:
     trailing_stop_activation_rate: float = 0.03
     max_daily_account_loss: float = -0.03
     max_fx_change: float = 0.02
-    max_opening_gap: float = 0.20
-    min_opening_price_change: float = 0.03
-    min_volume_ratio: float = 1.50
-    min_total_score: float = 70.0
+    max_opening_gap: float = 0.30
+    min_opening_price_change: float = 0.0
+    min_volume_ratio: float = 1.00
+    min_total_score: float = 35.0
     trailing_stop_drop: float = 0.03
     breakout_k: float = 0.50
     max_intraday_entry_rounds: int = 2
     max_intraday_buy_intents_per_round: int = 1
-    refresh_intraday_candidates: bool = True
-    candidate_selection_mode: str = CANDIDATE_MODE_REFRESH
+    refresh_intraday_candidates: bool = False
+    candidate_selection_mode: str = CANDIDATE_MODE_FIXED
     opening_fixed_candidate_limit: int = 5
     intraday_refresh_candidate_limit: int = 3
     hybrid_candidate_limit: int = 8
     min_pyramiding_profit_rate: float = 0.03
     max_entry_price_change: float = 0.25
+    overheat_limit_condition_mode: str = CONDITION_MODE_HARD_FILTER
     breakout_hold_minutes: float = 0.0
-    require_5m_close_above_breakout: bool = False
-    require_5m_volume_increase: bool = False
+    require_5m_close_above_breakout: bool = True
+    breakout_close_condition_mode: str = CONDITION_MODE_SOFT_SCORE
+    require_5m_volume_increase: bool = True
+    min_5m_volume_increase_percent: float = 5.0
+    volume_increase_condition_mode: str = CONDITION_MODE_SOFT_SCORE
     require_vwap_or_ma20: bool = False
-    require_pullback_rebreak: bool = False
+    vwap_ma20_condition_mode: str = CONDITION_MODE_HARD_FILTER
+    vwap_ma20_condition_type: str = VWAP_MA20_OR
+    require_pullback_rebreak: bool = True
+    pullback_rebreak_condition_mode: str = CONDITION_MODE_SOFT_SCORE
     mock_unfilled_reorder_minutes: int = 2
     mock_unfilled_reorder_limit: int = 1
     real_unfilled_reorder_minutes: int = 1
@@ -159,33 +200,57 @@ def load_settings() -> TradingSettings:
 
     settings = TradingSettings(
         mock_trading=_bool_env("MOCK_TRADING", True),
-        min_price_usd=_float_env("MIN_PRICE_USD", 5.0),
-        max_price_usd=_float_env("MAX_PRICE_USD", 50.0),
+        min_price_usd=_min_price_env("MIN_PRICE_USD", MIN_PRICE_USD_FLOOR),
+        max_price_usd=_float_env("MAX_PRICE_USD", 300.0),
+        gainer_ranking_limit=_ranking_limit_env("GAINER_RANKING_LIMIT", 500),
+        turnover_ranking_limit=_ranking_limit_env("TURNOVER_RANKING_LIMIT", 500),
         max_open_positions=_int_env("MAX_OPEN_POSITIONS", 5),
         max_selected_candidates=_int_env("MAX_SELECTED_CANDIDATES", 5),
         max_account_exposure=_float_env("MAX_ACCOUNT_EXPOSURE", 0.80),
         max_position_exposure=_float_env("MAX_POSITION_EXPOSURE", 0.20),
-        max_opening_gap=_float_env("MAX_OPENING_GAP", 0.20),
-        min_opening_price_change=_float_env("MIN_OPENING_PRICE_CHANGE", 0.03),
-        min_volume_ratio=_float_env("MIN_VOLUME_RATIO", 1.50),
-        min_total_score=_float_env("MIN_TOTAL_SCORE", 70.0),
+        max_opening_gap=_float_env("MAX_OPENING_GAP", 0.30),
+        min_opening_price_change=_float_env("MIN_OPENING_PRICE_CHANGE", 0.0),
+        min_volume_ratio=_float_env("MIN_VOLUME_RATIO", 1.00),
+        min_total_score=_float_env("MIN_TOTAL_SCORE", 35.0),
         max_intraday_entry_rounds=_int_env("MAX_INTRADAY_ENTRY_ROUNDS", 2),
         max_intraday_buy_intents_per_round=_int_env(
             "MAX_INTRADAY_BUY_INTENTS_PER_ROUND",
             1,
         ),
-        refresh_intraday_candidates=_bool_env("REFRESH_INTRADAY_CANDIDATES", True),
+        refresh_intraday_candidates=_bool_env("REFRESH_INTRADAY_CANDIDATES", False),
         candidate_selection_mode=_candidate_mode_env(),
         opening_fixed_candidate_limit=_int_env("OPENING_FIXED_CANDIDATE_LIMIT", 5),
         intraday_refresh_candidate_limit=_int_env("INTRADAY_REFRESH_CANDIDATE_LIMIT", 3),
         hybrid_candidate_limit=_int_env("HYBRID_CANDIDATE_LIMIT", 8),
         min_pyramiding_profit_rate=_float_env("MIN_PYRAMIDING_PROFIT_RATE", 0.03),
         max_entry_price_change=_float_env("MAX_ENTRY_PRICE_CHANGE", 0.25),
+        overheat_limit_condition_mode=_condition_mode_env(
+            "OVERHEAT_LIMIT_CONDITION_MODE",
+            CONDITION_MODE_HARD_FILTER,
+        ),
         breakout_hold_minutes=_float_env("BREAKOUT_HOLD_MINUTES", 0.0),
-        require_5m_close_above_breakout=_bool_env("REQUIRE_5M_CLOSE_ABOVE_BREAKOUT", False),
-        require_5m_volume_increase=_bool_env("REQUIRE_5M_VOLUME_INCREASE", False),
+        require_5m_close_above_breakout=_bool_env("REQUIRE_5M_CLOSE_ABOVE_BREAKOUT", True),
+        breakout_close_condition_mode=_condition_mode_env(
+            "BREAKOUT_CLOSE_CONDITION_MODE",
+            CONDITION_MODE_SOFT_SCORE,
+        ),
+        require_5m_volume_increase=_bool_env("REQUIRE_5M_VOLUME_INCREASE", True),
+        min_5m_volume_increase_percent=_float_env("MIN_5M_VOLUME_INCREASE_PERCENT", 5.0),
+        volume_increase_condition_mode=_condition_mode_env(
+            "VOLUME_INCREASE_CONDITION_MODE",
+            CONDITION_MODE_SOFT_SCORE,
+        ),
         require_vwap_or_ma20=_bool_env("REQUIRE_VWAP_OR_MA20", False),
-        require_pullback_rebreak=_bool_env("REQUIRE_PULLBACK_REBREAK", False),
+        vwap_ma20_condition_mode=_condition_mode_env(
+            "VWAP_MA20_CONDITION_MODE",
+            CONDITION_MODE_HARD_FILTER,
+        ),
+        vwap_ma20_condition_type=_vwap_ma20_type_env(),
+        require_pullback_rebreak=_bool_env("REQUIRE_PULLBACK_REBREAK", True),
+        pullback_rebreak_condition_mode=_condition_mode_env(
+            "PULLBACK_REBREAK_CONDITION_MODE",
+            CONDITION_MODE_SOFT_SCORE,
+        ),
         mock_unfilled_reorder_minutes=_int_env("MOCK_UNFILLED_REORDER_MINUTES", 2),
         mock_unfilled_reorder_limit=_int_env("MOCK_UNFILLED_REORDER_LIMIT", 1),
         real_unfilled_reorder_minutes=_int_env("REAL_UNFILLED_REORDER_MINUTES", 1),
@@ -198,7 +263,7 @@ def load_settings() -> TradingSettings:
         partial_fill_policy=_partial_fill_policy_env(),
         unfilled_cancel_after_seconds=_int_env("UNFILLED_CANCEL_AFTER_SECONDS", 60),
         news_cache_ttl_minutes=_int_env("NEWS_CACHE_TTL_MINUTES", 30),
-        take_profit_rate=_float_env("TAKE_PROFIT_RATE", 0.05),
+        take_profit_rate=_float_env("TAKE_PROFIT_RATE", 0.10),
         strategy_preset=_strategy_preset_env(),
         allow_relaxed_candidate_filter=_bool_env("ALLOW_RELAXED_CANDIDATE_FILTER", True),
         relax_opening_change_only=_bool_env("RELAX_OPENING_CHANGE_ONLY", False),
@@ -232,17 +297,26 @@ def runtime_risk_settings_payload(
         "minTotalScore": current.min_total_score,
         "minPriceUsd": current.min_price_usd,
         "maxPriceUsd": current.max_price_usd,
+        "gainerRankingLimit": current.gainer_ranking_limit,
+        "turnoverRankingLimit": current.turnover_ranking_limit,
         "minOpeningPriceChangePercent": current.min_opening_price_change * 100,
         "minVolumeRatio": current.min_volume_ratio,
         "maxOpeningGapPercent": current.max_opening_gap * 100,
         "refreshIntradayCandidates": bool(current.refresh_intraday_candidates),
         "candidateSelectionMode": current.candidate_selection_mode,
         "maxEntryPriceChangePercent": current.max_entry_price_change * 100,
+        "overheatLimitConditionMode": current.overheat_limit_condition_mode,
         "breakoutHoldMinutes": current.breakout_hold_minutes,
         "require5mCloseAboveBreakout": bool(current.require_5m_close_above_breakout),
+        "breakoutCloseConditionMode": current.breakout_close_condition_mode,
         "require5mVolumeIncrease": bool(current.require_5m_volume_increase),
+        "min5mVolumeIncreasePercent": current.min_5m_volume_increase_percent,
+        "volumeIncreaseConditionMode": current.volume_increase_condition_mode,
         "requireVwapOrMa20": bool(current.require_vwap_or_ma20),
+        "vwapMa20ConditionMode": current.vwap_ma20_condition_mode,
+        "vwapMa20ConditionType": current.vwap_ma20_condition_type,
         "requirePullbackRebreak": bool(current.require_pullback_rebreak),
+        "pullbackRebreakConditionMode": current.pullback_rebreak_condition_mode,
         "stopLossCooldownMinutes": current.stop_loss_cooldown_minutes,
         "maxConsecutiveStopLossCount": current.max_consecutive_stop_loss_count,
         "maxBidAskSpreadRate": current.max_bid_ask_spread_rate,
@@ -273,6 +347,15 @@ def save_runtime_risk_settings(
     require_5m_volume_increase: bool | None = None,
     require_vwap_or_ma20: bool | None = None,
     require_pullback_rebreak: bool | None = None,
+    gainer_ranking_limit: float | None = None,
+    turnover_ranking_limit: float | None = None,
+    overheat_limit_condition_mode: str | None = None,
+    breakout_close_condition_mode: str | None = None,
+    volume_increase_condition_mode: str | None = None,
+    min_5m_volume_increase_percent: float | None = None,
+    vwap_ma20_condition_mode: str | None = None,
+    vwap_ma20_condition_type: str | None = None,
+    pullback_rebreak_condition_mode: str | None = None,
     stop_loss_cooldown_minutes: float | None = None,
     max_consecutive_stop_loss_count: float | None = None,
     max_bid_ask_spread_rate: float | None = None,
@@ -312,6 +395,18 @@ def save_runtime_risk_settings(
         min_price, max_price = _validate_price_range(current_min, current_max)
         payload["min_price_usd"] = min_price
         payload["max_price_usd"] = max_price
+    if gainer_ranking_limit is not None:
+        payload["gainer_ranking_limit"] = _validate_positive_count(
+            gainer_ranking_limit,
+            "상승률 랭킹 수",
+            1000,
+        )
+    if turnover_ranking_limit is not None:
+        payload["turnover_ranking_limit"] = _validate_positive_count(
+            turnover_ranking_limit,
+            "거래량 랭킹 수",
+            1000,
+        )
     if min_opening_price_change_percent is not None:
         payload["min_opening_price_change"] = (
             _validate_percent_range(min_opening_price_change_percent, "장초반 상승률") / 100
@@ -338,6 +433,10 @@ def save_runtime_risk_settings(
         payload["max_entry_price_change"] = (
             _validate_percent_range(max_entry_price_change_percent, "매수 과열 상한") / 100
         )
+    if overheat_limit_condition_mode is not None:
+        payload["overheat_limit_condition_mode"] = _condition_mode_to_float(
+            overheat_limit_condition_mode
+        )
     if breakout_hold_minutes is not None:
         payload["breakout_hold_minutes"] = _validate_minutes(
             breakout_hold_minutes,
@@ -347,12 +446,37 @@ def save_runtime_risk_settings(
         payload["require_5m_close_above_breakout"] = (
             1.0 if require_5m_close_above_breakout else 0.0
         )
+    if breakout_close_condition_mode is not None:
+        payload["breakout_close_condition_mode"] = _condition_mode_to_float(
+            breakout_close_condition_mode
+        )
     if require_5m_volume_increase is not None:
         payload["require_5m_volume_increase"] = 1.0 if require_5m_volume_increase else 0.0
+    if min_5m_volume_increase_percent is not None:
+        payload["min_5m_volume_increase_percent"] = _validate_percent_range(
+            min_5m_volume_increase_percent,
+            "5분 거래량 증가 기준",
+        )
+    if volume_increase_condition_mode is not None:
+        payload["volume_increase_condition_mode"] = _condition_mode_to_float(
+            volume_increase_condition_mode
+        )
     if require_vwap_or_ma20 is not None:
         payload["require_vwap_or_ma20"] = 1.0 if require_vwap_or_ma20 else 0.0
+    if vwap_ma20_condition_mode is not None:
+        payload["vwap_ma20_condition_mode"] = _condition_mode_to_float(
+            vwap_ma20_condition_mode
+        )
+    if vwap_ma20_condition_type is not None:
+        payload["vwap_ma20_condition_type"] = _vwap_ma20_type_to_float(
+            vwap_ma20_condition_type
+        )
     if require_pullback_rebreak is not None:
         payload["require_pullback_rebreak"] = 1.0 if require_pullback_rebreak else 0.0
+    if pullback_rebreak_condition_mode is not None:
+        payload["pullback_rebreak_condition_mode"] = _condition_mode_to_float(
+            pullback_rebreak_condition_mode
+        )
     if stop_loss_cooldown_minutes is not None:
         payload["stop_loss_cooldown_minutes"] = _validate_minutes(
             stop_loss_cooldown_minutes,
@@ -422,6 +546,12 @@ def save_runtime_risk_settings(
         min_total_score=payload.get("min_total_score", current.min_total_score),
         min_price_usd=payload.get("min_price_usd", current.min_price_usd),
         max_price_usd=payload.get("max_price_usd", current.max_price_usd),
+        gainer_ranking_limit=int(
+            payload.get("gainer_ranking_limit", current.gainer_ranking_limit)
+        ),
+        turnover_ranking_limit=int(
+            payload.get("turnover_ranking_limit", current.turnover_ranking_limit)
+        ),
         min_opening_price_change=payload.get(
             "min_opening_price_change",
             current.min_opening_price_change,
@@ -454,6 +584,12 @@ def save_runtime_risk_settings(
             "max_entry_price_change",
             current.max_entry_price_change,
         ),
+        overheat_limit_condition_mode=_condition_mode_from_float(
+            payload.get(
+                "overheat_limit_condition_mode",
+                _condition_mode_to_float(current.overheat_limit_condition_mode),
+            )
+        ),
         breakout_hold_minutes=payload.get(
             "breakout_hold_minutes",
             current.breakout_hold_minutes,
@@ -464,19 +600,53 @@ def save_runtime_risk_settings(
                 float(current.require_5m_close_above_breakout),
             )
         ),
+        breakout_close_condition_mode=_condition_mode_from_float(
+            payload.get(
+                "breakout_close_condition_mode",
+                _condition_mode_to_float(current.breakout_close_condition_mode),
+            )
+        ),
         require_5m_volume_increase=bool(
             payload.get(
                 "require_5m_volume_increase",
                 float(current.require_5m_volume_increase),
             )
         ),
+        min_5m_volume_increase_percent=payload.get(
+            "min_5m_volume_increase_percent",
+            current.min_5m_volume_increase_percent,
+        ),
+        volume_increase_condition_mode=_condition_mode_from_float(
+            payload.get(
+                "volume_increase_condition_mode",
+                _condition_mode_to_float(current.volume_increase_condition_mode),
+            )
+        ),
         require_vwap_or_ma20=bool(
             payload.get("require_vwap_or_ma20", float(current.require_vwap_or_ma20))
+        ),
+        vwap_ma20_condition_mode=_condition_mode_from_float(
+            payload.get(
+                "vwap_ma20_condition_mode",
+                _condition_mode_to_float(current.vwap_ma20_condition_mode),
+            )
+        ),
+        vwap_ma20_condition_type=_vwap_ma20_type_from_float(
+            payload.get(
+                "vwap_ma20_condition_type",
+                _vwap_ma20_type_to_float(current.vwap_ma20_condition_type),
+            )
         ),
         require_pullback_rebreak=bool(
             payload.get(
                 "require_pullback_rebreak",
                 float(current.require_pullback_rebreak),
+            )
+        ),
+        pullback_rebreak_condition_mode=_condition_mode_from_float(
+            payload.get(
+                "pullback_rebreak_condition_mode",
+                _condition_mode_to_float(current.pullback_rebreak_condition_mode),
             )
         ),
         stop_loss_cooldown_minutes=int(
@@ -601,16 +771,35 @@ def _float_env(name: str, default: float) -> float:
     return default if raw is None else float(raw)
 
 
+def _min_price_env(name: str, default: float) -> float:
+    value = _float_env(name, default)
+    if value < MIN_PRICE_USD_FLOOR:
+        raise ValueError(f"{name}는 {MIN_PRICE_USD_FLOOR:g} 이상으로 입력해 주세요.")
+    return value
+
+
 def _int_env(name: str, default: int) -> int:
     raw = os.getenv(name)
     return default if raw is None else int(raw)
+
+
+def _ranking_limit_env(name: str, default: int) -> int:
+    return _validate_positive_count(_int_env(name, default), name, 1000)
 
 
 def _candidate_mode_env() -> str:
     raw = os.getenv("CANDIDATE_SELECTION_MODE")
     if raw:
         return _validate_candidate_mode(raw)
-    return CANDIDATE_MODE_REFRESH if _bool_env("REFRESH_INTRADAY_CANDIDATES", True) else CANDIDATE_MODE_FIXED
+    return CANDIDATE_MODE_REFRESH if _bool_env("REFRESH_INTRADAY_CANDIDATES", False) else CANDIDATE_MODE_FIXED
+
+
+def _condition_mode_env(name: str, default: str) -> str:
+    return _validate_condition_mode(os.getenv(name, default))
+
+
+def _vwap_ma20_type_env() -> str:
+    return _validate_vwap_ma20_type(os.getenv("VWAP_MA20_CONDITION_TYPE", VWAP_MA20_OR))
 
 
 def _strategy_preset_env() -> str:
@@ -662,8 +851,23 @@ def _apply_runtime_settings(settings: TradingSettings) -> TradingSettings:
             overrides["partial_fill_policy"]
         )
     for key in (
+        "overheat_limit_condition_mode",
+        "breakout_close_condition_mode",
+        "volume_increase_condition_mode",
+        "vwap_ma20_condition_mode",
+        "pullback_rebreak_condition_mode",
+    ):
+        if key in overrides:
+            overrides[key] = _condition_mode_from_float(overrides[key])
+    if "vwap_ma20_condition_type" in overrides:
+        overrides["vwap_ma20_condition_type"] = _vwap_ma20_type_from_float(
+            overrides["vwap_ma20_condition_type"]
+        )
+    for key in (
         "stop_loss_cooldown_minutes",
         "max_consecutive_stop_loss_count",
+        "gainer_ranking_limit",
+        "turnover_ranking_limit",
         "max_order_retry_count",
         "order_retry_delay_seconds",
         "unfilled_cancel_after_seconds",
@@ -696,19 +900,40 @@ def _runtime_settings_from_settings(settings: TradingSettings) -> dict[str, floa
         "min_total_score": settings.min_total_score,
         "min_price_usd": settings.min_price_usd,
         "max_price_usd": settings.max_price_usd,
+        "gainer_ranking_limit": float(settings.gainer_ranking_limit),
+        "turnover_ranking_limit": float(settings.turnover_ranking_limit),
         "min_opening_price_change": settings.min_opening_price_change,
         "min_volume_ratio": settings.min_volume_ratio,
         "max_opening_gap": settings.max_opening_gap,
         "refresh_intraday_candidates": 1.0 if settings.refresh_intraday_candidates else 0.0,
         "candidate_selection_mode": _candidate_mode_to_float(settings.candidate_selection_mode),
         "max_entry_price_change": settings.max_entry_price_change,
+        "overheat_limit_condition_mode": _condition_mode_to_float(
+            settings.overheat_limit_condition_mode
+        ),
         "breakout_hold_minutes": settings.breakout_hold_minutes,
         "require_5m_close_above_breakout": (
             1.0 if settings.require_5m_close_above_breakout else 0.0
         ),
+        "breakout_close_condition_mode": _condition_mode_to_float(
+            settings.breakout_close_condition_mode
+        ),
         "require_5m_volume_increase": 1.0 if settings.require_5m_volume_increase else 0.0,
+        "min_5m_volume_increase_percent": settings.min_5m_volume_increase_percent,
+        "volume_increase_condition_mode": _condition_mode_to_float(
+            settings.volume_increase_condition_mode
+        ),
         "require_vwap_or_ma20": 1.0 if settings.require_vwap_or_ma20 else 0.0,
+        "vwap_ma20_condition_mode": _condition_mode_to_float(
+            settings.vwap_ma20_condition_mode
+        ),
+        "vwap_ma20_condition_type": _vwap_ma20_type_to_float(
+            settings.vwap_ma20_condition_type
+        ),
         "require_pullback_rebreak": 1.0 if settings.require_pullback_rebreak else 0.0,
+        "pullback_rebreak_condition_mode": _condition_mode_to_float(
+            settings.pullback_rebreak_condition_mode
+        ),
         "stop_loss_cooldown_minutes": float(settings.stop_loss_cooldown_minutes),
         "max_consecutive_stop_loss_count": float(settings.max_consecutive_stop_loss_count),
         "max_bid_ask_spread_rate": settings.max_bid_ask_spread_rate,
@@ -820,6 +1045,63 @@ def _candidate_mode_from_float(value: float) -> str:
     return CANDIDATE_MODE_REFRESH
 
 
+def _validate_condition_mode(value: str) -> str:
+    mode = str(value).strip().upper()
+    if mode not in CONDITION_MODES:
+        raise ValueError("조건 모드는 OFF, LOG_ONLY, SOFT_SCORE, HARD_FILTER 중 하나여야 합니다.")
+    return mode
+
+
+def _condition_mode_to_float(mode: str) -> float:
+    return {
+        CONDITION_MODE_OFF: 0.0,
+        CONDITION_MODE_LOG_ONLY: 1.0,
+        CONDITION_MODE_SOFT_SCORE: 2.0,
+        CONDITION_MODE_HARD_FILTER: 3.0,
+    }[_validate_condition_mode(mode)]
+
+
+def _condition_mode_from_float(value: float) -> str:
+    code = int(float(value))
+    if code == 1:
+        return CONDITION_MODE_LOG_ONLY
+    if code == 2:
+        return CONDITION_MODE_SOFT_SCORE
+    if code == 3:
+        return CONDITION_MODE_HARD_FILTER
+    return CONDITION_MODE_OFF
+
+
+def _validate_vwap_ma20_type(value: str) -> str:
+    condition_type = str(value).strip().upper()
+    if condition_type not in VWAP_MA20_TYPES:
+        raise ValueError("VWAP/MA20 방식은 OR, AND, VWAP_ONLY, MA20_ONLY, OFF 중 하나여야 합니다.")
+    return condition_type
+
+
+def _vwap_ma20_type_to_float(condition_type: str) -> float:
+    return {
+        VWAP_MA20_OFF: 0.0,
+        VWAP_MA20_OR: 1.0,
+        VWAP_MA20_AND: 2.0,
+        VWAP_MA20_VWAP_ONLY: 3.0,
+        VWAP_MA20_MA20_ONLY: 4.0,
+    }[_validate_vwap_ma20_type(condition_type)]
+
+
+def _vwap_ma20_type_from_float(value: float) -> str:
+    code = int(float(value))
+    if code == 2:
+        return VWAP_MA20_AND
+    if code == 3:
+        return VWAP_MA20_VWAP_ONLY
+    if code == 4:
+        return VWAP_MA20_MA20_ONLY
+    if code == 0:
+        return VWAP_MA20_OFF
+    return VWAP_MA20_OR
+
+
 def _validate_strategy_preset(value: str) -> str:
     preset = str(value).strip().lower()
     if preset not in STRATEGY_PRESETS:
@@ -890,6 +1172,8 @@ def _validate_price_range(
     max_price = float(max_value)
     if min_price <= 0 or max_price <= 0:
         raise ValueError("가격 조건은 0보다 크게 입력해 주세요.")
+    if min_price < MIN_PRICE_USD_FLOOR:
+        raise ValueError(f"최저 가격은 {MIN_PRICE_USD_FLOOR:g} 이상으로 입력해 주세요.")
     if min_price >= max_price:
         raise ValueError("최저 가격은 최고 가격보다 작아야 합니다.")
     return min_price, max_price
@@ -920,4 +1204,11 @@ def _validate_count(value: float, label: str, max_value: int) -> int:
     count = int(float(value))
     if count < 0 or count > max_value:
         raise ValueError(f"{label}은 0 이상 {max_value} 이하로 입력해 주세요.")
+    return count
+
+
+def _validate_positive_count(value: float, label: str, max_value: int) -> int:
+    count = int(float(value))
+    if count <= 0 or count > max_value:
+        raise ValueError(f"{label}는 1 이상 {max_value} 이하로 입력해 주세요.")
     return count

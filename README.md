@@ -227,6 +227,10 @@ context source calculates the Nasdaq 20-session average and USD/KRW daily
 change from history closes; callable context inputs remain available for another
 verified source.
 
+Candidate collection reads `GAINER_RANKING_LIMIT` and `TURNOVER_RANKING_LIMIT`
+from settings. Both default to 200 and can also be adjusted from the monitor
+settings screen.
+
 ## Monitor
 
 The browser monitor lives in `monitor/`. It first requests `/api/state` from

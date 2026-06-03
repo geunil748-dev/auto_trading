@@ -9,10 +9,16 @@ from trading_bot.models import RankedStock
 
 def test_kis_screening_market_data_maps_quote_and_volume_history(monkeypatch) -> None:
     class Kis:
-        def ranked_gainers(self) -> list:
+        def __init__(self) -> None:
+            self.gainers_limit: int | None = None
+            self.volume_limit: int | None = None
+
+        def ranked_gainers(self, limit: int = 100) -> list:
+            self.gainers_limit = limit
             return [RankedStock("AAA", 2)]
 
-        def ranked_trade_volume(self) -> list:
+        def ranked_trade_volume(self, limit: int = 100) -> list:
+            self.volume_limit = limit
             return [RankedStock("AAA", 4)]
 
         def quote(self, _: str) -> dict[str, str]:
@@ -34,9 +40,10 @@ def test_kis_screening_market_data_maps_quote_and_volume_history(monkeypatch) ->
             return 2000
 
     monkeypatch.setattr("trading_bot.adapters.market_data._regular_session_elapsed_fraction", lambda: 1.0)
-    market = KisScreeningMarketData(Kis(), Context(), History())
-    market.ranked_gainers()
-    market.ranked_turnover()
+    kis = Kis()
+    market = KisScreeningMarketData(kis, Context(), History())
+    market.ranked_gainers(220)
+    market.ranked_turnover(230)
 
     snapshot = market.candidate_snapshots(["AAA"])["AAA"]
 
@@ -44,6 +51,8 @@ def test_kis_screening_market_data_maps_quote_and_volume_history(monkeypatch) ->
     assert snapshot.opening_price_change == 0.04
     assert snapshot.opening_volume_ratio == 1.5
     assert (snapshot.gain_rank, snapshot.turnover_rank) == (2, 4)
+    assert kis.gainers_limit == 220
+    assert kis.volume_limit == 230
 
 
 def test_kis_screening_market_data_reads_open_from_daily_price_when_quote_omits_it() -> None:
@@ -82,11 +91,18 @@ def test_kis_screening_market_data_skips_candidates_without_history() -> None:
         def average_daily_volume(self, ticker: str, sessions: int) -> float:
             raise ValueError(f"{ticker} has fewer than {sessions} volume rows")
 
-    market = KisScreeningMarketData(Kis(), Context(), History())
+    errors: list[tuple[str, str]] = []
+    market = KisScreeningMarketData(
+        Kis(),
+        Context(),
+        History(),
+        on_snapshot_error=lambda ticker, reason: errors.append((ticker, reason)),
+    )
     market._gain_ranks = {"NEW": 1}
     market._volume_ranks = {"NEW": 1}
 
     assert market.candidate_snapshots(["NEW"]) == {}
+    assert errors == [("NEW", "daily_prices_insufficient")]
 
 
 def test_kis_daily_volume_history_averages_twenty_daily_rows() -> None:

@@ -1,7 +1,8 @@
-from datetime import date
+from dataclasses import replace
+from datetime import date, datetime, timezone
 
 from trading_bot.config import TradingSettings
-from trading_bot.models import BotLog, BuyIntent, TradeRecord
+from trading_bot.models import BotLog, BuyIntent, CandidateEvaluation, TradeRecord
 from trading_bot.order_execution import BuyIntentExecutor
 from trading_bot.strategy_metadata import strategy_metadata_from_settings
 
@@ -10,12 +11,28 @@ class Repository:
     def __init__(self) -> None:
         self.trades: list[TradeRecord] = []
         self.logs: list[BotLog] = []
+        self.candidate_evaluations: list[CandidateEvaluation] = []
 
     def save_trades(self, trades: list[TradeRecord]) -> None:
         self.trades.extend(trades)
 
     def save_log(self, log: BotLog) -> None:
         self.logs.append(log)
+
+    def mark_candidate_evaluation_order_submitted(
+        self,
+        ticker: str,
+        trade_date: date,
+        order_id: str | None = None,
+    ) -> None:
+        for index, item in enumerate(self.candidate_evaluations):
+            if item.symbol == ticker and item.trading_date == trade_date:
+                self.candidate_evaluations[index] = replace(
+                    item,
+                    order_submitted=True,
+                    order_id=order_id,
+                    final_decision="ORDER_SUBMITTED",
+                )
 
 
 def test_buy_intent_executor_submits_and_records_mock_orders() -> None:
@@ -58,6 +75,29 @@ def test_buy_intent_executor_submits_and_records_mock_orders() -> None:
             "매수 주문 1건: AAA 2주 @ $10.50 (주문금액 $21.00, 배분 5.0%, 사유 OPENING_BREAKOUT)",
         )
     ]
+
+
+def test_buy_intent_executor_marks_candidate_evaluation_order_submitted() -> None:
+    repository = Repository()
+    repository.candidate_evaluations = [
+        CandidateEvaluation(
+            run_id=None,
+            evaluation_time=datetime(2026, 5, 22, 13, 30, tzinfo=timezone.utc),
+            trading_date=date(2026, 5, 22),
+            source="test",
+            symbol="AAA",
+            buy_allowed=True,
+        )
+    ]
+
+    BuyIntentExecutor(
+        submit_order=lambda intent: {"output": {"ODNO": "1001"}},
+        repository=repository,
+        today=lambda: date(2026, 5, 22),
+    ).execute([BuyIntent("AAA", 1, 10, 10, 0.05)])
+
+    assert repository.candidate_evaluations[0].order_submitted is True
+    assert repository.candidate_evaluations[0].order_id == "1001"
 
 
 def test_buy_intent_executor_handles_empty_intents() -> None:

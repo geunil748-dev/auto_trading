@@ -373,8 +373,8 @@ def test_intraday_recheck_screens_and_limits_additional_buys(monkeypatch, tmp_pa
                 10,
                 10,
                 0.01,
-                "OPENING_BREAKOUT+INTRADAY_RECHECK+REFRESH_CANDIDATE",
-                "15분 재평가 후보; 15분마다 신규 후보 재수집",
+                "OPENING_BREAKOUT+INTRADAY_RECHECK+OPENING_FIXED",
+                "15분 재평가 후보; 장초반 고정 후보 재평가",
             )
         ],
         [],
@@ -436,7 +436,10 @@ def test_intraday_recheck_can_reuse_fixed_watchlist(monkeypatch, tmp_path) -> No
 def test_fixed_watchlist_waits_for_next_opening_collection(monkeypatch, tmp_path) -> None:
     runtime = RecheckRuntime()
     run_count = 0
-    current_settings = TradingSettings(refresh_intraday_candidates=True)
+    current_settings = TradingSettings(
+        refresh_intraday_candidates=True,
+        candidate_selection_mode="refresh",
+    )
 
     def run_once():
         nonlocal run_count

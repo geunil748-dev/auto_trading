@@ -44,9 +44,16 @@ class BuyIntentExecutor:
                 continue
             if protection_log is not None:
                 self.repository.save_log(protection_log)
-            retry_count = self._submit_with_retry(intent)
-            if retry_count is None:
+            submitted_result = self._submit_with_retry(intent)
+            if submitted_result is None:
                 continue
+            retry_count, response = submitted_result
+            _mark_candidate_evaluation_order_submitted(
+                self.repository,
+                intent,
+                self.today(),
+                _order_id(response),
+            )
             successful.append(intent)
             trades.append(
                 TradeRecord(
@@ -73,12 +80,12 @@ class BuyIntentExecutor:
         self.repository.save_log(BotLog("INFO", "execution", _buy_log(successful)))
         return trades
 
-    def _submit_with_retry(self, intent: BuyIntent) -> int | None:
+    def _submit_with_retry(self, intent: BuyIntent) -> tuple[int, dict[str, object]] | None:
         max_retries = max(0, int(self.settings.max_order_retry_count))
         for attempt in range(max_retries + 1):
             try:
-                self.submit_order(intent)
-                return attempt
+                response = self.submit_order(intent)
+                return attempt, response
             except Exception as error:
                 self.repository.save_log(
                     BotLog(
@@ -132,3 +139,42 @@ def _buy_log(intents: list[BuyIntent]) -> str:
         for item in intents
     ]
     return f"매수 주문 {len(intents)}건: " + "; ".join(details)
+
+
+def _mark_candidate_evaluation_order_submitted(
+    repository: DailyRepository,
+    intent: BuyIntent,
+    trade_date: date,
+    order_id: str | None,
+) -> None:
+    if not hasattr(repository, "mark_candidate_evaluation_order_submitted"):
+        return
+    try:
+        repository.mark_candidate_evaluation_order_submitted(intent.ticker, trade_date, order_id)
+    except Exception as exc:
+        try:
+            repository.save_log(
+                BotLog(
+                    "ERROR",
+                    "candidate_evaluation",
+                    f"candidate_evaluation_save_failed symbol={intent.ticker} error={exc}",
+                    symbol=intent.ticker,
+                    reject_reason="CANDIDATE_EVALUATION_SAVE_FAILED",
+                )
+            )
+        except Exception:
+            pass
+
+
+def _order_id(response: dict[str, object]) -> str | None:
+    output = response.get("output")
+    if isinstance(output, dict):
+        for key in ("ODNO", "odno", "order_no", "orderNo"):
+            value = output.get(key)
+            if value:
+                return str(value)
+    for key in ("ODNO", "odno", "order_no", "orderNo"):
+        value = response.get(key)
+        if value:
+            return str(value)
+    return None
