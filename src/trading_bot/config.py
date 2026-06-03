@@ -104,8 +104,8 @@ class TradingSettings:
     mock_trading: bool = True
     min_price_usd: float = MIN_PRICE_USD_FLOOR
     max_price_usd: float = 300.0
-    gainer_ranking_limit: int = 500
-    turnover_ranking_limit: int = 500
+    gainer_ranking_limit: int = 100
+    turnover_ranking_limit: int = 100
     max_open_positions: int = 5
     min_selected_candidates: int = 3
     max_selected_candidates: int = 5
@@ -202,8 +202,8 @@ def load_settings() -> TradingSettings:
         mock_trading=_bool_env("MOCK_TRADING", True),
         min_price_usd=_min_price_env("MIN_PRICE_USD", MIN_PRICE_USD_FLOOR),
         max_price_usd=_float_env("MAX_PRICE_USD", 300.0),
-        gainer_ranking_limit=_ranking_limit_env("GAINER_RANKING_LIMIT", 500),
-        turnover_ranking_limit=_ranking_limit_env("TURNOVER_RANKING_LIMIT", 500),
+        gainer_ranking_limit=_ranking_limit_env("GAINER_RANKING_LIMIT", 100),
+        turnover_ranking_limit=_ranking_limit_env("TURNOVER_RANKING_LIMIT", 100),
         max_open_positions=_int_env("MAX_OPEN_POSITIONS", 5),
         max_selected_candidates=_int_env("MAX_SELECTED_CANDIDATES", 5),
         max_account_exposure=_float_env("MAX_ACCOUNT_EXPOSURE", 0.80),

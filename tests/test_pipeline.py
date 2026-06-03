@@ -158,8 +158,8 @@ def test_pipeline_screens_scores_and_persists_selected_candidates() -> None:
     ).run()
 
     assert run.blocked_reason is None
-    assert market_data.gainers_limit == 500
-    assert market_data.turnover_limit == 500
+    assert market_data.gainers_limit == 100
+    assert market_data.turnover_limit == 100
     assert market_data.snapshot_requests[0] == {"AAA", "BBB"}
     assert [item.candidate.ticker for item in repository.targets] == ["AAA", "BBB"]
     assert [item.score.ticker for item in repository.scores] == ["AAA", "BBB"]
@@ -171,7 +171,9 @@ def test_pipeline_screens_scores_and_persists_selected_candidates() -> None:
     assert "[SAVE_TARGETS] candidate_count=2 trade_date=2026-05-22" in messages
     assert "[SAVE_SCORES] score_count=2 trade_date=2026-05-22" in messages
     assert (
-        "[PIPELINE] gainers_count=3 volume_count=3 intersection_count=2 "
+        "[PIPELINE] requested_gainer_limit=100 received_gainer_count=3 "
+        "requested_turnover_limit=100 received_turnover_count=3 "
+        "gainers_count=3 volume_count=3 intersection_count=2 "
         "snapshot_success_count=2 snapshot_fail_count=0 risk_pass_count=2 "
         "scoring_pass_count=2 final_selected_count=2"
         in messages

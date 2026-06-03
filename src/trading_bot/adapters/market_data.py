@@ -36,7 +36,8 @@ class KisScreeningMarketData:
         return rows
 
     def ranked_turnover(self, limit: int | None = None) -> list[RankedStock]:
-        # 현재 사용 가능한 해외 랭킹 API는 거래량 기준이므로 거래대금 대용으로 사용한다.
+        # TURNOVER_RANKING_LIMIT는 KIS trade-vol 거래량 랭킹 limit입니다.
+        # 거래대금 랭킹 trade-pbmn이 아닙니다.
         rows = self.kis.ranked_trade_volume(limit or 200)
         self._volume_ranks = {item.ticker: item.rank for item in rows}
         self._names.update({item.ticker: item.name for item in rows if item.name})

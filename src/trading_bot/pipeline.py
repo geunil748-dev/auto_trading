@@ -146,6 +146,8 @@ class ScreeningScoringPipeline:
         if strict_shortfall:
             self._log_pipeline_diagnostics(
                 started_at,
+                requested_gainer_limit=active_profile.gainer_limit,
+                requested_turnover_limit=active_profile.turnover_limit,
                 gainers_count=len(gainers),
                 volume_count=len(turnover),
                 intersection_count=initial_intersection_count,
@@ -181,6 +183,8 @@ class ScreeningScoringPipeline:
         if not entry_gate.allowed:
             self._log_pipeline_diagnostics(
                 started_at,
+                requested_gainer_limit=active_profile.gainer_limit,
+                requested_turnover_limit=active_profile.turnover_limit,
                 gainers_count=len(gainers),
                 volume_count=len(turnover),
                 intersection_count=initial_intersection_count,
@@ -244,6 +248,8 @@ class ScreeningScoringPipeline:
         self.repository.save_daily_scores(scores)
         self._log_pipeline_diagnostics(
             started_at,
+            requested_gainer_limit=active_profile.gainer_limit,
+            requested_turnover_limit=active_profile.turnover_limit,
             gainers_count=len(gainers),
             volume_count=len(turnover),
             intersection_count=initial_intersection_count,
@@ -309,6 +315,8 @@ class ScreeningScoringPipeline:
         self,
         started_at: float,
         *,
+        requested_gainer_limit: int,
+        requested_turnover_limit: int,
         gainers_count: int,
         volume_count: int,
         intersection_count: int,
@@ -329,6 +337,10 @@ class ScreeningScoringPipeline:
                 "INFO",
                 "pipeline",
                 "[PIPELINE] "
+                f"requested_gainer_limit={requested_gainer_limit} "
+                f"received_gainer_count={gainers_count} "
+                f"requested_turnover_limit={requested_turnover_limit} "
+                f"received_turnover_count={volume_count} "
                 f"gainers_count={gainers_count} "
                 f"volume_count={volume_count} "
                 f"intersection_count={intersection_count} "
@@ -357,6 +369,10 @@ class ScreeningScoringPipeline:
                 "INFO",
                 "pipeline",
                 "[PIPELINE_SUMMARY] "
+                f"requested_gainer_limit={requested_gainer_limit} "
+                f"received_gainer_count={gainers_count} "
+                f"requested_turnover_limit={requested_turnover_limit} "
+                f"received_turnover_count={volume_count} "
                 f"gainers={gainers_count} "
                 f"volume={volume_count} "
                 f"intersection={intersection_count} "

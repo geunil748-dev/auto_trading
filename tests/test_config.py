@@ -140,8 +140,8 @@ def test_load_settings_uses_candidate_collection_defaults(tmp_path, monkeypatch)
 
     assert settings.min_price_usd == 10
     assert settings.max_price_usd == 300
-    assert settings.gainer_ranking_limit == 500
-    assert settings.turnover_ranking_limit == 500
+    assert settings.gainer_ranking_limit == 100
+    assert settings.turnover_ranking_limit == 100
     assert settings.min_total_score == 35
     assert settings.min_opening_price_change == 0.0
     assert settings.min_volume_ratio == 1.0

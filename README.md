@@ -228,8 +228,11 @@ change from history closes; callable context inputs remain available for another
 verified source.
 
 Candidate collection reads `GAINER_RANKING_LIMIT` and `TURNOVER_RANKING_LIMIT`
-from settings. Both default to 200 and can also be adjusted from the monitor
-settings screen.
+from settings. KIS overseas ranking responses currently return up to 100 rows,
+so both defaults are 100. Raising the setting above 100 does not expand the
+currently verified API response beyond 100 rows. `TURNOVER_RANKING_LIMIT` is
+used for the KIS `trade-vol` trade-volume ranking limit, not the `trade-pbmn`
+trade-value ranking.
 
 ## Monitor
 
