@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from trading_bot.config import load_kis_settings, load_settings
 from trading_bot.schedule import register_daily_timeline
 from trading_bot.schedule import DailyTasks
-from trading_bot.scheduled_tasks import live_mock_tasks
+from trading_bot.scheduled_tasks import live_mock_tasks, trading_cycle_skip_reason
 
 
 def run_scheduler(monitor_state: Path) -> None:
@@ -24,7 +24,12 @@ def run_scheduler(monitor_state: Path) -> None:
         _log_job_event,
         EVENT_JOB_EXECUTED | EVENT_JOB_ERROR,
     )
-    tasks = live_mock_tasks(load_settings, load_kis_settings(), monitor_state)
+    tasks = live_mock_tasks(
+        load_settings,
+        load_kis_settings(),
+        monitor_state,
+        trading_guard=lambda: trading_cycle_skip_reason(monitor_state),
+    )
     register_daily_timeline(
         scheduler,
         tasks,

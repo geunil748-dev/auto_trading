@@ -25,6 +25,8 @@ class KisScreeningMarketData:
         self._gain_ranks: dict[str, int] = {}
         self._volume_ranks: dict[str, int] = {}
         self._names: dict[str, str] = {}
+        self.last_quote_requested_count = 0
+        self.last_daily_requested_count = 0
 
     def market_context(self) -> MarketContext:
         return self.context.market_context()
@@ -52,10 +54,13 @@ class KisScreeningMarketData:
         self,
         tickers: Iterable[str],
     ) -> Mapping[str, CandidateSnapshot]:
+        self.last_quote_requested_count = 0
+        self.last_daily_requested_count = 0
         snapshots: dict[str, CandidateSnapshot] = {}
         for ticker in tickers:
             stage = "quote"
             try:
+                self.last_quote_requested_count += 1
                 quote = self.kis.quote(ticker)
                 stage = "opening_volume"
                 opening_volume = _required_float(
@@ -66,12 +71,13 @@ class KisScreeningMarketData:
                     "ACML_VOL",
                 )
                 stage = "daily_prices"
+                self.last_daily_requested_count += 1
                 average_volume = self.history.average_daily_volume(ticker, 20)
                 stage = "snapshot_fields"
                 snapshots[ticker] = CandidateSnapshot(
                     ticker=ticker,
                     price_usd=_required_float(quote, "last", "LAST"),
-                    open_price_usd=_opening_price(self.kis, ticker, quote),
+                    open_price_usd=self._opening_price(ticker, quote),
                     previous_close_usd=_required_float(quote, "base", "BASE", "pcls", "PCLS"),
                     opening_price_change=_price_change_rate(quote),
                     opening_volume_ratio=_opening_volume_ratio(opening_volume, average_volume),
@@ -93,6 +99,11 @@ class KisScreeningMarketData:
             self.on_snapshot_error(ticker, reason)
         except Exception:
             return
+
+    def _opening_price(self, ticker: str, quote: dict[str, Any]) -> float:
+        if _optional_float(quote, "open", "OPEN") is None:
+            self.last_daily_requested_count += 1
+        return _opening_price(self.kis, ticker, quote)
 
 
 class KisDailyVolumeHistory:

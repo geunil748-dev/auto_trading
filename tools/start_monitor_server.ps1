@@ -1,5 +1,9 @@
 $workspace = Split-Path -Parent $PSScriptRoot
-$defaultPython = "C:\Users\admin\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+$utf8ConsoleScript = Join-Path $workspace "scripts\Set-Utf8Console.ps1"
+if (Test-Path -LiteralPath $utf8ConsoleScript) {
+    . $utf8ConsoleScript -Quiet
+}
+
 $venvPython = Join-Path $workspace ".venv\Scripts\python.exe"
 
 function Test-PythonModules {
@@ -20,15 +24,10 @@ function Test-PythonModules {
 $python = if ($env:AUTO_TRADING_PYTHON) {
     $env:AUTO_TRADING_PYTHON
 }
-elseif (Test-PythonModules -PythonPath $venvPython -Modules @("pyodbc", "yfinance", "tzdata")) {
+else {
     $venvPython
 }
-elseif (Test-Path -LiteralPath $defaultPython) {
-    $defaultPython
-}
-else {
-    "python"
-}
+$requiredModules = @("dotenv", "pyodbc", "clr", "yfinance", "tzdata")
 $logDir = Join-Path $workspace "logs"
 $logPath = Join-Path $logDir "startup-monitor.log"
 
@@ -42,7 +41,7 @@ function Write-StartupLog {
         Add-Content -LiteralPath $logPath -Encoding UTF8 -Value "[$timestamp] $Message" -ErrorAction Stop
     }
     catch {
-        # 로그 파일 권한이나 잠금 문제가 있어도 모니터 서버 실행 자체는 계속 진행한다.
+        # Keep running even when startup log writes fail.
     }
 }
 
@@ -54,6 +53,15 @@ if (-not $createdNew) {
     return
 }
 
+if (-not (Test-Path -LiteralPath $python)) {
+    Write-StartupLog "monitor server startup blocked: python executable missing: $python"
+    return
+}
+if (-not (Test-PythonModules -PythonPath $python -Modules $requiredModules)) {
+    Write-StartupLog "monitor server startup blocked: missing required Python modules"
+    return
+}
+
 Start-Sleep -Seconds 20
 
 try {
@@ -62,6 +70,7 @@ try {
             Set-Location -LiteralPath $workspace
             $env:PYTHONPATH = Join-Path $workspace "src"
 
+            Write-StartupLog "monitor server python: $python"
             Write-StartupLog "monitor server starting"
             & $python -m trading_bot serve-monitor --host 0.0.0.0 --port 4174 2>&1 |
                 ForEach-Object { Write-StartupLog $_.ToString() }

@@ -45,6 +45,8 @@ def pyodbc_connect_factory() -> Callable[[], Any]:
 
 
 def mssql_dsn_from_env() -> str:
+    if load_dotenv is not None:
+        load_dotenv()
     explicit = os.getenv("MSSQL_DSN", "").strip()
     if explicit:
         return explicit

@@ -9,12 +9,14 @@ description = "Phase 2 mock-trading core for a US small-cap momentum bot."
 requires-python = ">=3.11"
 dependencies = [
     "python-dotenv>=1.0",
+    "requests>=2.31",
 ]
 
 [project.optional-dependencies]
 integrations = [
     "apscheduler>=3.11,<4",
     "pyodbc>=5.0",
+    "pythonnet>=3.0",
     "tzdata>=2025.2",
     "yfinance>=0.2",
 ]

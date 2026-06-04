@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -24,7 +25,7 @@ from trading_bot.config import (
     load_settings,
 )
 from trading_bot.daily_report import write_daily_report
-from trading_bot.database import pyodbc_connect_factory
+from trading_bot.database import mssql_dsn_from_env, pyodbc_connect_factory
 from trading_bot.fill_persistence import fill_records_from_monitor_rows
 from trading_bot.intraday_entries import limited_intraday_buy_intents
 from trading_bot.live_monitor_state import live_kis_monitor_state
@@ -45,6 +46,12 @@ from trading_bot.repositories import SqlServerDailyRepository, SqlServerMonitorR
 from trading_bot.runtime import DryRunResult
 from trading_bot.schedule import DailyTasks
 from trading_bot.scheduled_messages import log_row, recheck_message, watch_message
+from trading_bot.trade_fill_notifications import (
+    fill_keys_from_history,
+    new_fill_records,
+    send_fill_notifications,
+    send_market_close_report_from_records,
+)
 from trading_bot.trading_date import current_trade_date
 
 
@@ -54,6 +61,7 @@ def live_mock_tasks(
     monitor_state: Path,
     trading_day: Callable[[], bool] = is_current_us_trading_day,
     regular_session: Callable[[], bool] = is_current_us_regular_session,
+    trading_guard: Callable[[], str | None] | None = None,
 ) -> DailyTasks:
     # 스케줄러 안에서는 가장 최근 수집 결과를 들고 있다가 매수/감시 단계에서 재사용한다.
     latest = _LatestRunState()
@@ -74,16 +82,16 @@ def live_mock_tasks(
         latest.opening_result = latest.result
         latest.opening_trade_date = current_trade_date()
         latest.opening_fixed_mode = _candidate_mode(current_settings) in {"fixed", "hybrid"}
-        monitor_state.write_text(
-            json.dumps(state_from_dry_run(latest.result), indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        _write_state_file(monitor_state, state_from_dry_run(latest.result))
         return f"후보 점검 완료: 선정 점수 {len(latest.result.scoring.selected)}건."
 
     def mock_buy() -> str:
         if not trading_day():
             _write_closed_state(monitor_state)
             return "미국 휴장일이라 모의 매수를 건너뜁니다."
+        guarded = _guarded_trading_skip(trading_guard)
+        if guarded is not None:
+            return guarded
         if latest.result is None or latest.repository is None:
             dry_run()
         if latest.result is None or latest.repository is None:
@@ -109,6 +117,9 @@ def live_mock_tasks(
     def intraday_watch() -> str:
         if not regular_session():
             return "미국 정규장 시간이 아니라 1분 감시를 건너뜁니다."
+        guarded = _guarded_trading_skip(trading_guard)
+        if guarded is not None:
+            return guarded
         current_settings = _current_settings(settings)
         accounts, monitor, repository = build_live_exit_poll(current_settings, kis_settings)
         positions = _remembered_highs(accounts.positions(), latest.highs)
@@ -149,6 +160,9 @@ def live_mock_tasks(
     def intraday_recheck() -> str:
         if not regular_session():
             return "미국 정규장 시간이 아니라 15분 재평가를 건너뜁니다."
+        guarded = _guarded_trading_skip(trading_guard)
+        if guarded is not None:
+            return guarded
         current_settings = _current_settings(settings)
         runtime, repository = build_live_dry_run(current_settings, kis_settings)
         fixed_opening = _fixed_opening_result(latest, current_settings)
@@ -228,6 +242,9 @@ def live_mock_tasks(
         if not trading_day():
             _write_closed_state(monitor_state)
             return "미국 휴장일이라 미체결 주문 취소를 건너뜁니다."
+        guarded = _guarded_trading_skip(trading_guard)
+        if guarded is not None:
+            return guarded
         cancelled = _cancel_unfilled_orders(kis_settings)
         latest.cancelled_orders.extend(cancelled)
         _write_live_state(monitor_state, kis_settings)
@@ -239,6 +256,9 @@ def live_mock_tasks(
             return "미국 휴장일이라 장마감 처리를 건너뜁니다."
         if not regular_session():
             return "미국 정규장 시간이 아니라 장마감 처리를 건너뜁니다."
+        guarded = _guarded_trading_skip(trading_guard)
+        if guarded is not None:
+            return guarded
         cancelled = _cancel_unfilled_orders(kis_settings)
         latest.cancelled_orders.extend(cancelled)
         current_settings = _current_settings(settings)
@@ -259,6 +279,7 @@ def live_mock_tasks(
             len(trades),
         )
         _send_market_close_notice()
+        _send_market_close_report(state)
         return (
             f"장마감 모의 매도 주문 {len(trades)}건 제출 및 "
             f"보고서 작성 완료: {report_path}"
@@ -307,6 +328,37 @@ def _send_market_close_notice() -> None:
         send_market_close_done(load_notification_settings())
     except Exception:
         # 알림 실패는 주문/장마감 정산 흐름과 분리한다.
+        return
+
+
+def _send_fill_notifications(records: list[FillRecord], holdings: list[object]) -> None:
+    try:
+        send_fill_notifications(records, holdings)
+    except Exception:
+        # 체결 알림 실패는 주문/DB 저장 흐름과 분리한다.
+        return
+
+
+def _send_market_close_report(state: dict[str, object]) -> None:
+    fills = state.get("fills", [])
+    holdings = state.get("holdings", [])
+    if not isinstance(fills, list):
+        return
+    try:
+        repository = SqlServerDailyRepository(pyodbc_connect_factory())
+        trade_date = current_trade_date()
+        records = fill_records_from_monitor_rows(
+            fills,
+            repository.sell_entry_prices(trade_date),
+            repository.entry_reasons(trade_date),
+            settings=load_settings(),
+        )
+        send_market_close_report_from_records(
+            records,
+            holdings if isinstance(holdings, list) else [],
+        )
+    except Exception:
+        # 장마감 요약 알림 실패는 장마감 처리 결과와 분리한다.
         return
 
 
@@ -560,10 +612,7 @@ def _write_live_state(
     persist_error = _persist_live_snapshot(live_state)
     if persist_error:
         live_state["logs"] = [log_row("DB", persist_error)] + live_state["logs"]
-    monitor_state.write_text(
-        json.dumps(live_state, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    _write_state_file(monitor_state, live_state)
     return live_state
 
 
@@ -585,12 +634,16 @@ def _persist_live_snapshot(live_state: dict[str, object]) -> str:
             settings = load_settings()
             entry_prices = repository.sell_entry_prices(trade_date)
             entry_reasons = repository.entry_reasons(trade_date)
+            existing_fill_keys = fill_keys_from_history(
+                repository.history_fills(trade_date, limit=1000)
+            )
             records = fill_records_from_monitor_rows(
                 fills,
                 entry_prices,
                 entry_reasons,
                 settings=settings,
             )
+            new_records = new_fill_records(records, existing_fill_keys)
             if records:
                 repository.save_fills(records)
                 repository.save_entry_profit_snapshots(
@@ -598,6 +651,11 @@ def _persist_live_snapshot(live_state: dict[str, object]) -> str:
                 )
                 if any(item.profit_usd is not None for item in records):
                     _save_daily_run_summary(settings, None, None)
+            if new_records:
+                _send_fill_notifications(
+                    new_records,
+                    holdings if isinstance(holdings, list) else [],
+                )
         if isinstance(holdings, list):
             repository.update_entry_profit_snapshots(
                 trade_date,
@@ -663,30 +721,78 @@ def _float_text(value: object) -> float:
 
 
 def _write_closed_state(monitor_state: Path) -> None:
-    monitor_state.write_text(
-        json.dumps(
-            {
-                "targets": [],
-                "holdings": [],
-                "orders": [],
-                "fills": [],
-                "gates": [["\ubbf8\uad6d \uac70\ub798\uc77c", "\ud734\uc7a5"]],
-                "logs": [
-                    [
-                        "\uc2a4\ucf00\uc904",
-                        "INFO",
-                        "\ubbf8\uad6d \uc2dc\uc7a5 \ud734\uc7a5\uc73c\ub85c "
-                        "\ub9e4\ub9e4\ub97c \uac74\ub108\ub6f0\uc5c8\uc2b5\ub2c8\ub2e4.",
-                    ]
-                ],
-                "trades": [],
-                "chart": {"closes": [], "movingAverage": []},
-            },
-            indent=2,
-            ensure_ascii=False,
-        ),
+    _write_state_file(
+        monitor_state,
+        {
+            "targets": [],
+            "holdings": [],
+            "orders": [],
+            "fills": [],
+            "gates": [["\ubbf8\uad6d \uac70\ub798\uc77c", "\ud734\uc7a5"]],
+            "logs": [
+                [
+                    "\uc2a4\ucf00\uc904",
+                    "INFO",
+                    "\ubbf8\uad6d \uc2dc\uc7a5 \ud734\uc7a5\uc73c\ub85c "
+                    "\ub9e4\ub9e4\ub97c \uac74\ub108\ub6f0\uc5c8\uc2b5\ub2c8\ub2e4.",
+                ]
+            ],
+            "trades": [],
+            "chart": {"closes": [], "movingAverage": []},
+        },
+    )
+
+
+def _write_state_file(monitor_state: Path, payload: dict[str, object]) -> None:
+    state = dict(payload)
+    state["last_updated"] = datetime.now(timezone.utc).isoformat()
+    monitor_state.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = monitor_state.with_name(f"{monitor_state.name}.tmp")
+    temp_path.write_text(
+        json.dumps(state, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+    temp_path.replace(monitor_state)
+
+
+def trading_cycle_skip_reason(monitor_state: Path) -> str | None:
+    reasons: list[str] = []
+    try:
+        import clr  # noqa: F401
+    except Exception:
+        reasons.append("clr_import=fail")
+    if not mssql_dsn_from_env():
+        reasons.append("db_configured=false")
+    else:
+        try:
+            with closing(pyodbc_connect_factory()()) as connection:
+                cursor = connection.cursor()
+                cursor.execute("SELECT 1")
+                cursor.fetchall()
+        except Exception:
+            reasons.append("db_connected=false")
+    age_seconds = _state_age_seconds(monitor_state)
+    if age_seconds is None:
+        reasons.append("state=missing")
+    elif age_seconds > 600:
+        reasons.append("state=stale")
+    if not reasons:
+        return None
+    return "SKIP trading cycle: monitor degraded reason=" + ",".join(reasons)
+
+
+def _guarded_trading_skip(
+    trading_guard: Callable[[], str | None] | None,
+) -> str | None:
+    if trading_guard is None:
+        return None
+    return trading_guard()
+
+
+def _state_age_seconds(path: Path) -> int | None:
+    if not path.exists():
+        return None
+    return max(int(datetime.now().timestamp() - path.stat().st_mtime), 0)
 
 
 def _retry_stale_mock_buy_orders(

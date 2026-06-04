@@ -28,6 +28,11 @@ RUNTIME_SETTING_KEYS = {
     "max_price_usd",
     "gainer_ranking_limit",
     "turnover_ranking_limit",
+    "initial_ranked_evaluation_limit",
+    "ranked_evaluation_batch_size",
+    "max_ranked_evaluation_candidates",
+    "target_filtered_candidates",
+    "candidate_eval_timeout_seconds",
     "min_opening_price_change",
     "min_volume_ratio",
     "max_opening_gap",
@@ -106,6 +111,11 @@ class TradingSettings:
     max_price_usd: float = 300.0
     gainer_ranking_limit: int = 100
     turnover_ranking_limit: int = 100
+    initial_ranked_evaluation_limit: int = 50
+    ranked_evaluation_batch_size: int = 25
+    max_ranked_evaluation_candidates: int = 125
+    target_filtered_candidates: int = 15
+    candidate_eval_timeout_seconds: float = 120.0
     max_open_positions: int = 5
     min_selected_candidates: int = 3
     max_selected_candidates: int = 5
@@ -198,14 +208,36 @@ def load_settings() -> TradingSettings:
     if load_dotenv is not None:
         load_dotenv()
 
-    settings = TradingSettings(
+    max_selected_candidates = _max_selected_candidates_env("MAX_SELECTED_CANDIDATES", 5)
+    target_filtered_default = max(15, max_selected_candidates * 3)
+    settings = _validate_candidate_evaluation_settings(TradingSettings(
         mock_trading=_bool_env("MOCK_TRADING", True),
         min_price_usd=_min_price_env("MIN_PRICE_USD", MIN_PRICE_USD_FLOOR),
         max_price_usd=_float_env("MAX_PRICE_USD", 300.0),
         gainer_ranking_limit=_ranking_limit_env("GAINER_RANKING_LIMIT", 100),
         turnover_ranking_limit=_ranking_limit_env("TURNOVER_RANKING_LIMIT", 100),
+        initial_ranked_evaluation_limit=_candidate_eval_count_env(
+            "INITIAL_RANKED_EVALUATION_LIMIT",
+            50,
+        ),
+        ranked_evaluation_batch_size=_candidate_eval_count_env(
+            "RANKED_EVALUATION_BATCH_SIZE",
+            25,
+        ),
+        max_ranked_evaluation_candidates=_candidate_eval_count_env(
+            "MAX_RANKED_EVALUATION_CANDIDATES",
+            125,
+        ),
+        target_filtered_candidates=_candidate_eval_count_env(
+            "TARGET_FILTERED_CANDIDATES",
+            target_filtered_default,
+        ),
+        candidate_eval_timeout_seconds=_candidate_eval_timeout_env(
+            "CANDIDATE_EVAL_TIMEOUT_SECONDS",
+            120.0,
+        ),
         max_open_positions=_int_env("MAX_OPEN_POSITIONS", 5),
-        max_selected_candidates=_int_env("MAX_SELECTED_CANDIDATES", 5),
+        max_selected_candidates=max_selected_candidates,
         max_account_exposure=_float_env("MAX_ACCOUNT_EXPOSURE", 0.80),
         max_position_exposure=_float_env("MAX_POSITION_EXPOSURE", 0.20),
         max_opening_gap=_float_env("MAX_OPENING_GAP", 0.30),
@@ -274,8 +306,10 @@ def load_settings() -> TradingSettings:
         real_max_order_krw=_int_env("REAL_MAX_ORDER_KRW", 100000),
         real_max_daily_order_krw=_int_env("REAL_MAX_DAILY_ORDER_KRW", 300000),
         real_emergency_stop=_bool_env("REAL_EMERGENCY_STOP", True),
+    ))
+    return _validate_candidate_evaluation_settings(
+        _apply_strategy_preset(_apply_runtime_settings(settings))
     )
-    return _apply_strategy_preset(_apply_runtime_settings(settings))
 
 
 def runtime_risk_settings_payload(
@@ -299,6 +333,11 @@ def runtime_risk_settings_payload(
         "maxPriceUsd": current.max_price_usd,
         "gainerRankingLimit": current.gainer_ranking_limit,
         "turnoverRankingLimit": current.turnover_ranking_limit,
+        "initialRankedEvaluationLimit": current.initial_ranked_evaluation_limit,
+        "rankedEvaluationBatchSize": current.ranked_evaluation_batch_size,
+        "maxRankedEvaluationCandidates": current.max_ranked_evaluation_candidates,
+        "targetFilteredCandidates": current.target_filtered_candidates,
+        "candidateEvalTimeoutSeconds": current.candidate_eval_timeout_seconds,
         "minOpeningPriceChangePercent": current.min_opening_price_change * 100,
         "minVolumeRatio": current.min_volume_ratio,
         "maxOpeningGapPercent": current.max_opening_gap * 100,
@@ -552,6 +591,31 @@ def save_runtime_risk_settings(
         turnover_ranking_limit=int(
             payload.get("turnover_ranking_limit", current.turnover_ranking_limit)
         ),
+        initial_ranked_evaluation_limit=int(
+            payload.get(
+                "initial_ranked_evaluation_limit",
+                current.initial_ranked_evaluation_limit,
+            )
+        ),
+        ranked_evaluation_batch_size=int(
+            payload.get(
+                "ranked_evaluation_batch_size",
+                current.ranked_evaluation_batch_size,
+            )
+        ),
+        max_ranked_evaluation_candidates=int(
+            payload.get(
+                "max_ranked_evaluation_candidates",
+                current.max_ranked_evaluation_candidates,
+            )
+        ),
+        target_filtered_candidates=int(
+            payload.get("target_filtered_candidates", current.target_filtered_candidates)
+        ),
+        candidate_eval_timeout_seconds=payload.get(
+            "candidate_eval_timeout_seconds",
+            current.candidate_eval_timeout_seconds,
+        ),
         min_opening_price_change=payload.get(
             "min_opening_price_change",
             current.min_opening_price_change,
@@ -787,6 +851,21 @@ def _ranking_limit_env(name: str, default: int) -> int:
     return _validate_positive_count(_int_env(name, default), name, 1000)
 
 
+def _candidate_eval_count_env(name: str, default: int) -> int:
+    return _validate_positive_count(_int_env(name, default), name, 10000)
+
+
+def _max_selected_candidates_env(name: str, default: int) -> int:
+    return _validate_positive_count(_int_env(name, default), name, 10000)
+
+
+def _candidate_eval_timeout_env(name: str, default: float) -> float:
+    value = _float_env(name, default)
+    if value <= 0:
+        raise ValueError(f"{name}는 0보다 크게 입력해 주세요.")
+    return value
+
+
 def _candidate_mode_env() -> str:
     raw = os.getenv("CANDIDATE_SELECTION_MODE")
     if raw:
@@ -868,6 +947,10 @@ def _apply_runtime_settings(settings: TradingSettings) -> TradingSettings:
         "max_consecutive_stop_loss_count",
         "gainer_ranking_limit",
         "turnover_ranking_limit",
+        "initial_ranked_evaluation_limit",
+        "ranked_evaluation_batch_size",
+        "max_ranked_evaluation_candidates",
+        "target_filtered_candidates",
         "max_order_retry_count",
         "order_retry_delay_seconds",
         "unfilled_cancel_after_seconds",
@@ -882,6 +965,25 @@ def _normalize_candidate_mode(settings: TradingSettings) -> TradingSettings:
         return settings
     if not settings.refresh_intraday_candidates:
         return replace(settings, candidate_selection_mode=CANDIDATE_MODE_FIXED)
+    return settings
+
+
+def _validate_candidate_evaluation_settings(settings: TradingSettings) -> TradingSettings:
+    for field, label in (
+        ("max_selected_candidates", "MAX_SELECTED_CANDIDATES"),
+        ("initial_ranked_evaluation_limit", "INITIAL_RANKED_EVALUATION_LIMIT"),
+        ("ranked_evaluation_batch_size", "RANKED_EVALUATION_BATCH_SIZE"),
+        ("max_ranked_evaluation_candidates", "MAX_RANKED_EVALUATION_CANDIDATES"),
+        ("target_filtered_candidates", "TARGET_FILTERED_CANDIDATES"),
+    ):
+        _validate_positive_count(getattr(settings, field), label, 10000)
+    if settings.candidate_eval_timeout_seconds <= 0:
+        raise ValueError("CANDIDATE_EVAL_TIMEOUT_SECONDS는 0보다 크게 입력해 주세요.")
+    if settings.initial_ranked_evaluation_limit > settings.max_ranked_evaluation_candidates:
+        raise ValueError(
+            "INITIAL_RANKED_EVALUATION_LIMIT는 "
+            "MAX_RANKED_EVALUATION_CANDIDATES 이하로 입력해 주세요."
+        )
     return settings
 
 
@@ -902,6 +1004,11 @@ def _runtime_settings_from_settings(settings: TradingSettings) -> dict[str, floa
         "max_price_usd": settings.max_price_usd,
         "gainer_ranking_limit": float(settings.gainer_ranking_limit),
         "turnover_ranking_limit": float(settings.turnover_ranking_limit),
+        "initial_ranked_evaluation_limit": float(settings.initial_ranked_evaluation_limit),
+        "ranked_evaluation_batch_size": float(settings.ranked_evaluation_batch_size),
+        "max_ranked_evaluation_candidates": float(settings.max_ranked_evaluation_candidates),
+        "target_filtered_candidates": float(settings.target_filtered_candidates),
+        "candidate_eval_timeout_seconds": settings.candidate_eval_timeout_seconds,
         "min_opening_price_change": settings.min_opening_price_change,
         "min_volume_ratio": settings.min_volume_ratio,
         "max_opening_gap": settings.max_opening_gap,
@@ -956,7 +1063,9 @@ def _complete_runtime_settings(
     complete.update(overrides)
     missing_keys = set(RUNTIME_SETTING_KEYS) - set(overrides)
     if missing_keys:
-        if not _save_runtime_settings_to_db(complete):
+        if _runtime_settings_db_configured():
+            _try_save_runtime_settings_to_db(complete)
+        else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(complete, ensure_ascii=False, indent=2), encoding="utf-8")
     return complete
@@ -987,7 +1096,7 @@ def _read_runtime_settings_from_db() -> dict[str, float]:
         from trading_bot.database import mssql_dsn_from_env, pyodbc_connect_factory
         from trading_bot.runtime_settings_store import RuntimeSettingsStore
 
-        if not mssql_dsn_from_env():
+        if not _mssql_env_configured() or not mssql_dsn_from_env():
             return {}
         return RuntimeSettingsStore(pyodbc_connect_factory()).read(RUNTIME_SETTING_KEYS)
     except Exception:
@@ -999,12 +1108,37 @@ def _save_runtime_settings_to_db(payload: dict[str, float]) -> bool:
         from trading_bot.database import mssql_dsn_from_env, pyodbc_connect_factory
         from trading_bot.runtime_settings_store import RuntimeSettingsStore
 
-        if not mssql_dsn_from_env():
+        if not _mssql_env_configured() or not mssql_dsn_from_env():
             return False
         RuntimeSettingsStore(pyodbc_connect_factory()).save(payload)
         return True
     except Exception as exc:
         raise RuntimeError(f"설정 DB 저장 실패: {exc}") from exc
+
+
+def _try_save_runtime_settings_to_db(payload: dict[str, float]) -> bool:
+    try:
+        return _save_runtime_settings_to_db(payload)
+    except RuntimeError:
+        return False
+
+
+def _runtime_settings_db_configured() -> bool:
+    try:
+        from trading_bot.database import mssql_dsn_from_env
+
+        return _mssql_env_configured() and bool(mssql_dsn_from_env())
+    except Exception:
+        return False
+
+
+def _mssql_env_configured() -> bool:
+    if os.getenv("MSSQL_DSN", "").strip():
+        return True
+    return all(
+        os.getenv(name, "").strip()
+        for name in ("MSSQL_HOST", "MSSQL_DATABASE", "MSSQL_USERNAME", "MSSQL_PASSWORD")
+    )
 
 
 def _validate_percent(value: float, label: str) -> float:

@@ -5,7 +5,14 @@ from datetime import date
 from time import perf_counter
 
 from trading_bot.config import TradingSettings
-from trading_bot.models import BotLog, DailyScore, DailyTarget, RankedStock, ScoreRecord
+from trading_bot.models import (
+    BotLog,
+    CandidateSnapshot,
+    DailyScore,
+    DailyTarget,
+    RankedStock,
+    ScoreRecord,
+)
 from trading_bot.ports import (
     AccountReader,
     DailyRepository,
@@ -16,6 +23,11 @@ from trading_bot.ports import (
 from trading_bot.risk import global_entry_gate
 from trading_bot.scoring import select_candidates
 from trading_bot.screening import ranking_intersection, screening_rejection_counts
+
+CANDIDATE_EVAL_TARGET_REACHED = "target_reached"
+CANDIDATE_EVAL_MAX_REACHED = "max_evaluation_candidates_reached"
+CANDIDATE_EVAL_TIMEOUT = "timeout_budget_exceeded"
+CANDIDATE_EVAL_NO_MORE = "no_more_candidates"
 
 
 @dataclass(frozen=True)
@@ -36,6 +48,18 @@ class RelaxationProfile:
     gainer_limit: int
     turnover_limit: int
     settings: TradingSettings
+
+
+@dataclass(frozen=True)
+class CandidateEvaluationProgress:
+    snapshots: dict[str, CandidateSnapshot]
+    candidates: list[CandidateSnapshot]
+    evaluated_tickers: set[str]
+    ranked_evaluation_limit: int
+    quote_requested_count: int
+    daily_requested_count: int
+    stopped_reason: str
+    elapsed_ms: int
 
 
 class ScreeningScoringPipeline:
@@ -69,6 +93,13 @@ class ScreeningScoringPipeline:
         )
         snapshots = {}
         requested_tickers: set[str] = set()
+        evaluated_tickers: set[str] = set()
+        quote_requested_count = 0
+        daily_requested_count = 0
+        ranked_evaluation_limit = 0
+        candidate_eval_stopped_reason = CANDIDATE_EVAL_NO_MORE
+        candidate_eval_elapsed_ms = 0
+        candidate_eval_started_at = perf_counter()
         intersection_tickers: set[str] = set()
         gainers: tuple[RankedStock, ...] = ()
         turnover: tuple[RankedStock, ...] = ()
@@ -79,28 +110,47 @@ class ScreeningScoringPipeline:
             if profile.level > 0 and not self.settings.allow_relaxed_candidate_filter:
                 break
             active_profile = profile
-            gainers = tuple(self.market_data.ranked_gainers(profile.gainer_limit))
-            turnover = tuple(self.market_data.ranked_turnover(profile.turnover_limit))
-            trade_value = tuple(
-                self.market_data.ranked_trade_value(profile.turnover_limit)
+            gainers = self._fetch_ranked_stocks(
+                "상승률",
+                lambda: self.market_data.ranked_gainers(profile.gainer_limit),
+            )
+            turnover = self._fetch_ranked_stocks(
+                "거래량",
+                lambda: self.market_data.ranked_turnover(profile.turnover_limit),
+            )
+            trade_value = self._fetch_ranked_stocks(
+                "거래대금",
+                lambda: self.market_data.ranked_trade_value(profile.turnover_limit),
             )
             gainer_tickers = {item.ticker for item in gainers}
             turnover_tickers = {item.ticker for item in turnover}
             trade_value_tickers = {item.ticker for item in trade_value}
             intersection_tickers = gainer_tickers & turnover_tickers
             requested_tickers = gainer_tickers | turnover_tickers | trade_value_tickers
-            snapshots = {
-                **snapshots,
-                **self.market_data.candidate_snapshots(
-                    requested_tickers - snapshots.keys()
+            ranked_gainers = _with_missing_ranks(gainers, requested_tickers)
+            ranked_turnover = _with_missing_ranks(turnover, requested_tickers)
+            progress = self._evaluate_ranked_candidates(
+                ranked_tickers=_ranked_evaluation_order(
+                    gainers,
+                    turnover,
+                    trade_value,
+                    requested_tickers,
                 ),
-            }
-            candidates = ranking_intersection(
-                _with_missing_ranks(gainers, requested_tickers),
-                _with_missing_ranks(turnover, requested_tickers),
-                snapshots,
-                profile.settings,
+                ranked_gainers=ranked_gainers,
+                ranked_turnover=ranked_turnover,
+                snapshots=snapshots,
+                evaluated_tickers=evaluated_tickers,
+                settings=profile.settings,
+                eval_started_at=candidate_eval_started_at,
             )
+            snapshots = progress.snapshots
+            candidates = progress.candidates
+            evaluated_tickers = progress.evaluated_tickers
+            quote_requested_count += progress.quote_requested_count
+            daily_requested_count += progress.daily_requested_count
+            ranked_evaluation_limit = progress.ranked_evaluation_limit
+            candidate_eval_stopped_reason = progress.stopped_reason
+            candidate_eval_elapsed_ms = progress.elapsed_ms
             self._log_relaxation_profile(profile, len(candidates))
             if len(candidates) >= self.settings.min_selected_candidates:
                 break
@@ -110,7 +160,12 @@ class ScreeningScoringPipeline:
             not self.settings.allow_relaxed_candidate_filter
             and len(candidates) < self.settings.min_selected_candidates
         )
-        self._save_screening_diagnostics(requested_tickers, snapshots, active_profile.settings)
+        self._save_screening_diagnostics(
+            requested_tickers,
+            snapshots,
+            active_profile.settings,
+            evaluated_tickers,
+        )
         targets = tuple(DailyTarget(trade_date, item) for item in candidates)
         self._safe_log(
             BotLog(
@@ -162,12 +217,18 @@ class ScreeningScoringPipeline:
                 trade_value_count=len(trade_value),
                 intersection_count=initial_intersection_count,
                 ranking_union_count=ranking_union_count,
+                ranked_evaluation_limit=ranked_evaluation_limit,
+                evaluated_candidate_count=len(evaluated_tickers),
+                quote_requested_count=quote_requested_count,
+                daily_requested_count=daily_requested_count,
                 snapshot_success_count=len(snapshots),
-                snapshot_fail_count=len(requested_tickers - snapshots.keys()),
+                snapshot_fail_count=len(evaluated_tickers - snapshots.keys()),
                 risk_pass_count=len(candidates),
                 scoring_pass_count=0,
                 final_selected_count=0,
                 saved_count=len(targets),
+                candidate_eval_elapsed_ms=candidate_eval_elapsed_ms,
+                candidate_eval_stopped_reason=candidate_eval_stopped_reason,
                 snapshots=snapshots,
                 scored=(),
                 settings=active_profile.settings,
@@ -202,12 +263,18 @@ class ScreeningScoringPipeline:
                 trade_value_count=len(trade_value),
                 intersection_count=initial_intersection_count,
                 ranking_union_count=ranking_union_count,
+                ranked_evaluation_limit=ranked_evaluation_limit,
+                evaluated_candidate_count=len(evaluated_tickers),
+                quote_requested_count=quote_requested_count,
+                daily_requested_count=daily_requested_count,
                 snapshot_success_count=len(snapshots),
-                snapshot_fail_count=len(requested_tickers - snapshots.keys()),
+                snapshot_fail_count=len(evaluated_tickers - snapshots.keys()),
                 risk_pass_count=len(candidates),
                 scoring_pass_count=0,
                 final_selected_count=0,
                 saved_count=len(targets),
+                candidate_eval_elapsed_ms=candidate_eval_elapsed_ms,
+                candidate_eval_stopped_reason=candidate_eval_stopped_reason,
                 snapshots=snapshots,
                 scored=(),
                 settings=active_profile.settings,
@@ -270,12 +337,18 @@ class ScreeningScoringPipeline:
             trade_value_count=len(trade_value),
             intersection_count=initial_intersection_count,
             ranking_union_count=ranking_union_count,
+            ranked_evaluation_limit=ranked_evaluation_limit,
+            evaluated_candidate_count=len(evaluated_tickers),
+            quote_requested_count=quote_requested_count,
+            daily_requested_count=daily_requested_count,
             snapshot_success_count=len(snapshots),
-            snapshot_fail_count=len(requested_tickers - snapshots.keys()),
+            snapshot_fail_count=len(evaluated_tickers - snapshots.keys()),
             risk_pass_count=len(candidates),
             scoring_pass_count=scoring_pass_count,
             final_selected_count=len(selected_tickers),
             saved_count=len(targets),
+            candidate_eval_elapsed_ms=candidate_eval_elapsed_ms,
+            candidate_eval_stopped_reason=candidate_eval_stopped_reason,
             snapshots=snapshots,
             scored=scored,
             settings=scoring_settings,
@@ -289,14 +362,110 @@ class ScreeningScoringPipeline:
         )
         return ScoringRun(trade_date, None, targets, scores)
 
+    def _evaluate_ranked_candidates(
+        self,
+        *,
+        ranked_tickers: tuple[str, ...],
+        ranked_gainers: tuple[RankedStock, ...],
+        ranked_turnover: tuple[RankedStock, ...],
+        snapshots,
+        evaluated_tickers: set[str],
+        settings: TradingSettings,
+        eval_started_at: float,
+    ) -> CandidateEvaluationProgress:
+        candidate_snapshots = dict(snapshots)
+        evaluated = set(evaluated_tickers)
+        quote_requested_count = 0
+        daily_requested_count = 0
+        ranked_evaluation_limit = min(
+            len(ranked_tickers),
+            max(self.settings.max_ranked_evaluation_candidates, 0),
+        )
+        target_filtered_count = max(
+            self.settings.target_filtered_candidates,
+            self.settings.max_selected_candidates,
+        )
+        candidate_limit = max(target_filtered_count, self.settings.max_selected_candidates)
+        stopped_reason = CANDIDATE_EVAL_NO_MORE
+
+        while True:
+            candidates = ranking_intersection(
+                ranked_gainers,
+                ranked_turnover,
+                candidate_snapshots,
+                settings,
+                limit=candidate_limit,
+            )
+            if len(candidates) >= target_filtered_count:
+                stopped_reason = CANDIDATE_EVAL_TARGET_REACHED
+                break
+            if _candidate_eval_timed_out(
+                eval_started_at,
+                self.settings.candidate_eval_timeout_seconds,
+            ):
+                stopped_reason = CANDIDATE_EVAL_TIMEOUT
+                break
+            evaluated_ranked_count = _evaluated_ranked_count(
+                ranked_tickers,
+                evaluated,
+                ranked_evaluation_limit,
+            )
+            if evaluated_ranked_count >= ranked_evaluation_limit:
+                stopped_reason = (
+                    CANDIDATE_EVAL_MAX_REACHED
+                    if ranked_evaluation_limit < len(ranked_tickers)
+                    else CANDIDATE_EVAL_NO_MORE
+                )
+                break
+            batch_size = (
+                self.settings.initial_ranked_evaluation_limit
+                if evaluated_ranked_count == 0
+                else self.settings.ranked_evaluation_batch_size
+            )
+            batch = _next_evaluation_batch(
+                ranked_tickers,
+                evaluated,
+                ranked_evaluation_limit,
+                batch_size,
+            )
+            if not batch:
+                stopped_reason = CANDIDATE_EVAL_NO_MORE
+                break
+            batch_snapshots = self.market_data.candidate_snapshots(batch)
+            candidate_snapshots.update(batch_snapshots)
+            evaluated.update(batch)
+            quote_requested_count += _last_snapshot_request_count(
+                self.market_data,
+                "last_quote_requested_count",
+                len(batch),
+            )
+            daily_requested_count += _last_snapshot_request_count(
+                self.market_data,
+                "last_daily_requested_count",
+                len(batch),
+            )
+
+        return CandidateEvaluationProgress(
+            snapshots=candidate_snapshots,
+            candidates=candidates,
+            evaluated_tickers=evaluated,
+            ranked_evaluation_limit=ranked_evaluation_limit,
+            quote_requested_count=quote_requested_count,
+            daily_requested_count=daily_requested_count,
+            stopped_reason=stopped_reason,
+            elapsed_ms=int((perf_counter() - eval_started_at) * 1000),
+        )
+
     def _save_screening_diagnostics(
         self,
         tickers: set[str],
         snapshots,
         settings: TradingSettings,
+        evaluated_tickers: set[str] | None = None,
     ) -> None:
         counts = screening_rejection_counts(snapshots.values(), settings)
-        missing = len(tickers - snapshots.keys())
+        checked_tickers = evaluated_tickers if evaluated_tickers is not None else tickers
+        missing = len(checked_tickers - snapshots.keys())
         if missing:
             counts["MISSING_SNAPSHOT"] = missing
         summary = ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
@@ -328,6 +497,20 @@ class ScreeningScoringPipeline:
             )
         )
 
+    def _fetch_ranked_stocks(self, label: str, fetch) -> tuple[RankedStock, ...]:
+        try:
+            return tuple(fetch())
+        except Exception as exc:
+            self._safe_log(
+                BotLog(
+                    "WARNING",
+                    "screening",
+                    f"RANKING_FETCH_FAILED: {label} 랭킹 조회 실패, 가능한 후보로 계속합니다. ({exc})",
+                    reject_reason="RANKING_FETCH_FAILED",
+                )
+            )
+            return ()
+
     def _log_pipeline_diagnostics(
         self,
         started_at: float,
@@ -340,12 +523,18 @@ class ScreeningScoringPipeline:
         trade_value_count: int,
         intersection_count: int,
         ranking_union_count: int,
+        ranked_evaluation_limit: int,
+        evaluated_candidate_count: int,
+        quote_requested_count: int,
+        daily_requested_count: int,
         snapshot_success_count: int,
         snapshot_fail_count: int,
         risk_pass_count: int,
         scoring_pass_count: int,
         final_selected_count: int,
         saved_count: int,
+        candidate_eval_elapsed_ms: int,
+        candidate_eval_stopped_reason: str,
         snapshots,
         scored,
         settings: TradingSettings | None = None,
@@ -368,11 +557,19 @@ class ScreeningScoringPipeline:
                 f"trade_value_count={trade_value_count} "
                 f"intersection_count={intersection_count} "
                 f"ranking_union_count={ranking_union_count} "
+                f"ranked_evaluation_limit={ranked_evaluation_limit} "
+                f"evaluated_candidate_count={evaluated_candidate_count} "
+                f"quote_requested_count={quote_requested_count} "
+                f"daily_requested_count={daily_requested_count} "
                 f"snapshot_success_count={snapshot_success_count} "
                 f"snapshot_fail_count={snapshot_fail_count} "
                 f"risk_pass_count={risk_pass_count} "
+                f"filtered_candidate_count={risk_pass_count} "
                 f"scoring_pass_count={scoring_pass_count} "
-                f"final_selected_count={final_selected_count}",
+                f"final_selected_count={final_selected_count} "
+                f"selected_candidate_count={final_selected_count} "
+                f"candidate_eval_elapsed_ms={candidate_eval_elapsed_ms} "
+                f"candidate_eval_stopped_reason={candidate_eval_stopped_reason}",
             )
         )
         self._safe_log(
@@ -404,11 +601,19 @@ class ScreeningScoringPipeline:
                 f"trade_value={trade_value_count} "
                 f"intersection={intersection_count} "
                 f"ranking_union={ranking_union_count} "
+                f"ranked_evaluation_limit={ranked_evaluation_limit} "
+                f"evaluated_candidate_count={evaluated_candidate_count} "
+                f"quote_requested_count={quote_requested_count} "
+                f"daily_requested_count={daily_requested_count} "
                 f"snapshot_success={snapshot_success_count} "
                 f"snapshot_fail={snapshot_fail_count} "
                 f"risk_pass={risk_pass_count} "
+                f"filtered_candidate_count={risk_pass_count} "
                 f"score_pass={scoring_pass_count} "
+                f"selected_candidate_count={final_selected_count} "
                 f"saved={saved_count} "
+                f"candidate_eval_elapsed_ms={candidate_eval_elapsed_ms} "
+                f"candidate_eval_stopped_reason={candidate_eval_stopped_reason} "
                 f"duration_ms={duration_ms}",
             )
         )
@@ -432,6 +637,78 @@ def _with_missing_ranks(rows, tickers: set[str]):
     existing = {item.ticker: item for item in rows}
     fallback_rank = max((item.rank for item in rows), default=0) + 50
     return tuple(existing.get(ticker) or RankedStock(ticker, fallback_rank) for ticker in tickers)
+
+
+def _ranked_evaluation_order(
+    gainers: tuple[RankedStock, ...],
+    turnover: tuple[RankedStock, ...],
+    trade_value: tuple[RankedStock, ...],
+    tickers: set[str],
+) -> tuple[str, ...]:
+    gain_ranks = {item.ticker: item.rank for item in gainers}
+    turnover_ranks = {item.ticker: item.rank for item in turnover}
+    trade_value_ranks = {item.ticker: item.rank for item in trade_value}
+    gain_fallback = _fallback_rank(gainers)
+    turnover_fallback = _fallback_rank(turnover)
+    trade_value_fallback = _fallback_rank(trade_value)
+
+    def key(ticker: str) -> tuple[float, int, int, int, int, str]:
+        gain_rank = gain_ranks.get(ticker, gain_fallback)
+        turnover_rank = turnover_ranks.get(ticker, turnover_fallback)
+        trade_value_rank = trade_value_ranks.get(ticker, trade_value_fallback)
+        presence_count = sum(
+            ticker in ranks for ranks in (gain_ranks, turnover_ranks, trade_value_ranks)
+        )
+        average_rank = (gain_rank + turnover_rank + trade_value_rank) / 3
+        return (
+            average_rank,
+            -presence_count,
+            gain_rank,
+            turnover_rank,
+            trade_value_rank,
+            ticker,
+        )
+
+    return tuple(sorted(tickers, key=key))
+
+
+def _fallback_rank(rows: tuple[RankedStock, ...]) -> int:
+    return max((item.rank for item in rows), default=0) + 50
+
+
+def _evaluated_ranked_count(
+    ranked_tickers: tuple[str, ...],
+    evaluated_tickers: set[str],
+    ranked_evaluation_limit: int,
+) -> int:
+    return sum(1 for ticker in ranked_tickers[:ranked_evaluation_limit] if ticker in evaluated_tickers)
+
+
+def _next_evaluation_batch(
+    ranked_tickers: tuple[str, ...],
+    evaluated_tickers: set[str],
+    ranked_evaluation_limit: int,
+    batch_size: int,
+) -> tuple[str, ...]:
+    batch = []
+    for ticker in ranked_tickers[:ranked_evaluation_limit]:
+        if ticker not in evaluated_tickers:
+            batch.append(ticker)
+        if len(batch) >= batch_size:
+            break
+    return tuple(batch)
+
+
+def _candidate_eval_timed_out(started_at: float, timeout_seconds: float) -> bool:
+    return timeout_seconds > 0 and perf_counter() - started_at >= timeout_seconds
+
+
+def _last_snapshot_request_count(source, attribute: str, default: int) -> int:
+    try:
+        value = int(getattr(source, attribute, default))
+    except (TypeError, ValueError):
+        return default
+    return max(value, 0)
 
 
 def _relaxation_profiles(settings: TradingSettings) -> tuple[RelaxationProfile, ...]:

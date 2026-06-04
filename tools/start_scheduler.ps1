@@ -1,5 +1,9 @@
 $workspace = Split-Path -Parent $PSScriptRoot
-$defaultPython = "C:\Users\admin\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+$utf8ConsoleScript = Join-Path $workspace "scripts\Set-Utf8Console.ps1"
+if (Test-Path -LiteralPath $utf8ConsoleScript) {
+    . $utf8ConsoleScript -Quiet
+}
+
 $venvPython = Join-Path $workspace ".venv\Scripts\python.exe"
 
 function Test-PythonModules {
@@ -20,15 +24,10 @@ function Test-PythonModules {
 $python = if ($env:AUTO_TRADING_PYTHON) {
     $env:AUTO_TRADING_PYTHON
 }
-elseif (Test-PythonModules -PythonPath $venvPython -Modules @("apscheduler", "tzdata", "pyodbc", "yfinance")) {
+else {
     $venvPython
 }
-elseif (Test-Path -LiteralPath $defaultPython) {
-    $defaultPython
-}
-else {
-    "python"
-}
+$requiredModules = @("dotenv", "apscheduler", "tzdata", "pyodbc", "clr", "yfinance")
 $logDir = Join-Path $workspace "logs"
 $logPath = Join-Path $logDir "startup-scheduler.log"
 
@@ -42,7 +41,7 @@ function Write-StartupLog {
         Add-Content -LiteralPath $logPath -Encoding UTF8 -Value "[$timestamp] $Message" -ErrorAction Stop
     }
     catch {
-        # 로그 파일 권한이나 잠금 문제가 있어도 스케줄러 실행 자체는 계속 진행한다.
+        # Keep running even when startup log writes fail.
     }
 }
 
@@ -54,6 +53,15 @@ if (-not $createdNew) {
     return
 }
 
+if (-not (Test-Path -LiteralPath $python)) {
+    Write-StartupLog "scheduler startup blocked: python executable missing: $python"
+    return
+}
+if (-not (Test-PythonModules -PythonPath $python -Modules $requiredModules)) {
+    Write-StartupLog "scheduler startup blocked: missing required Python modules"
+    return
+}
+
 Start-Sleep -Seconds 20
 
 try {
@@ -62,6 +70,7 @@ try {
             Set-Location -LiteralPath $workspace
             $env:PYTHONPATH = Join-Path $workspace "src"
 
+            Write-StartupLog "scheduler python: $python"
             Write-StartupLog "scheduler starting"
             & $python -m trading_bot run-scheduler --monitor-state "monitor/state.json" 2>&1 |
                 ForEach-Object { Write-StartupLog $_.ToString() }

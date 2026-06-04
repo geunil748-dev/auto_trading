@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
 from pathlib import Path
@@ -24,6 +26,8 @@ from trading_bot.real_trading_control import load_real_trading_control, save_man
 from trading_bot.repositories import SqlServerMonitorRepository
 from trading_bot.sql_monitor_state import SqlMonitorStateSource
 from trading_bot.trading_date import current_trade_date
+
+STARTUP_TIME = datetime.now(timezone.utc).isoformat()
 
 # 선택 의존성: .env 파일이 없어도 배포 환경의 환경변수를 그대로 사용할 수 있다.
 try:
@@ -69,7 +73,14 @@ class _DashboardStateReader:
         except Exception:
             cached_state = {}
         state = _accounts_from_cached_state(cached_state)
-        sql_state = self.sql_reader.read()
+        try:
+            sql_state = self.sql_reader.read()
+        except Exception as exc:
+            state["sql"] = {
+                "connected": False,
+                "error": _safe_error_text(exc),
+            }
+            return state
         mock = state["accounts"]["mock"]
         if isinstance(mock, dict):
             # 화면은 API 응답을 직접 가공하지 않고 DB에 저장된 스냅샷을 우선 표시한다.
@@ -410,14 +421,41 @@ def _handler(
 
 
 def _health_state(state_path: Path = Path("monitor/state.json")) -> dict[str, object]:
+    database = _database_health()
+    dependency = _dependency_health()
+    scheduler = _scheduler_health(state_path)
+    monitor_state = _monitor_state_health(state_path)
+    degraded = (
+        dependency["dependency_status"] != "ok"
+        or not bool(database.get("connected")) and bool(database.get("configured"))
+        or monitor_state["monitor_state_status"] != "fresh"
+        or scheduler.get("heartbeat_status") != "recent"
+    )
     return {
-        "ok": True,
-        "database": _database_health(),
+        "ok": not degraded,
+        "status": "degraded" if degraded else "ok",
+        "dependency_status": dependency["dependency_status"],
+        "clr_import": dependency["clr_import"],
+        "clr_error": dependency["clr_error"],
+        "db_configured": database.get("configured", False),
+        "db_connected": database.get("connected", False),
+        "db_error": database.get("error"),
+        "monitor_state_status": monitor_state["monitor_state_status"],
+        "state_last_updated": monitor_state["state_last_updated"],
+        "git_head": _git_head(),
+        "python_executable": sys.executable,
+        "startup_time": STARTUP_TIME,
+        "database": database,
         "monitor": {
             "ok": True,
             "pid": os.getpid(),
         },
-        "scheduler": _scheduler_health(state_path),
+        "monitor_process": {
+            "status": "ok",
+            "pid": os.getpid(),
+        },
+        "scheduler": scheduler,
+        "scheduler_heartbeat": scheduler.get("heartbeat_status", "missing"),
     }
 
 
@@ -431,8 +469,29 @@ def _database_health() -> dict[str, object]:
         cursor.fetchall()
         connection.close()
     except Exception as exc:
-        return {"configured": True, "connected": False, "error": str(exc).splitlines()[0]}
+        return {"configured": True, "connected": False, "error": _safe_error_text(exc)}
     return {"configured": True, "connected": True}
+
+
+def _dependency_health() -> dict[str, object]:
+    try:
+        import clr  # noqa: F401
+    except Exception as exc:
+        return {
+            "dependency_status": "fail",
+            "clr_import": "fail",
+            "clr_error": _safe_error_text(exc),
+        }
+    return {"dependency_status": "ok", "clr_import": "ok", "clr_error": None}
+
+
+def _monitor_state_health(state_path: Path) -> dict[str, object]:
+    age_seconds = _file_age_seconds(state_path)
+    return {
+        "monitor_state_status": _fresh_status(age_seconds, 600),
+        "state_last_updated": _file_updated_iso(state_path),
+        "monitor_state_age_seconds": age_seconds,
+    }
 
 
 def _scheduler_health(state_path: Path) -> dict[str, object]:
@@ -478,14 +537,56 @@ def _file_age_seconds(path: Path) -> int | None:
     return max(int(time.time() - path.stat().st_mtime), 0)
 
 
+def _file_updated_iso(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
+
+
 def _age_status(age_seconds: int | None, recent_seconds: int) -> str:
     if age_seconds is None:
         return "missing"
     return "recent" if age_seconds <= recent_seconds else "stale"
 
 
+def _fresh_status(age_seconds: int | None, recent_seconds: int) -> str:
+    if age_seconds is None:
+        return "missing"
+    return "fresh" if age_seconds <= recent_seconds else "stale"
+
+
+def _git_head() -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path.cwd(),
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=2,
+        ).strip()
+    except Exception:
+        return None
+
+
 def _read_monitor_state(reader: Any) -> dict[str, object]:
     return reader.read()
+
+
+def _safe_error_text(exc: Exception) -> str:
+    text = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+    for key in (
+        "MSSQL_PASSWORD",
+        "KIS_APP_SECRET",
+        "KIS_REAL_APP_SECRET",
+        "ALERT_TELEGRAM_BOT_TOKEN",
+        "MONITOR_BEARER_TOKEN",
+    ):
+        value = os.getenv(key, "")
+        if value:
+            text = text.replace(value, "***")
+    return text
 
 
 def _read_history_state(reader: Any, trade_date: date) -> dict[str, object]:

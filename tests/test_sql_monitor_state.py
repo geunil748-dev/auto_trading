@@ -397,9 +397,14 @@ def test_sql_monitor_state_translates_structured_log_messages() -> None:
                     "requested_turnover_limit=100 received_turnover_count=100 "
                     "requested_trade_value_limit=100 received_trade_value_count=100 "
                     "gainers_count=100 volume_count=100 intersection_count=5 "
-                    "trade_value_count=100 ranking_union_count=260 snapshot_success_count=5 "
-                    "snapshot_fail_count=0 risk_pass_count=0 scoring_pass_count=0 "
-                    "final_selected_count=0",
+                    "trade_value_count=100 ranking_union_count=260 "
+                    "ranked_evaluation_limit=125 evaluated_candidate_count=50 "
+                    "quote_requested_count=50 daily_requested_count=50 "
+                    "snapshot_success_count=5 snapshot_fail_count=0 risk_pass_count=0 "
+                    "filtered_candidate_count=0 scoring_pass_count=0 "
+                    "final_selected_count=0 selected_candidate_count=0 "
+                    "candidate_eval_elapsed_ms=987 "
+                    "candidate_eval_stopped_reason=target_reached",
                 ),
                 (
                     "22:50:01",
@@ -414,8 +419,12 @@ def test_sql_monitor_state_translates_structured_log_messages() -> None:
                     "requested_turnover_limit=100 received_turnover_count=100 "
                     "requested_trade_value_limit=100 received_trade_value_count=100 "
                     "gainers=100 volume=100 trade_value=100 intersection=5 ranking_union=260 "
-                    "snapshot_success=5 snapshot_fail=0 risk_pass=0 score_pass=0 "
-                    "saved=0 duration_ms=1234",
+                    "ranked_evaluation_limit=125 evaluated_candidate_count=50 "
+                    "quote_requested_count=50 daily_requested_count=50 "
+                    "snapshot_success=5 snapshot_fail=0 risk_pass=0 filtered_candidate_count=0 "
+                    "score_pass=0 selected_candidate_count=0 saved=0 "
+                    "candidate_eval_elapsed_ms=987 candidate_eval_stopped_reason=target_reached "
+                    "duration_ms=1234",
                 ),
                 (
                     "22:50:03",
@@ -442,8 +451,10 @@ def test_sql_monitor_state_translates_structured_log_messages() -> None:
             "거래량 요청 100건, 거래량 수신 100건, 거래대금 요청 100건, "
             "거래대금 수신 100건, 상승률 랭킹 100건, 거래량 랭킹 100건, "
             "교집합 5건, 거래대금 랭킹 100건, 합집합 260건, "
+            "랭킹 평가 한도 125건, 평가한 후보 50건, 현재가 요청 50건, 일봉 요청 50건, "
             "시세 조회 성공 5건, 시세 조회 실패 0건, 필터 통과 후보 0건, "
-            "점수 통과 후보 0건, 최종 선정 후보 0건"
+            "필터 통과 후보 0건, 점수 통과 후보 0건, 최종 선정 후보 0건, "
+            "최종 선정 후보 0건, 후보 평가 시간 987ms, 후보 평가 중단 사유 목표 후보 수 도달"
         ),
         (
             "필터 제외 현황: 가격 조건 제외 3건, 갭 조건 제외 1건, "
@@ -455,8 +466,11 @@ def test_sql_monitor_state_translates_structured_log_messages() -> None:
             "거래량 요청 100건, 거래량 수신 100건, 거래대금 요청 100건, "
             "거래대금 수신 100건, 상승률 랭킹 100건, 거래량 랭킹 100건, "
             "거래대금 랭킹 100건, 교집합 5건, 합집합 260건, "
+            "랭킹 평가 한도 125건, 평가한 후보 50건, 현재가 요청 50건, 일봉 요청 50건, "
             "시세 조회 성공 5건, 시세 조회 실패 0건, 필터 통과 후보 0건, "
-            "점수 통과 후보 0건, DB 저장 후보 0건, 소요 시간 1234ms"
+            "필터 통과 후보 0건, 점수 통과 후보 0건, 최종 선정 후보 0건, "
+            "DB 저장 후보 0건, 후보 평가 시간 987ms, 후보 평가 중단 사유 목표 후보 수 도달, "
+            "소요 시간 1234ms"
         ),
         "후보 저장: 후보 수 5건, 거래일 2026-06-01",
         "점수 저장: 점수 수 5건, 거래일 2026-06-01",

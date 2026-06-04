@@ -57,6 +57,8 @@ def test_kis_screening_market_data_maps_quote_and_volume_history(monkeypatch) ->
     assert snapshot.opening_price_change == 0.04
     assert snapshot.opening_volume_ratio == 1.5
     assert (snapshot.gain_rank, snapshot.turnover_rank) == (2, 4)
+    assert market.last_quote_requested_count == 1
+    assert market.last_daily_requested_count == 1
     assert kis.gainers_limit == 220
     assert kis.volume_limit == 230
     assert kis.trade_value_limit == 240
@@ -83,6 +85,8 @@ def test_kis_screening_market_data_reads_open_from_daily_price_when_quote_omits_
     market._volume_ranks = {"AAA": 4}
 
     assert market.candidate_snapshots(["AAA"])["AAA"].open_price_usd == 11
+    assert market.last_quote_requested_count == 1
+    assert market.last_daily_requested_count == 2
 
 
 def test_kis_screening_market_data_uses_fallback_rank_for_union_only_ticker() -> None:
@@ -138,6 +142,52 @@ def test_kis_screening_market_data_skips_candidates_without_history() -> None:
 
     assert market.candidate_snapshots(["NEW"]) == {}
     assert errors == [("NEW", "daily_prices_insufficient")]
+    assert market.last_quote_requested_count == 1
+    assert market.last_daily_requested_count == 1
+
+
+def test_kis_screening_market_data_quote_failure_skips_only_failed_candidate() -> None:
+    class Kis:
+        def quote(self, ticker: str) -> dict[str, str]:
+            if ticker == "BAD":
+                raise TimeoutError("slow quote")
+            return {
+                "last": "12.30",
+                "open": "11.00",
+                "base": "10.00",
+                "tvol": "3,000",
+            }
+
+    class Context:
+        def market_context(self) -> object:
+            return object()
+
+    class History:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def average_daily_volume(self, ticker: str, sessions: int) -> float:
+            self.calls.append(ticker)
+            return 2000
+
+    history = History()
+    errors: list[tuple[str, str]] = []
+    market = KisScreeningMarketData(
+        Kis(),
+        Context(),
+        history,
+        on_snapshot_error=lambda ticker, reason: errors.append((ticker, reason)),
+    )
+    market._gain_ranks = {"BAD": 1, "AAA": 2}
+    market._volume_ranks = {"BAD": 1, "AAA": 2}
+
+    snapshots = market.candidate_snapshots(["BAD", "AAA"])
+
+    assert list(snapshots) == ["AAA"]
+    assert history.calls == ["AAA"]
+    assert errors == [("BAD", "quote_timeout")]
+    assert market.last_quote_requested_count == 2
+    assert market.last_daily_requested_count == 1
 
 
 def test_kis_daily_volume_history_averages_twenty_daily_rows() -> None:

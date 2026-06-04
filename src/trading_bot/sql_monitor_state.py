@@ -921,11 +921,22 @@ def _display_log_pair(key: str, value: str, labels: dict[str, str]) -> str:
     label = labels.get(key, key)
     if key == "reason":
         return f"{label} {_snapshot_reason_text(value)}"
+    if key == "candidate_eval_stopped_reason":
+        return f"{label} {_candidate_eval_stopped_reason_text(value)}"
     if key in _COUNT_LOG_KEYS:
         return f"{label} {value}건"
-    if key == "duration_ms":
+    if key in {"candidate_eval_elapsed_ms", "duration_ms"}:
         return f"{label} {value}ms"
     return f"{label} {value}"
+
+
+def _candidate_eval_stopped_reason_text(reason: str) -> str:
+    return {
+        "target_reached": "목표 후보 수 도달",
+        "max_evaluation_candidates_reached": "최대 평가 후보 수 도달",
+        "timeout_budget_exceeded": "평가 시간 예산 초과",
+        "no_more_candidates": "평가할 후보 없음",
+    }.get(reason, reason)
 
 
 def _snapshot_reason_text(reason: str) -> str:
@@ -1004,6 +1015,7 @@ _REASON_TEXT = {
     "POSITION_EXPOSURE_LIMIT": "종목별 투자비중 초과",
     "PRICE_CAP": "가격 상한 초과",
     "PYRAMIDING": "불타기 추가매수",
+    "RANKING_FETCH_FAILED": "랭킹 조회 실패",
     "RANKED_LIST": "랭킹 후보",
     "REFRESH_CANDIDATE": "15분 신규 후보",
     "RETRY": "재시도",
@@ -1062,11 +1074,19 @@ _PIPELINE_LOG_LABELS = {
     "trade_value_count": "거래대금 랭킹",
     "intersection_count": "교집합",
     "ranking_union_count": "합집합",
+    "ranked_evaluation_limit": "랭킹 평가 한도",
+    "evaluated_candidate_count": "평가한 후보",
+    "quote_requested_count": "현재가 요청",
+    "daily_requested_count": "일봉 요청",
     "snapshot_success_count": "시세 조회 성공",
     "snapshot_fail_count": "시세 조회 실패",
     "risk_pass_count": "필터 통과 후보",
+    "filtered_candidate_count": "필터 통과 후보",
     "scoring_pass_count": "점수 통과 후보",
     "final_selected_count": "최종 선정 후보",
+    "selected_candidate_count": "최종 선정 후보",
+    "candidate_eval_elapsed_ms": "후보 평가 시간",
+    "candidate_eval_stopped_reason": "후보 평가 중단 사유",
 }
 
 _FILTER_LOG_LABELS = {
@@ -1090,11 +1110,19 @@ _PIPELINE_SUMMARY_LOG_LABELS = {
     "trade_value": "거래대금 랭킹",
     "intersection": "교집합",
     "ranking_union": "합집합",
+    "ranked_evaluation_limit": "랭킹 평가 한도",
+    "evaluated_candidate_count": "평가한 후보",
+    "quote_requested_count": "현재가 요청",
+    "daily_requested_count": "일봉 요청",
     "snapshot_success": "시세 조회 성공",
     "snapshot_fail": "시세 조회 실패",
     "risk_pass": "필터 통과 후보",
+    "filtered_candidate_count": "필터 통과 후보",
     "score_pass": "점수 통과 후보",
+    "selected_candidate_count": "최종 선정 후보",
     "saved": "DB 저장 후보",
+    "candidate_eval_elapsed_ms": "후보 평가 시간",
+    "candidate_eval_stopped_reason": "후보 평가 중단 사유",
     "duration_ms": "소요 시간",
 }
 
@@ -1117,12 +1145,17 @@ _COUNT_LOG_KEYS = {
     "candidate_count",
     "final_count",
     "final_selected_count",
+    "filtered_candidate_count",
     "gainers",
     "gainers_count",
     "intersection",
     "intersection_count",
+    "daily_requested_count",
+    "evaluated_candidate_count",
     "ranking_union",
     "ranking_union_count",
+    "ranked_evaluation_limit",
+    "quote_requested_count",
     "received_gainer_count",
     "received_turnover_count",
     "received_trade_value_count",
@@ -1137,6 +1170,7 @@ _COUNT_LOG_KEYS = {
     "score_count",
     "score_pass",
     "scoring_pass_count",
+    "selected_candidate_count",
     "snapshot_fail",
     "snapshot_fail_count",
     "snapshot_success",

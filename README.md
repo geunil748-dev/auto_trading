@@ -234,8 +234,114 @@ currently verified API response beyond 100 rows. `TURNOVER_RANKING_LIMIT` is
 used for the KIS `trade-vol` trade-volume ranking limit, not the `trade-pbmn`
 trade-value ranking.
 
+The screening universe is the union of price-fluctuation, trade-volume, and
+trade-value rankings. After rank fallback sorting, expensive quote and daily
+price evaluation runs in batches: `INITIAL_RANKED_EVALUATION_LIMIT` candidates
+first, then `RANKED_EVALUATION_BATCH_SIZE` more until
+`TARGET_FILTERED_CANDIDATES` pass filters, `MAX_RANKED_EVALUATION_CANDIDATES`
+is reached, or `CANDIDATE_EVAL_TIMEOUT_SECONDS` is exceeded. The final selected
+candidate cap remains `MAX_SELECTED_CANDIDATES`.
+
+Candidate evaluation count settings must be positive, and
+`INITIAL_RANKED_EVALUATION_LIMIT` must not exceed
+`MAX_RANKED_EVALUATION_CANDIDATES`. If one ranking source fails, the pipeline
+logs `RANKING_FETCH_FAILED` and continues with the remaining ranking candidates.
+Pipeline logs include the union size, evaluated count, quote/daily request
+counts, snapshot failures, elapsed time, and the stopped reason so operators can
+see whether evaluation stopped by target, max candidate limit, timeout, or
+candidate exhaustion.
+
 ## Monitor
 
 The browser monitor lives in `monitor/`. It first requests `/api/state` from
 the local monitor server and falls back to `state.json` if the API is not
 available.
+
+### Operations preflight
+
+Run this before starting or restarting monitor/scheduler. It is read-only and
+does not call order APIs or write database data.
+
+```powershell
+& "C:\auto_trading\.venv\Scripts\python.exe" "C:\auto_trading\tools\preflight_check.py"
+```
+
+Useful spot checks:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "ProcessId=24440" |
+Select-Object ProcessId, ExecutablePath, CommandLine |
+Format-List
+
+& "C:\auto_trading\.venv\Scripts\python.exe" -c "import sys; print(sys.executable); import clr; print('clr OK')"
+
+& "C:\auto_trading\.venv\Scripts\python.exe" -m pip show pythonnet
+
+curl.exe http://localhost:4174/health
+
+curl.exe http://localhost:4174/api/state
+
+Get-Content "C:\auto_trading\logs\startup-monitor.log" -Tail 80 |
+Select-String -Pattern "ModuleNotFoundError|No module named 'clr'|Traceback"
+```
+
+Expected startup behavior:
+
+- `tools/start_monitor_server.ps1` and `tools/start_scheduler.ps1` use
+  `C:\auto_trading\.venv\Scripts\python.exe` unless `AUTO_TRADING_PYTHON` is
+  set explicitly.
+- Startup is blocked if required modules such as `clr`, `pyodbc`, `dotenv`, or
+  scheduler dependencies are missing.
+- `/health` always returns JSON over HTTP 200 and reports degraded state through
+  fields such as `dependency_status`, `clr_import`, `db_connected`,
+  `monitor_state_status`, and `scheduler_heartbeat`.
+- Scheduler trading cycles skip with `SKIP trading cycle: monitor degraded ...`
+  when dependencies, DB connectivity, or monitor state freshness are not ready.
+
+### PowerShell UTF-8 Encoding
+
+Windows PowerShell 5.1 can start with CP949/US-ASCII settings even though this
+project stores source, JSON state, and logs as UTF-8. Before manual operations,
+apply the project console bootstrap:
+
+```powershell
+. "C:\auto_trading\scripts\Set-Utf8Console.ps1"
+```
+
+The monitor and scheduler start scripts dot-source this bootstrap automatically.
+On the next after-hours manual restart they set `chcp 65001`, console
+input/output encoding, `$OutputEncoding`, `PYTHONUTF8=1`, and
+`PYTHONIOENCODING=utf-8`. During market hours, do not restart monitor/scheduler
+only to fix display encoding; wait until after close if running processes must
+pick up changed start scripts.
+
+PowerShell 5.1 reads UTF-8 no-BOM `.ps1` files inconsistently when Korean text
+is embedded directly in the script. Keep operational `.ps1` files ASCII-only
+where possible, and write Korean runtime text from Python, JSON, or logs with
+explicit UTF-8 encoding. PowerShell 7 has better UTF-8 defaults, but still
+verify the active code page and `$OutputEncoding`.
+
+Diagnostic command:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\auto_trading\scripts\check_encoding.ps1"
+```
+
+If your PowerShell execution policy allows local scripts, the shorter
+`& "C:\auto_trading\scripts\check_encoding.ps1"` form is also fine.
+
+Spot checks:
+
+```powershell
+chcp
+[Console]::InputEncoding
+[Console]::OutputEncoding
+$OutputEncoding
+& "C:\auto_trading\.venv\Scripts\python.exe" -c "import sys, locale; print(sys.stdout.encoding); print(sys.stderr.encoding); print(locale.getpreferredencoding(False)); print('한글테스트: 삼성전자 매수 성공 현재가 72,300원')"
+Get-Content "C:\auto_trading\logs\startup-monitor.log" -Encoding utf8 -Tail 50
+Get-Content "C:\auto_trading\logs\startup-scheduler.log" -Encoding utf8 -Tail 50
+```
+
+Python file logs and JSON state files must use `encoding="utf-8"` and
+`ensure_ascii=False` when Korean user-facing text is stored. PowerShell file
+writes must use `-Encoding UTF8`; avoid `>` and `>>` for Korean log files.

@@ -132,6 +132,7 @@ def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> N
     monitor = Monitor()
     executor = Executor()
     notice_calls = []
+    report_calls = []
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_live_exit_poll",
         lambda settings, kis_settings: (Accounts(), monitor, "repository"),
@@ -157,6 +158,10 @@ def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> N
         "trading_bot.scheduled_tasks._send_market_close_notice",
         lambda: notice_calls.append("sent"),
     )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._send_market_close_report",
+        lambda state: report_calls.append(state),
+    )
 
     tasks = live_mock_tasks(
         TradingSettings(),
@@ -170,6 +175,7 @@ def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> N
     assert monitor.calls == [(["holding"], True)]
     assert executor.intents == [SellIntent("AAA", 2, 10.5, "EOD")]
     assert notice_calls == ["sent"]
+    assert report_calls == [{"orders": [], "fills": [], "holdings": []}]
 
 
 def test_close_session_skips_after_regular_session(monkeypatch, tmp_path) -> None:
@@ -328,6 +334,27 @@ def test_intraday_watch_submits_one_exit_and_remembers_pending_sells(
     assert tasks.intraday_watch() == "1분 감시 완료: 모의 매도 주문 0건 제출."
     assert monitor.highs == [10.0, 10.5]
     assert executor.calls == [[SellIntent("AAA", 2, 9.6, "STOP_LOSS")], []]
+
+
+def test_intraday_watch_skips_when_trading_guard_reports_degraded(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_exit_poll",
+        lambda settings, kis_settings: calls.append("exit_poll"),
+    )
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        regular_session=lambda: True,
+        trading_guard=lambda: "SKIP trading cycle: monitor degraded reason=db_connected=false",
+    )
+
+    assert tasks.intraday_watch() == "SKIP trading cycle: monitor degraded reason=db_connected=false"
+    assert calls == []
 
 
 def test_intraday_recheck_screens_and_limits_additional_buys(monkeypatch, tmp_path) -> None:

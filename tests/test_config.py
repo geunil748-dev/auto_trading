@@ -1,3 +1,5 @@
+import pytest
+
 from trading_bot.config import (
     load_notification_settings,
     load_real_kis_settings,
@@ -61,11 +63,21 @@ def test_load_settings_reads_ranking_limits(tmp_path, monkeypatch) -> None:
         monkeypatch.setenv(name, "")
     monkeypatch.setenv("GAINER_RANKING_LIMIT", "240")
     monkeypatch.setenv("TURNOVER_RANKING_LIMIT", "260")
+    monkeypatch.setenv("INITIAL_RANKED_EVALUATION_LIMIT", "45")
+    monkeypatch.setenv("RANKED_EVALUATION_BATCH_SIZE", "15")
+    monkeypatch.setenv("MAX_RANKED_EVALUATION_CANDIDATES", "95")
+    monkeypatch.setenv("TARGET_FILTERED_CANDIDATES", "21")
+    monkeypatch.setenv("CANDIDATE_EVAL_TIMEOUT_SECONDS", "90")
 
     settings = load_settings()
 
     assert settings.gainer_ranking_limit == 240
     assert settings.turnover_ranking_limit == 260
+    assert settings.initial_ranked_evaluation_limit == 45
+    assert settings.ranked_evaluation_batch_size == 15
+    assert settings.max_ranked_evaluation_candidates == 95
+    assert settings.target_filtered_candidates == 21
+    assert settings.candidate_eval_timeout_seconds == 90
 
 
 def test_load_settings_defaults_to_fixed_candidate_watch(tmp_path, monkeypatch) -> None:
@@ -142,12 +154,124 @@ def test_load_settings_uses_candidate_collection_defaults(tmp_path, monkeypatch)
     assert settings.max_price_usd == 300
     assert settings.gainer_ranking_limit == 100
     assert settings.turnover_ranking_limit == 100
+    assert settings.initial_ranked_evaluation_limit == 50
+    assert settings.ranked_evaluation_batch_size == 25
+    assert settings.max_ranked_evaluation_candidates == 125
+    assert settings.target_filtered_candidates == 15
+    assert settings.candidate_eval_timeout_seconds == 120.0
     assert settings.min_total_score == 35
     assert settings.min_opening_price_change == 0.0
     assert settings.min_volume_ratio == 1.0
     assert settings.max_opening_gap == 0.30
     assert settings.min_5m_volume_increase_percent == 5.0
     assert runtime_risk_settings_payload(settings)["min5mVolumeIncreasePercent"] == 5.0
+    assert runtime_risk_settings_payload(settings)["initialRankedEvaluationLimit"] == 50
+    assert runtime_risk_settings_payload(settings)["rankedEvaluationBatchSize"] == 25
+    assert runtime_risk_settings_payload(settings)["maxRankedEvaluationCandidates"] == 125
+    assert runtime_risk_settings_payload(settings)["targetFilteredCandidates"] == 15
+    assert runtime_risk_settings_payload(settings)["candidateEvalTimeoutSeconds"] == 120.0
+
+
+def test_load_settings_scales_target_filtered_candidates_from_selected_limit(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("trading_bot.config.load_dotenv", None)
+    for name in (
+        "MSSQL_DSN",
+        "MSSQL_HOST",
+        "MSSQL_DATABASE",
+        "MSSQL_USERNAME",
+        "MSSQL_PASSWORD",
+        "TARGET_FILTERED_CANDIDATES",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("MAX_SELECTED_CANDIDATES", "8")
+
+    settings = load_settings()
+
+    assert settings.max_selected_candidates == 8
+    assert settings.target_filtered_candidates == 24
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "match"),
+    (
+        ("MAX_SELECTED_CANDIDATES", "0", "MAX_SELECTED_CANDIDATES"),
+        ("RANKED_EVALUATION_BATCH_SIZE", "0", "RANKED_EVALUATION_BATCH_SIZE"),
+        ("CANDIDATE_EVAL_TIMEOUT_SECONDS", "0", "CANDIDATE_EVAL_TIMEOUT_SECONDS"),
+    ),
+)
+def test_load_settings_rejects_invalid_candidate_evaluation_values(
+    tmp_path,
+    monkeypatch,
+    name: str,
+    value: str,
+    match: str,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("trading_bot.config.load_dotenv", None)
+    for env_name in (
+        "MSSQL_DSN",
+        "MSSQL_HOST",
+        "MSSQL_DATABASE",
+        "MSSQL_USERNAME",
+        "MSSQL_PASSWORD",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError, match=match):
+        load_settings()
+
+
+def test_load_settings_rejects_initial_evaluation_limit_above_max(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("trading_bot.config.load_dotenv", None)
+    for env_name in (
+        "MSSQL_DSN",
+        "MSSQL_HOST",
+        "MSSQL_DATABASE",
+        "MSSQL_USERNAME",
+        "MSSQL_PASSWORD",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setenv("INITIAL_RANKED_EVALUATION_LIMIT", "126")
+    monkeypatch.setenv("MAX_RANKED_EVALUATION_CANDIDATES", "125")
+
+    with pytest.raises(ValueError, match="INITIAL_RANKED_EVALUATION_LIMIT"):
+        load_settings()
+
+
+def test_load_settings_continues_when_runtime_settings_db_save_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("trading_bot.config.load_dotenv", None)
+    monkeypatch.setattr("trading_bot.config._read_runtime_settings_from_db", lambda: {})
+
+    for key, value in {
+        "MSSQL_HOST": "localhost",
+        "MSSQL_DATABASE": "trading",
+        "MSSQL_USERNAME": "user",
+        "MSSQL_PASSWORD": "password",
+    }.items():
+        monkeypatch.setenv(key, value)
+
+    def broken_save(payload: dict[str, float]) -> bool:
+        raise RuntimeError("No module named 'clr'")
+
+    monkeypatch.setattr("trading_bot.config._save_runtime_settings_to_db", broken_save)
+
+    settings = load_settings()
+
+    assert settings.min_price_usd == 10
+    assert not (tmp_path / "monitor" / "trading_settings.json").exists()
 
 
 def test_load_settings_reads_unfilled_reorder_policies(monkeypatch) -> None:
