@@ -89,9 +89,6 @@ BEGIN
     ALTER TABLE dbo.daily_target ADD average_volume_20d BIGINT NULL;
 END;
 
-ALTER TABLE dbo.daily_target ALTER COLUMN volume_ratio DECIMAL(12, 2) NULL;
-ALTER TABLE dbo.daily_target ALTER COLUMN price_change DECIMAL(12, 2) NULL;
-
 IF OBJECT_ID(N'dbo.KisTokenCache', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.KisTokenCache (

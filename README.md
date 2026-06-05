@@ -101,6 +101,16 @@ $env:PYTHONPATH='src'
 python -m trading_bot show-settings
 ```
 
+Runtime mode defaults to mock-investment operation:
+
+```powershell
+APP_MODE=test
+```
+
+`APP_MODE=real` is required before real KIS settings can be loaded. Real
+order-capable paths still remain locked unless `REAL_TRADING_ENABLED=true`,
+`REAL_EMERGENCY_STOP=false`, and the runtime manual unlock are all satisfied.
+
 Create missing SQL Server tables after setting `MSSQL_DSN`:
 
 ```powershell
@@ -108,7 +118,15 @@ $env:PYTHONPATH='src'
 python -m trading_bot init-db
 ```
 
-Check mock-trading readiness before a live session:
+Run explicit schema repair only when a preflight or release note requires it:
+
+```powershell
+$env:PYTHONPATH='src'
+python -m trading_bot repair-db-schema
+```
+
+Check mock-trading readiness before a live session. This command is read-only
+and does not repair or migrate MSSQL schema:
 
 ```powershell
 $env:PYTHONPATH='src'
@@ -131,7 +149,7 @@ python -m trading_bot kis-account
 ```
 
 Inspect mapped KIS real-account state without submitting orders after setting
-`KIS_REAL_*` values:
+`APP_MODE=real` and `KIS_REAL_*` values:
 
 ```powershell
 $env:PYTHONPATH='src'
@@ -266,6 +284,12 @@ does not call order APIs or write database data.
 & "C:\auto_trading\.venv\Scripts\python.exe" "C:\auto_trading\tools\preflight_check.py"
 ```
 
+For startup gating, fail when monitor port 4174 is already occupied:
+
+```powershell
+& "C:\auto_trading\.venv\Scripts\python.exe" "C:\auto_trading\tools\preflight_check.py" --fail-used-port
+```
+
 Useful spot checks:
 
 ```powershell
@@ -294,7 +318,10 @@ Expected startup behavior:
   scheduler dependencies are missing.
 - `/health` always returns JSON over HTTP 200 and reports degraded state through
   fields such as `dependency_status`, `clr_import`, `db_connected`,
-  `monitor_state_status`, and `scheduler_heartbeat`.
+  `monitor_state_status`, `scheduler_heartbeat`, and `security_status`.
+- If monitor binds to `0.0.0.0` or a LAN address, `MONITOR_BEARER_TOKEN` is
+  required for `/api/*`; `/health` reports `security_status=fail` when it is
+  missing.
 - Scheduler trading cycles skip with `SKIP trading cycle: monitor degraded ...`
   when dependencies, DB connectivity, or monitor state freshness are not ready.
 

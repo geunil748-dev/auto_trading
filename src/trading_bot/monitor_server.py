@@ -21,6 +21,7 @@ from trading_bot.backtest_service import run_backtest_from_monitor_state
 from trading_bot.database import mssql_dsn_from_env, pyodbc_connect_factory
 from trading_bot.manual_sell import submit_manual_mock_sell, submit_manual_mock_sell_all
 from trading_bot.manual_screening import ManualScreeningRunner
+from trading_bot.market_calendar import is_current_us_regular_session
 from trading_bot.monitor_api import MonitorStateReader, authorize_bearer
 from trading_bot.real_trading_control import load_real_trading_control, save_manual_enabled
 from trading_bot.repositories import SqlServerMonitorRepository
@@ -43,7 +44,13 @@ def serve_monitor(
     monitor_dir: Path = Path("monitor"),
 ) -> None:
     reader = _state_reader(state_path)
-    handler = _handler(reader, monitor_dir, ManualScreeningRunner(state_path), state_path)
+    handler = _handler(
+        reader,
+        monitor_dir,
+        ManualScreeningRunner(state_path),
+        state_path,
+        bind_host=host,
+    )
     ThreadingHTTPServer((host, port), handler).serve_forever()
 
 
@@ -173,6 +180,7 @@ def _handler(
     monitor_dir: Path,
     manual_screening: ManualScreeningRunner,
     state_path: Path = Path("monitor/state.json"),
+    bind_host: str = "127.0.0.1",
 ):
     root = monitor_dir.resolve()
 
@@ -238,11 +246,14 @@ def _handler(
             if not self._authorize_api():
                 return
             state = _read_monitor_state(reader)
-            state["runtime"] = _runtime_state(local_bypass=self._allow_local_bypass())
+            state["runtime"] = _runtime_state(
+                local_bypass=self._allow_local_bypass(),
+                bind_host=bind_host,
+            )
             self._write_json(state)
 
         def _write_health(self) -> None:
-            self._write_json(_health_state(state_path))
+            self._write_json(_health_state(state_path, bind_host=bind_host))
 
         def _write_history(self) -> None:
             if not self._authorize_api():
@@ -263,7 +274,13 @@ def _handler(
             enabled = requested and settings.real_trading_enabled and not settings.real_emergency_stop
             control = save_manual_enabled(enabled)
             self._write_json(
-                {"runtime": _runtime_state(control, local_bypass=self._allow_local_bypass())}
+                {
+                    "runtime": _runtime_state(
+                        control,
+                        local_bypass=self._allow_local_bypass(),
+                        bind_host=bind_host,
+                    )
+                }
             )
 
         def _write_manual_mock_sell(self) -> None:
@@ -276,7 +293,7 @@ def _handler(
                     _optional_int(body.get("quantity")),
                 )
             except Exception as exc:
-                self._write_json({"ok": False, "error": str(exc)}, status=400)
+                self._write_json({"ok": False, "error": _safe_error_text(exc)}, status=400)
                 return
             self._write_json(result)
 
@@ -286,7 +303,7 @@ def _handler(
             try:
                 result = submit_manual_mock_sell_all()
             except Exception as exc:
-                self._write_json({"ok": False, "error": str(exc)}, status=400)
+                self._write_json({"ok": False, "error": _safe_error_text(exc)}, status=400)
                 return
             self._write_json(result)
 
@@ -314,7 +331,7 @@ def _handler(
                     )
                 )
             except Exception as exc:
-                self._write_json({"ok": False, "error": str(exc)}, status=500)
+                self._write_json({"ok": False, "error": _safe_error_text(exc)}, status=500)
 
         def _save_trading_settings(self) -> None:
             if not self._authorize_api():
@@ -380,13 +397,16 @@ def _handler(
                     ),
                 )
             except Exception as exc:
-                self._write_json({"ok": False, "error": str(exc)}, status=400)
+                self._write_json({"ok": False, "error": _safe_error_text(exc)}, status=400)
                 return
             self._write_json({"ok": True, "settings": settings_payload})
 
         def _authorize_api(self) -> bool:
             token = self.headers.get("Authorization")
-            expected = os.getenv("MONITOR_BEARER_TOKEN", "")
+            expected = os.getenv("MONITOR_BEARER_TOKEN", "").strip()
+            if not expected and _monitor_bind_requires_token(bind_host):
+                self.send_error(403, "Monitor token is required for LAN bindings")
+                return False
             if expected and not self._allow_local_bypass() and not authorize_bearer(token, expected):
                 self.send_error(401, "Invalid monitor token")
                 return False
@@ -420,20 +440,27 @@ def _handler(
     return MonitorHandler
 
 
-def _health_state(state_path: Path = Path("monitor/state.json")) -> dict[str, object]:
+def _health_state(
+    state_path: Path = Path("monitor/state.json"),
+    bind_host: str = "127.0.0.1",
+) -> dict[str, object]:
     database = _database_health()
     dependency = _dependency_health()
     scheduler = _scheduler_health(state_path)
     monitor_state = _monitor_state_health(state_path)
+    security = _monitor_security_state(bind_host)
     degraded = (
         dependency["dependency_status"] != "ok"
         or not bool(database.get("connected")) and bool(database.get("configured"))
-        or monitor_state["monitor_state_status"] != "fresh"
+        or monitor_state["monitor_state_status"] not in {"fresh", "stale_after_hours"}
         or scheduler.get("heartbeat_status") != "recent"
+        or security["status"] != "ok"
     )
     return {
         "ok": not degraded,
         "status": "degraded" if degraded else "ok",
+        "security_status": security["status"],
+        "security_message": security["message"],
         "dependency_status": dependency["dependency_status"],
         "clr_import": dependency["clr_import"],
         "clr_error": dependency["clr_error"],
@@ -442,6 +469,9 @@ def _health_state(state_path: Path = Path("monitor/state.json")) -> dict[str, ob
         "db_error": database.get("error"),
         "monitor_state_status": monitor_state["monitor_state_status"],
         "state_last_updated": monitor_state["state_last_updated"],
+        "monitor_state_age_seconds": monitor_state["monitor_state_age_seconds"],
+        "monitor_state_message": monitor_state["message"],
+        "monitor_state_recovery": monitor_state["recovery"],
         "git_head": _git_head(),
         "python_executable": sys.executable,
         "startup_time": STARTUP_TIME,
@@ -454,6 +484,7 @@ def _health_state(state_path: Path = Path("monitor/state.json")) -> dict[str, ob
             "status": "ok",
             "pid": os.getpid(),
         },
+        "security": security,
         "scheduler": scheduler,
         "scheduler_heartbeat": scheduler.get("heartbeat_status", "missing"),
     }
@@ -487,11 +518,39 @@ def _dependency_health() -> dict[str, object]:
 
 def _monitor_state_health(state_path: Path) -> dict[str, object]:
     age_seconds = _file_age_seconds(state_path)
+    status = _fresh_status(age_seconds, 600)
+    regular_session = is_current_us_regular_session()
+    if status == "stale" and not regular_session:
+        status = "stale_after_hours"
     return {
-        "monitor_state_status": _fresh_status(age_seconds, 600),
+        "monitor_state_status": status,
         "state_last_updated": _file_updated_iso(state_path),
         "monitor_state_age_seconds": age_seconds,
+        "is_regular_session_now": regular_session,
+        "message": _monitor_state_message(status),
+        "recovery": _monitor_state_recovery(status),
     }
+
+
+def _monitor_state_message(status: str) -> str:
+    if status == "fresh":
+        return "monitor state is fresh"
+    if status == "stale_after_hours":
+        return "monitor state is stale outside the US regular session"
+    if status == "missing":
+        return "monitor state file is missing"
+    return "monitor state is stale during the US regular session"
+
+
+def _monitor_state_recovery(status: str) -> str | None:
+    if status in {"fresh", "stale_after_hours"}:
+        return None
+    if status == "missing":
+        return "Start the scheduler and confirm it can write monitor/state.json."
+    return (
+        "Confirm the scheduler heartbeat is recent, then inspect scheduler logs for "
+        "monitor state write failures."
+    )
 
 
 def _scheduler_health(state_path: Path) -> dict[str, object]:
@@ -555,6 +614,35 @@ def _fresh_status(age_seconds: int | None, recent_seconds: int) -> str:
     return "fresh" if age_seconds <= recent_seconds else "stale"
 
 
+def _monitor_security_state(bind_host: str) -> dict[str, object]:
+    token_configured = bool(os.getenv("MONITOR_BEARER_TOKEN", "").strip())
+    token_required = _monitor_bind_requires_token(bind_host)
+    status = "ok"
+    message = "monitor token policy is satisfied"
+    if token_required and not token_configured:
+        status = "fail"
+        message = "MONITOR_BEARER_TOKEN is required when the monitor binds to LAN"
+    return {
+        "status": status,
+        "bind_host": bind_host,
+        "token_configured": token_configured,
+        "token_required": token_required,
+        "message": message,
+    }
+
+
+def _monitor_bind_requires_token(bind_host: str) -> bool:
+    host = str(bind_host or "").strip().lower()
+    if host in {"127.0.0.1", "::1", "localhost"}:
+        return False
+    if host in {"", "0.0.0.0", "::", "[::]", "*"}:
+        return True
+    try:
+        return not ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return True
+
+
 def _git_head() -> str | None:
     try:
         return subprocess.check_output(
@@ -577,10 +665,21 @@ def _read_monitor_state(reader: Any) -> dict[str, object]:
 def _safe_error_text(exc: Exception) -> str:
     text = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
     for key in (
+        "MSSQL_DSN",
         "MSSQL_PASSWORD",
+        "KIS_APP_KEY",
         "KIS_APP_SECRET",
+        "KIS_REAL_APP_KEY",
         "KIS_REAL_APP_SECRET",
+        "KIS_WS_APP_KEY",
+        "KIS_WS_APP_SECRET",
+        "KIS_REAL_WS_APP_KEY",
+        "KIS_REAL_WS_APP_SECRET",
+        "KIS_WS_APPROVAL_KEY",
+        "KIS_REAL_WS_APPROVAL_KEY",
+        "ALERT_DISCORD_WEBHOOK_URL",
         "ALERT_TELEGRAM_BOT_TOKEN",
+        "ALERT_TELEGRAM_CHAT_ID",
         "MONITOR_BEARER_TOKEN",
     ):
         value = os.getenv(key, "")
@@ -656,15 +755,23 @@ def _setting_float(body: dict[str, Any], key: str, current: dict[str, float]) ->
     return float(current.get(key, 0.0))
 
 
-def _runtime_state(control: Any | None = None, local_bypass: bool = False) -> dict[str, object]:
+def _runtime_state(
+    control: Any | None = None,
+    local_bypass: bool = False,
+    bind_host: str = "127.0.0.1",
+) -> dict[str, object]:
     if control is None:
         control = load_real_trading_control(load_settings())
+    security = _monitor_security_state(bind_host)
     return {
         "activeMode": "real" if control.orders_unlocked else "mock",
         "modeLabel": control.mode_label,
         "monitorAuth": {
             "localBypass": local_bypass,
-            "tokenConfigured": bool(os.getenv("MONITOR_BEARER_TOKEN", "")),
+            "tokenConfigured": bool(os.getenv("MONITOR_BEARER_TOKEN", "").strip()),
+            "tokenRequired": bool(security["token_required"]),
+            "status": security["status"],
+            "bindHost": bind_host,
         },
         "realTrading": control.to_dict(),
     }

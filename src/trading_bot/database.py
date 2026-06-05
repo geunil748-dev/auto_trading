@@ -259,6 +259,15 @@ def _quoted_database_name(database: str) -> str:
     return f"[{database}]"
 
 
+DAILY_TARGET_REPAIR_SQL = """
+IF OBJECT_ID(N'dbo.daily_target', N'U') IS NOT NULL
+BEGIN
+    ALTER TABLE dbo.daily_target ALTER COLUMN volume_ratio DECIMAL(12, 2) NULL;
+    ALTER TABLE dbo.daily_target ALTER COLUMN price_change DECIMAL(12, 2) NULL;
+END
+"""
+
+
 def initialize_database(
     connect: Callable[[], Any],
     schema_path: Path | None = None,
@@ -267,4 +276,10 @@ def initialize_database(
     schema = path.read_text(encoding="utf-8")
     with closing(connect()) as connection:
         connection.cursor().execute(schema)
+        connection.commit()
+
+
+def repair_database_schema(connect: Callable[[], Any]) -> None:
+    with closing(connect()) as connection:
+        connection.cursor().execute(DAILY_TARGET_REPAIR_SQL)
         connection.commit()

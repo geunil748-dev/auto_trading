@@ -46,6 +46,7 @@ from trading_bot.database import (
     ensure_mssql_database_exists,
     initialize_database,
     pyodbc_connect_factory,
+    repair_database_schema,
 )
 from trading_bot.monitor_state import state_from_dry_run
 from trading_bot.live_monitor_state import live_kis_monitor_state
@@ -61,6 +62,9 @@ def main() -> None:
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument("--monitor-state", type=Path, default=Path("monitor/state.json"))
     preflight.add_argument("--us-date", type=date.fromisoformat)
+    repair_schema = subparsers.add_parser("repair-db-schema")
+    repair_schema.add_argument("--monitor-state", type=Path, default=Path("monitor/state.json"))
+    repair_schema.add_argument("--us-date", type=date.fromisoformat)
 
     ranking = subparsers.add_parser("kis-rankings")
     ranking.add_argument("--exchange", default="NAS")
@@ -146,7 +150,32 @@ def main() -> None:
         return
 
     if args.command == "preflight":
-        readiness = mock_trading_readiness(args.monitor_state, market_date=args.us_date)
+        readiness = mock_trading_readiness(
+            args.monitor_state,
+            market_date=args.us_date,
+            repair_schema=False,
+        )
+        print(
+            json.dumps(
+                readiness,
+                indent=2,
+                ensure_ascii=False,
+                default=str,
+            )
+        )
+        if not _preflight_ready(readiness):
+            raise SystemExit(1)
+        return
+
+    if args.command == "repair-db-schema":
+        ensure_mssql_database_exists()
+        initialize_database(pyodbc_connect_factory())
+        repair_database_schema(pyodbc_connect_factory())
+        readiness = mock_trading_readiness(
+            args.monitor_state,
+            market_date=args.us_date,
+            repair_schema=True,
+        )
         print(
             json.dumps(
                 readiness,

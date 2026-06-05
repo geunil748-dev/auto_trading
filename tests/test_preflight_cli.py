@@ -35,6 +35,59 @@ def test_preflight_cli_exits_zero_when_mssql_ready(monkeypatch, capsys) -> None:
     assert json.loads(capsys.readouterr().out)["mssql"]["connected"] is True
 
 
+def test_preflight_cli_uses_read_only_readiness(monkeypatch, capsys) -> None:
+    payload = _ready_payload(
+        {
+            "connected": True,
+            "required_tables_ready": True,
+            "required_columns_ready": True,
+        }
+    )
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(sys, "argv", ["trading-bot", "preflight"])
+
+    def fake_readiness(*args, **kwargs):
+        calls.append(kwargs)
+        return payload
+
+    monkeypatch.setattr(cli, "mock_trading_readiness", fake_readiness)
+
+    cli.main()
+
+    assert json.loads(capsys.readouterr().out)["mssql"]["connected"] is True
+    assert calls[0]["repair_schema"] is False
+
+
+def test_repair_db_schema_cli_runs_explicit_repair(monkeypatch, capsys) -> None:
+    payload = _ready_payload(
+        {
+            "connected": True,
+            "required_tables_ready": True,
+            "required_columns_ready": True,
+        }
+    )
+    calls: list[str] = []
+    readiness_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(sys, "argv", ["trading-bot", "repair-db-schema"])
+    monkeypatch.setattr(cli, "ensure_mssql_database_exists", lambda: calls.append("ensure-db"))
+    monkeypatch.setattr(cli, "initialize_database", lambda *_: calls.append("init-schema"))
+    monkeypatch.setattr(cli, "repair_database_schema", lambda *_: calls.append("repair-schema"))
+    monkeypatch.setattr(cli, "pyodbc_connect_factory", lambda: lambda: object())
+
+    def fake_readiness(*args, **kwargs):
+        readiness_calls.append(kwargs)
+        return payload
+
+    monkeypatch.setattr(cli, "mock_trading_readiness", fake_readiness)
+
+    cli.main()
+
+    assert calls == ["ensure-db", "init-schema", "repair-schema"]
+    assert readiness_calls[0]["repair_schema"] is True
+    assert json.loads(capsys.readouterr().out)["mssql"]["connected"] is True
+
+
 @pytest.mark.parametrize(
     "mssql",
     [

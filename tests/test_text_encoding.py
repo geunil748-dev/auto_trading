@@ -47,6 +47,25 @@ def test_user_facing_text_has_no_known_mojibake() -> None:
     assert offenders == []
 
 
+def test_start_scripts_bootstrap_utf8_console() -> None:
+    for path in (
+        ROOT / "tools" / "start_monitor_server.ps1",
+        ROOT / "tools" / "start_scheduler.ps1",
+    ):
+        text = path.read_text(encoding="utf-8")
+        assert "scripts\\Set-Utf8Console.ps1" in text
+        assert ". $utf8ConsoleScript -Quiet" in text
+
+    for path in (
+        ROOT / "tools" / "start_monitor_server.cmd",
+        ROOT / "tools" / "start_scheduler.cmd",
+    ):
+        text = path.read_text(encoding="utf-8")
+        assert "chcp 65001" in text
+        assert "set PYTHONUTF8=1" in text
+        assert "set PYTHONIOENCODING=utf-8" in text
+
+
 def _text_files() -> list[Path]:
     files: list[Path] = []
     for root in TEXT_PATHS:

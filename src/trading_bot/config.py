@@ -12,6 +12,11 @@ except ImportError:  # pragma: no cover - 로컬 규칙 테스트에서 선택 �
 
 RUNTIME_SETTINGS_PATH = Path("monitor/trading_settings.json")
 MIN_PRICE_USD_FLOOR = 10.0
+APP_MODE_TEST = "test"
+APP_MODE_REAL = "real"
+APP_MODES = {APP_MODE_TEST, APP_MODE_REAL}
+KIS_MOCK_BASE_URL = "https://openapivts.koreainvestment.com:29443"
+KIS_REAL_BASE_URL = "https://openapi.koreainvestment.com:9443"
 
 # 화면에서 조정 가능한 매매 설정 키. 런타임 저장소와 .env 값을 같은 이름으로 맞춘다.
 RUNTIME_SETTING_KEYS = {
@@ -106,6 +111,7 @@ VWAP_MA20_TYPES = {
 
 @dataclass(frozen=True)
 class TradingSettings:
+    app_mode: str = APP_MODE_TEST
     mock_trading: bool = True
     min_price_usd: float = MIN_PRICE_USD_FLOOR
     max_price_usd: float = 300.0
@@ -208,9 +214,12 @@ def load_settings() -> TradingSettings:
     if load_dotenv is not None:
         load_dotenv()
 
+    app_mode = _app_mode_env()
+    real_trading_requested = _bool_env("REAL_TRADING_ENABLED", False)
     max_selected_candidates = _max_selected_candidates_env("MAX_SELECTED_CANDIDATES", 5)
     target_filtered_default = max(15, max_selected_candidates * 3)
     settings = _validate_candidate_evaluation_settings(TradingSettings(
+        app_mode=app_mode,
         mock_trading=_bool_env("MOCK_TRADING", True),
         min_price_usd=_min_price_env("MIN_PRICE_USD", MIN_PRICE_USD_FLOOR),
         max_price_usd=_float_env("MAX_PRICE_USD", 300.0),
@@ -302,10 +311,14 @@ def load_settings() -> TradingSettings:
         enable_pyramiding=_bool_env("ENABLE_PYRAMIDING", False),
         partial_take_profit_enabled=_bool_env("PARTIAL_TAKE_PROFIT_ENABLED", True),
         trailing_stop_activation_rate=_float_env("TRAILING_STOP_ACTIVATION_RATE", 0.03),
-        real_trading_enabled=_bool_env("REAL_TRADING_ENABLED", False),
+        real_trading_enabled=real_trading_requested if app_mode == APP_MODE_REAL else False,
         real_max_order_krw=_int_env("REAL_MAX_ORDER_KRW", 100000),
         real_max_daily_order_krw=_int_env("REAL_MAX_DAILY_ORDER_KRW", 300000),
-        real_emergency_stop=_bool_env("REAL_EMERGENCY_STOP", True),
+        real_emergency_stop=(
+            _bool_env("REAL_EMERGENCY_STOP", True)
+            if app_mode == APP_MODE_REAL
+            else True
+        ),
     ))
     return _validate_candidate_evaluation_settings(
         _apply_strategy_preset(_apply_runtime_settings(settings))
@@ -772,22 +785,22 @@ def load_notification_settings() -> NotificationSettings:
 def load_kis_settings() -> KisSettings:
     if load_dotenv is not None:
         load_dotenv()
+    base_url = os.getenv("KIS_BASE_URL", KIS_MOCK_BASE_URL).rstrip("/")
+    _validate_mock_kis_base_url(base_url)
 
     return KisSettings(
         app_key=_required_env("KIS_APP_KEY"),
         app_secret=_required_env("KIS_APP_SECRET"),
         account_no=_required_env("KIS_ACCOUNT_NO"),
         account_product=os.getenv("KIS_ACCOUNT_PRODUCT", "01"),
-        base_url=os.getenv(
-            "KIS_BASE_URL",
-            "https://openapivts.koreainvestment.com:29443",
-        ).rstrip("/"),
+        base_url=base_url,
     )
 
 
 def load_real_kis_settings() -> KisSettings:
     if load_dotenv is not None:
         load_dotenv()
+    _require_real_app_mode("KIS_REAL settings")
 
     return KisSettings(
         app_key=_required_env("KIS_REAL_APP_KEY"),
@@ -796,7 +809,7 @@ def load_real_kis_settings() -> KisSettings:
         account_product=os.getenv("KIS_REAL_ACCOUNT_PRODUCT", "01"),
         base_url=os.getenv(
             "KIS_REAL_BASE_URL",
-            "https://openapi.koreainvestment.com:9443",
+            KIS_REAL_BASE_URL,
         ).rstrip("/"),
     )
 
@@ -804,6 +817,9 @@ def load_real_kis_settings() -> KisSettings:
 def load_kis_websocket_settings(real: bool = False) -> KisWebSocketSettings:
     if load_dotenv is not None:
         load_dotenv()
+
+    if real:
+        _require_real_app_mode("KIS_REAL websocket settings")
 
     prefix = "KIS_REAL_WS" if real else "KIS_WS"
     kis_prefix = "KIS_REAL" if real else "KIS"
@@ -828,6 +844,28 @@ def _bool_env(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _app_mode_env() -> str:
+    raw = os.getenv("APP_MODE", APP_MODE_TEST)
+    value = raw.strip().lower() if raw is not None else APP_MODE_TEST
+    if not value:
+        return APP_MODE_TEST
+    if value not in APP_MODES:
+        raise ValueError("APP_MODE must be either 'test' or 'real'")
+    return value
+
+
+def _require_real_app_mode(context: str) -> None:
+    if _app_mode_env() != APP_MODE_REAL:
+        raise ValueError(f"{context} requires APP_MODE=real")
+
+
+def _validate_mock_kis_base_url(base_url: str) -> None:
+    if _app_mode_env() != APP_MODE_TEST:
+        return
+    if base_url.rstrip("/").lower() == KIS_REAL_BASE_URL.lower():
+        raise ValueError("APP_MODE=test cannot use the KIS real-trading base URL")
 
 
 def _float_env(name: str, default: float) -> float:
