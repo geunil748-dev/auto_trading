@@ -1,6 +1,7 @@
 import pytest
 
 from trading_bot.config import (
+    load_kis_settings,
     load_notification_settings,
     load_real_kis_settings,
     load_settings,
@@ -10,6 +11,7 @@ from trading_bot.config import (
 
 
 def test_load_real_kis_settings_uses_dedicated_real_env(monkeypatch) -> None:
+    monkeypatch.setenv("APP_MODE", "real")
     monkeypatch.setenv("KIS_REAL_APP_KEY", "real-key")
     monkeypatch.setenv("KIS_REAL_APP_SECRET", "real-secret")
     monkeypatch.setenv("KIS_REAL_ACCOUNT_NO", "12345678")
@@ -26,11 +28,13 @@ def test_load_real_kis_settings_uses_dedicated_real_env(monkeypatch) -> None:
 
 
 def test_load_settings_keeps_real_trading_locked_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("APP_MODE", raising=False)
     monkeypatch.delenv("REAL_TRADING_ENABLED", raising=False)
     monkeypatch.delenv("REAL_EMERGENCY_STOP", raising=False)
 
     settings = load_settings()
 
+    assert settings.app_mode == "test"
     assert settings.real_trading_enabled is False
     assert settings.real_emergency_stop is True
     assert settings.real_max_order_krw == 100000
@@ -38,6 +42,7 @@ def test_load_settings_keeps_real_trading_locked_by_default(monkeypatch) -> None
 
 
 def test_load_settings_reads_real_trading_safety_limits(monkeypatch) -> None:
+    monkeypatch.setenv("APP_MODE", "real")
     monkeypatch.setenv("REAL_TRADING_ENABLED", "true")
     monkeypatch.setenv("REAL_EMERGENCY_STOP", "false")
     monkeypatch.setenv("REAL_MAX_ORDER_KRW", "50000")
@@ -49,6 +54,43 @@ def test_load_settings_reads_real_trading_safety_limits(monkeypatch) -> None:
     assert settings.real_emergency_stop is False
     assert settings.real_max_order_krw == 50000
     assert settings.real_max_daily_order_krw == 150000
+
+
+def test_load_settings_test_mode_ignores_real_trading_unlock(monkeypatch) -> None:
+    monkeypatch.setenv("APP_MODE", "test")
+    monkeypatch.setenv("REAL_TRADING_ENABLED", "true")
+    monkeypatch.setenv("REAL_EMERGENCY_STOP", "false")
+
+    settings = load_settings()
+
+    assert settings.app_mode == "test"
+    assert settings.real_trading_enabled is False
+    assert settings.real_emergency_stop is True
+
+
+def test_load_settings_rejects_invalid_app_mode(monkeypatch) -> None:
+    monkeypatch.setenv("APP_MODE", "prod")
+
+    with pytest.raises(ValueError, match="APP_MODE"):
+        load_settings()
+
+
+def test_real_kis_settings_require_real_app_mode(monkeypatch) -> None:
+    monkeypatch.setenv("APP_MODE", "test")
+
+    with pytest.raises(ValueError, match="APP_MODE=real"):
+        load_real_kis_settings()
+
+
+def test_test_app_mode_rejects_official_real_kis_url(monkeypatch) -> None:
+    monkeypatch.setenv("APP_MODE", "test")
+    monkeypatch.setenv("KIS_BASE_URL", "https://openapi.koreainvestment.com:9443")
+    monkeypatch.setenv("KIS_APP_KEY", "mock-key")
+    monkeypatch.setenv("KIS_APP_SECRET", "mock-secret")
+    monkeypatch.setenv("KIS_ACCOUNT_NO", "12345678")
+
+    with pytest.raises(ValueError, match="APP_MODE=test"):
+        load_kis_settings()
 
 
 def test_load_settings_reads_ranking_limits(tmp_path, monkeypatch) -> None:

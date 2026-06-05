@@ -1113,9 +1113,6 @@ class SqlServerDailyRepository:
 
             IF COL_LENGTH('dbo.daily_target', 'average_volume_20d') IS NULL
                 ALTER TABLE dbo.daily_target ADD average_volume_20d BIGINT NULL
-
-            ALTER TABLE dbo.daily_target ALTER COLUMN volume_ratio DECIMAL(12, 2) NULL
-            ALTER TABLE dbo.daily_target ALTER COLUMN price_change DECIMAL(12, 2) NULL
             """,
         )
 

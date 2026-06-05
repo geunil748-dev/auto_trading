@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -77,6 +78,7 @@ def mock_trading_readiness(
     monitor_state: Path = Path("monitor/state.json"),
     now: datetime | None = None,
     market_date: date | None = None,
+    repair_schema: bool = False,
 ) -> dict[str, Any]:
     target_date = market_date or current_us_market_date(now)
     # 실투자 전환 전에는 이 결과를 먼저 보고 휴장/DB/API 준비 상태를 분리해서 판단한다.
@@ -86,7 +88,7 @@ def mock_trading_readiness(
         "is_regular_session_now": is_current_us_regular_session(now),
         "next_us_trading_day": next_us_trading_day(target_date).isoformat(),
         "kis_config": _kis_config_status(),
-        "mssql": _mssql_status(),
+        "mssql": _mssql_status(repair_schema=repair_schema),
         "monitor_state_exists": monitor_state.exists(),
         "ready_for_live_mock_session": is_us_trading_day(target_date),
     }
@@ -121,19 +123,25 @@ def _kis_config_status() -> dict[str, bool]:
     }
 
 
-def _mssql_status() -> dict[str, Any]:
+def _mssql_status(repair_schema: bool = False) -> dict[str, Any]:
+    connection = None
     try:
         connection = pyodbc_connect_factory()()
         cursor = connection.cursor()
         cursor.execute("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = ?", ("BASE TABLE",))
         tables = {str(row[0]) for row in cursor.fetchall()}
         columns_before = _read_columns(cursor)
-        column_actions = _ensure_trade_fill_metadata_columns(cursor, tables, columns_before)
-        connection.commit()
+        if repair_schema:
+            column_actions = _ensure_trade_fill_metadata_columns(cursor, tables, columns_before)
+            connection.commit()
+        else:
+            column_actions = _read_only_column_actions(tables, columns_before)
         columns_after = _read_columns(cursor)
-        connection.close()
     except Exception as error:
-        return {"connected": False, "error": str(error)}
+        return {"connected": False, "error": _safe_error_text(error)}
+    finally:
+        if connection is not None:
+            connection.close()
 
     missing = sorted(REQUIRED_TABLES - tables)
     missing_before = _missing_columns(tables, columns_before)
@@ -145,12 +153,35 @@ def _mssql_status() -> dict[str, Any]:
         "required_columns_ready": not missing_after,
         "missing_columns": missing_after,
         "schema_column_check": {
+            "repair_schema": repair_schema,
             "before_missing_columns": missing_before,
             "after_missing_columns": missing_after,
             "actions": column_actions,
         },
         "warnings": _schema_warnings(missing, missing_after),
     }
+
+
+def _read_only_column_actions(
+    tables: set[str],
+    columns_before: dict[str, set[str]],
+) -> list[dict[str, str]]:
+    actions: list[dict[str, str]] = []
+    for table, column_types in AUTO_ENSURE_COLUMNS.items():
+        for column in column_types:
+            before = _column_status(table, column, tables, columns_before)
+            action = "read_only_present" if before == "present" else "read_only_missing"
+            if before == "missing_table":
+                action = "read_only_missing_table"
+            actions.append(
+                {
+                    "table": table,
+                    "column": column,
+                    "before": before,
+                    "action": action,
+                }
+            )
+    return actions
 
 
 def _read_columns(cursor: Any) -> dict[str, set[str]]:
@@ -253,3 +284,29 @@ def _schema_warnings(
     for table, columns in missing_columns.items():
         warnings.append(f"Missing required MSSQL columns in {table}: {', '.join(columns)}")
     return warnings
+
+
+def _safe_error_text(error: Exception) -> str:
+    text = str(error).splitlines()[0] if str(error) else error.__class__.__name__
+    for key in (
+        "MSSQL_DSN",
+        "MSSQL_PASSWORD",
+        "KIS_APP_KEY",
+        "KIS_APP_SECRET",
+        "KIS_REAL_APP_KEY",
+        "KIS_REAL_APP_SECRET",
+        "KIS_WS_APP_KEY",
+        "KIS_WS_APP_SECRET",
+        "KIS_REAL_WS_APP_KEY",
+        "KIS_REAL_WS_APP_SECRET",
+        "KIS_WS_APPROVAL_KEY",
+        "KIS_REAL_WS_APPROVAL_KEY",
+        "ALERT_DISCORD_WEBHOOK_URL",
+        "ALERT_TELEGRAM_BOT_TOKEN",
+        "ALERT_TELEGRAM_CHAT_ID",
+        "MONITOR_BEARER_TOKEN",
+    ):
+        value = os.getenv(key, "")
+        if value:
+            text = text.replace(value, "***")
+    return text[:300]

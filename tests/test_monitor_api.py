@@ -3,7 +3,12 @@ import os
 import time
 
 from trading_bot.monitor_api import MonitorStateReader, authorize_bearer
-from trading_bot.monitor_server import _DashboardStateReader, _health_state, _setting_float
+from trading_bot.monitor_server import (
+    _DashboardStateReader,
+    _health_state,
+    _monitor_bind_requires_token,
+    _setting_float,
+)
 from trading_bot.repositories import SqlServerMonitorRepository
 
 
@@ -66,6 +71,7 @@ def test_health_state_is_read_only_and_reports_components(tmp_path, monkeypatch)
 
     assert payload["ok"] is True
     assert payload["status"] == "ok"
+    assert payload["security_status"] == "ok"
     assert payload["dependency_status"] == "ok"
     assert payload["clr_import"] == "ok"
     assert payload["db_connected"] is True
@@ -122,6 +128,60 @@ def test_scheduler_health_uses_recent_heartbeat_when_monitor_state_is_stale(
     assert payload["scheduler"]["status"] == "running"
     assert payload["scheduler"]["heartbeat_status"] == "recent"
     assert payload["scheduler"]["monitor_state_status"] == "stale"
+
+
+def test_health_state_requires_token_for_lan_bind(tmp_path, monkeypatch) -> None:
+    state = tmp_path / "state.json"
+    state.write_text("{}", encoding="utf-8")
+    heartbeat = tmp_path / "scheduler_heartbeat.json"
+    heartbeat.write_text("{}", encoding="utf-8")
+    now = time.time()
+    os.utime(state, (now, now))
+    os.utime(heartbeat, (now, now))
+
+    monkeypatch.delenv("MONITOR_BEARER_TOKEN", raising=False)
+    monkeypatch.setattr("trading_bot.monitor_server._database_health", lambda: {"connected": True})
+    monkeypatch.setattr(
+        "trading_bot.monitor_server._dependency_health",
+        lambda: {"dependency_status": "ok", "clr_import": "ok", "clr_error": None},
+    )
+
+    payload = _health_state(state, bind_host="0.0.0.0")
+
+    assert payload["ok"] is False
+    assert payload["status"] == "degraded"
+    assert payload["security_status"] == "fail"
+    assert payload["security"]["token_required"] is True
+
+
+def test_monitor_bind_requires_token_for_lan_only() -> None:
+    assert not _monitor_bind_requires_token("127.0.0.1")
+    assert not _monitor_bind_requires_token("localhost")
+    assert _monitor_bind_requires_token("0.0.0.0")
+    assert _monitor_bind_requires_token("192.168.0.10")
+
+
+def test_health_state_treats_after_hours_stale_as_explained(tmp_path, monkeypatch) -> None:
+    state = tmp_path / "state.json"
+    state.write_text("{}", encoding="utf-8")
+    heartbeat = tmp_path / "scheduler_heartbeat.json"
+    heartbeat.write_text("{}", encoding="utf-8")
+    now = time.time()
+    os.utime(state, (now - 3600, now - 3600))
+    os.utime(heartbeat, (now, now))
+
+    monkeypatch.setattr("trading_bot.monitor_server._database_health", lambda: {"connected": True})
+    monkeypatch.setattr(
+        "trading_bot.monitor_server._dependency_health",
+        lambda: {"dependency_status": "ok", "clr_import": "ok", "clr_error": None},
+    )
+    monkeypatch.setattr("trading_bot.monitor_server.is_current_us_regular_session", lambda: False)
+
+    payload = _health_state(state)
+
+    assert payload["ok"] is True
+    assert payload["monitor_state_status"] == "stale_after_hours"
+    assert payload["monitor_state_recovery"] is None
 
 
 def test_scheduler_health_reports_stale_heartbeat(tmp_path, monkeypatch) -> None:

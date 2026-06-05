@@ -775,7 +775,10 @@ def trading_cycle_skip_reason(monitor_state: Path) -> str | None:
     if age_seconds is None:
         reasons.append("state=missing")
     elif age_seconds > 600:
-        reasons.append("state=stale")
+        reasons.append(
+            f"state=stale age_seconds={age_seconds} "
+            "recovery=inspect_scheduler_state_write"
+        )
     if not reasons:
         return None
     return "SKIP trading cycle: monitor degraded reason=" + ",".join(reasons)

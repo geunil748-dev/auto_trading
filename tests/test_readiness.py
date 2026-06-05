@@ -9,7 +9,7 @@ def test_next_us_trading_day_skips_memorial_day_2026() -> None:
 
 def test_mock_trading_readiness_accepts_target_market_date(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(readiness, "_kis_config_status", lambda: {"configured": True})
-    monkeypatch.setattr(readiness, "_mssql_status", lambda: {"connected": True})
+    monkeypatch.setattr(readiness, "_mssql_status", lambda **_: {"connected": True})
 
     state = readiness.mock_trading_readiness(
         tmp_path / "missing.json",
@@ -74,7 +74,7 @@ class SchemaConnection:
         self.closed = True
 
 
-def test_preflight_adds_trade_and_fill_metadata_columns(monkeypatch) -> None:
+def test_preflight_read_only_reports_trade_and_fill_metadata_columns(monkeypatch) -> None:
     tables = set(readiness.REQUIRED_TABLES)
     columns = {
         table: set(required)
@@ -94,6 +94,39 @@ def test_preflight_adds_trade_and_fill_metadata_columns(monkeypatch) -> None:
     status = readiness._mssql_status()
 
     assert status["connected"] is True
+    assert status["required_columns_ready"] is False
+    assert status["schema_column_check"]["repair_schema"] is False
+    assert len(
+        [
+            action
+            for action in status["schema_column_check"]["actions"]
+            if action["action"] == "read_only_missing"
+        ]
+    ) == 6
+    assert connection.commits == 0
+    assert connection.closed is True
+
+
+def test_repair_schema_adds_trade_and_fill_metadata_columns(monkeypatch) -> None:
+    tables = set(readiness.REQUIRED_TABLES)
+    columns = {
+        table: set(required)
+        for table, required in readiness.REQUIRED_COLUMNS.items()
+    }
+    for table in ("trade_history", "fill_history"):
+        columns[table] -= {
+            "strategy_version",
+            "settings_snapshot_hash",
+            "settings_snapshot_json",
+        }
+    cursor = SchemaCursor(tables, columns)
+    connection = SchemaConnection(cursor)
+
+    monkeypatch.setattr(readiness, "pyodbc_connect_factory", lambda: lambda: connection)
+
+    status = readiness._mssql_status(repair_schema=True)
+
+    assert status["connected"] is True
     assert status["required_columns_ready"] is True
     assert status["missing_columns"] == {}
     assert status["schema_column_check"]["before_missing_columns"] == {
@@ -109,6 +142,7 @@ def test_preflight_adds_trade_and_fill_metadata_columns(monkeypatch) -> None:
         ],
     }
     assert status["schema_column_check"]["after_missing_columns"] == {}
+    assert status["schema_column_check"]["repair_schema"] is True
     assert len(
         [
             action
@@ -141,3 +175,16 @@ def test_preflight_reports_required_columns_that_cannot_be_added(monkeypatch) ->
     assert status["warnings"] == [
         "Missing required MSSQL columns in entry_profit_snapshot: final_profit_rate",
     ]
+
+
+def test_mssql_status_masks_sensitive_error(monkeypatch) -> None:
+    monkeypatch.setenv("MSSQL_PASSWORD", "secret-password")
+
+    def connect() -> object:
+        raise RuntimeError("Login failed for secret-password")
+
+    monkeypatch.setattr(readiness, "pyodbc_connect_factory", lambda: connect)
+
+    status = readiness._mssql_status()
+
+    assert status == {"connected": False, "error": "Login failed for ***"}
