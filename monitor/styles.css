@@ -256,8 +256,7 @@ input::placeholder {
 
 .command-bar,
 .panel-head,
-.runtime,
-.position-head {
+.runtime {
   display: flex;
   align-items: center;
 }
@@ -361,8 +360,7 @@ h2 {
 }
 
 .runtime div,
-.metric-stack dl,
-.position-metrics div {
+.metric-stack dl {
   display: grid;
   gap: 4px;
 }
@@ -370,7 +368,6 @@ h2 {
 .runtime span:last-child,
 .runtime-label,
 .metric-stack dt,
-.position-metrics span,
 .log-stream time {
   color: var(--muted);
   font-size: 0.82rem;

@@ -84,6 +84,8 @@ def build_daily_trade_summary_payload(
     trades = data_source.trade_rows(trade_date, is_mock)
     snapshots = data_source.entry_profit_snapshots(trade_date)
     logs = data_source.log_rows(trade_date)
+    candidate_counts = data_source.candidate_counts(trade_date)
+    candidate_summary = _candidate_summary(candidate_counts)
     enriched_sells = _enriched_sell_fills(fills, trades)
     exit_stats = _group_stats(enriched_sells, key_index="exit_reason")
     strategy_stats = _group_stats(enriched_sells, key_index="strategy_version")
@@ -100,6 +102,7 @@ def build_daily_trade_summary_payload(
     )
     buy_count = sum(1 for row in fills if _is_buy_side(_value(row, 4)))
     sell_count = len(enriched_sells)
+    traded_symbol_count = _traded_symbol_count(fills)
     win_rate = _win_rate(item["profitUsd"] for item in enriched_sells)
     return {
         "tradeDate": trade_date.isoformat(),
@@ -115,6 +118,16 @@ def build_daily_trade_summary_payload(
         "exitReasonStats": exit_stats,
         "strategyStats": strategy_stats,
         "entryProfitSnapshotStats": snapshot_stats,
+        "candidateCount": candidate_summary["candidateSymbolCount"],
+        "candidateRowCount": candidate_summary["candidateCount"],
+        "candidateSymbolCount": candidate_summary["candidateSymbolCount"],
+        "scoringCount": candidate_summary["scoringCount"],
+        "scoringSymbolCount": candidate_summary["scoringSymbolCount"],
+        "selectedCount": traded_symbol_count,
+        "selectedCandidateCount": candidate_summary["selectedCount"],
+        "selectedSymbolCount": candidate_summary["selectedSymbolCount"],
+        "tradedSymbolCount": traded_symbol_count,
+        "candidateSummary": candidate_summary,
         "sampleSufficient": snapshot_stats["sampleSufficient"],
         "warnings": warnings,
         "importantLogs": _important_logs(logs),
@@ -188,6 +201,16 @@ def _enriched_sell_fills(
     return rows
 
 
+def _traded_symbol_count(fills: list[tuple[Any, ...]]) -> int:
+    symbols = {
+        _text(_value(row, 2)).upper()
+        for row in fills
+        if _is_buy_side(_value(row, 4)) or _is_sell_side(_value(row, 4))
+    }
+    symbols.discard("")
+    return len(symbols)
+
+
 def _sell_exit_reasons(trades: list[tuple[Any, ...]]) -> dict[str, deque[str]]:
     reasons: dict[str, deque[str]] = defaultdict(deque)
     for row in trades:
@@ -258,6 +281,30 @@ def _important_logs(rows: list[tuple[Any, ...]]) -> list[dict[str, str]]:
             }
         )
     return important[:100]
+
+
+def _candidate_summary(counts: tuple[Any, ...]) -> dict[str, int]:
+    candidate_count = int(_number(_value(counts, 0)))
+    if len(counts) >= 6:
+        candidate_symbol_count = int(_number(_value(counts, 1)))
+        scoring_count = int(_number(_value(counts, 2)))
+        scoring_symbol_count = int(_number(_value(counts, 3)))
+        selected_count = int(_number(_value(counts, 4)))
+        selected_symbol_count = int(_number(_value(counts, 5)))
+    else:
+        candidate_symbol_count = candidate_count
+        scoring_count = int(_number(_value(counts, 1)))
+        scoring_symbol_count = scoring_count
+        selected_count = int(_number(_value(counts, 2)))
+        selected_symbol_count = selected_count
+    return {
+        "candidateCount": candidate_count,
+        "candidateSymbolCount": candidate_symbol_count,
+        "scoringCount": scoring_count,
+        "scoringSymbolCount": scoring_symbol_count,
+        "selectedCount": selected_count,
+        "selectedSymbolCount": selected_symbol_count,
+    }
 
 
 def _log_keyword(message: str) -> bool:

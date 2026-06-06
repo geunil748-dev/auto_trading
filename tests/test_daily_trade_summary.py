@@ -142,7 +142,39 @@ def test_generate_daily_summary_saves_row_for_day_with_trades() -> None:
     assert report.win_rate == 100.0
     assert report.take_profit_count == 1
     assert payload["strategyVersion"] == "STRICT_FIXED_NO_PYRAMIDING"
+    assert payload["candidateCount"] == 5
+    assert payload["candidateRowCount"] == 5
+    assert payload["candidateSymbolCount"] == 5
+    assert payload["scoringCount"] == 3
+    assert payload["selectedCount"] == 1
+    assert payload["selectedCandidateCount"] == 2
+    assert payload["tradedSymbolCount"] == 1
+    assert payload["candidateSummary"]["candidateCount"] == 5
     assert "모의투자 일일 요약" in report.summary_text
+
+
+def test_generate_daily_summary_keeps_candidate_row_and_symbol_counts() -> None:
+    class Source(FakeTradeSummarySource):
+        def candidate_counts(self, trade_date: date) -> tuple[object, ...]:
+            return (5, 3, 5, 3, 2, 2)
+
+    result = generate_daily_trade_summary(
+        trade_date=date(2026, 6, 3),
+        mode="mock",
+        data_source=Source(),
+        repository=FakeSummaryRepository(),
+    )
+
+    payload = json.loads(result.report.summary_json)
+    assert payload["candidateCount"] == 3
+    assert payload["candidateRowCount"] == 5
+    assert payload["candidateSymbolCount"] == 3
+    assert payload["scoringCount"] == 5
+    assert payload["scoringSymbolCount"] == 3
+    assert payload["selectedCount"] == 1
+    assert payload["selectedCandidateCount"] == 2
+    assert payload["selectedSymbolCount"] == 2
+    assert payload["tradedSymbolCount"] == 1
 
 
 def test_generate_daily_summary_saves_row_without_trades() -> None:

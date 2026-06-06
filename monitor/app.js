@@ -104,6 +104,7 @@ const refreshHistoryButton = document.querySelector("#refreshHistory");
 const dailySummaryModeInput = document.querySelector("#dailySummaryMode");
 const dailySummaryDateInput = document.querySelector("#dailySummaryDate");
 const refreshDailySummaryButton = document.querySelector("#refreshDailySummary");
+const generateDailySummaryButton = document.querySelector("#generateDailySummary");
 const reloadDailySummaryButton = document.querySelector("#reloadDailySummary");
 const runBacktestButton = document.querySelector("#runBacktest");
 const backtestTickerInput = document.querySelector("#backtestTicker");
@@ -163,6 +164,7 @@ customBacktestTickerInput?.addEventListener("keydown", (event) => {
 });
 refreshHistoryButton?.addEventListener("click", loadHistory);
 refreshDailySummaryButton?.addEventListener("click", loadDailySummaries);
+generateDailySummaryButton?.addEventListener("click", generateDailySummary);
 reloadDailySummaryButton?.addEventListener("click", loadDailySummaries);
 dailySummaryModeInput?.addEventListener("change", loadDailySummaries);
 dailySummaryDateInput?.addEventListener("change", loadDailySummaryDetail);
@@ -332,6 +334,41 @@ async function loadDailySummaryDetail() {
     };
   } finally {
     setButtonLoading(refreshDailySummaryButton, false);
+  }
+  renderDailySummary();
+}
+
+async function generateDailySummary() {
+  const tradeDate = (dailySummaryDateInput?.value || "").trim() || todayText();
+  const mode = dailySummaryModeValue() || "mock";
+  setButtonLoading(generateDailySummaryButton, true);
+  dailySummaryState = { ...dailySummaryState, loading: true, error: "일일 요약을 생성/저장하는 중입니다." };
+  renderDailySummary();
+  try {
+    const response = await fetch(
+      "/api/daily-summary/generate",
+      fetchOptions("/api/daily-summary/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: tradeDate, mode }),
+      }),
+    );
+    const payload = await parseDailySummaryJson(response, "일일 요약 생성/저장 실패");
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.error || "일일 요약 생성/저장 실패");
+    }
+    if (dailySummaryDateInput) dailySummaryDateInput.value = payload.summary?.tradeDate || tradeDate;
+    if (dailySummaryModeInput) dailySummaryModeInput.value = payload.summary?.mode || mode;
+    await loadDailySummaries();
+    dailySummaryState = { ...dailySummaryState, error: "일일 요약을 생성/저장했습니다." };
+  } catch (error) {
+    dailySummaryState = {
+      ...dailySummaryState,
+      loading: false,
+      error: error.message || "일일 요약 생성/저장 실패",
+    };
+  } finally {
+    setButtonLoading(generateDailySummaryButton, false);
   }
   renderDailySummary();
 }
@@ -968,7 +1005,7 @@ function renderTables(accountState) {
   renderList("#orderRows", orders, renderOrderRow, "주문 내역이 없습니다");
   const fills = activePage === "activity" ? historyState.fills : accountState.fills;
   renderList("#fillRows", fills, renderFillRow, "체결 내역이 없습니다");
-  renderList("#runSummaryRows", historyState.runSummaries, renderRunSummaryRow, "저장된 일별 운용 결과가 없습니다");
+  renderRows("#runSummaryRows", historyState.runSummaries, renderRunSummaryRow, 14, "저장된 일별 운용 결과가 없습니다");
   renderRows(
     "#strategyStatRows",
     historyState.strategyStats?.length ? historyState.strategyStats : accountState.strategyStats,
@@ -1198,41 +1235,48 @@ function togglePanel(button) {
 function renderOrderRow(order) {
   const detail = [order.exitReason || "접수", order.profitUsd].filter(Boolean).join(" / ");
   const orderedAt = order.orderedAt || [order.date, order.time].filter(Boolean).join(" ") || "-";
-  return `<section class="trade-row">
-    <time>${escapeHtml(orderedAt)}</time><strong>${escapeHtml(order.name || "-")}</strong>
-    <span>${escapeHtml(order.ticker)}</span><span>${escapeHtml(order.side || order.type)}</span>
-    <b>${escapeHtml(order.price)}</b><small>${escapeHtml(order.quantity)}주</small>
-    <em>${escapeHtml(order.unfilled ? `미체결 ${order.unfilled}주` : detail)}</em>
-  </section>`;
+  return `<tr>
+    <td>${escapeHtml(orderedAt)}</td>
+    <td><strong>${escapeHtml(order.name || "-")}</strong></td>
+    <td>${escapeHtml(order.ticker)}</td>
+    <td>${escapeHtml(order.side || order.type)}</td>
+    <td>${escapeHtml(order.price)}</td>
+    <td>${escapeHtml(order.quantity)}주</td>
+    <td>${escapeHtml(order.unfilled ? `미체결 ${order.unfilled}주` : detail)}</td>
+  </tr>`;
 }
 
 function renderFillRow(fill) {
   const filledAt = fill.filledAt || [fill.date, fill.time].filter(Boolean).join(" ");
   const result = [fill.total, fill.profitUsd, fill.entryReason].filter(Boolean).join(" / ");
-  return `<section class="trade-row fill-row">
-    <time>${escapeHtml(filledAt || "-")}</time><strong>${escapeHtml(fill.name || "-")}</strong>
-    <span>${escapeHtml(fill.ticker)}</span><span>${escapeHtml(fill.side)}</span>
-    <b>${escapeHtml(fill.price)}</b><small>${escapeHtml(fill.quantity)}주</small>
-    <em>${escapeHtml(result)}</em>
-  </section>`;
+  return `<tr>
+    <td>${escapeHtml(filledAt || "-")}</td>
+    <td><strong>${escapeHtml(fill.name || "-")}</strong></td>
+    <td>${escapeHtml(fill.ticker)}</td>
+    <td>${escapeHtml(fill.side)}</td>
+    <td>${escapeHtml(fill.price)}</td>
+    <td>${escapeHtml(fill.quantity)}주</td>
+    <td>${escapeHtml(result)}</td>
+  </tr>`;
 }
 
 function renderRunSummaryRow(summary) {
-  return `<section class="trade-row run-summary-row">
-    <time>${escapeHtml(summary.date || "-")}</time><strong>${escapeHtml(summary.mode || "-")}</strong>
-    <span>${escapeHtml(summary.stopLossPercent || "-")}</span>
-    <span>${escapeHtml(summary.takeProfitPercent || "-")}</span>
-    <span>${escapeHtml(summary.partialTakeProfit || "-")}</span>
-    <span>${escapeHtml(summary.minTotalScore || "-")}</span>
-    <span>${escapeHtml(summary.priceRange || "-")}</span>
-    <span>${escapeHtml(summary.minOpeningPriceChangePercent || "-")}</span>
-    <span>${escapeHtml(summary.minVolumeRatio || "-")}</span>
-    <span>${escapeHtml(summary.maxOpeningGapPercent || "-")}</span>
-    <b>${escapeHtml(summary.profitUsd || "$0.00")}</b>
-    <span>${escapeHtml(summary.profitRate || "0.00%")}</span>
-    <small>${escapeHtml(summary.buyFillCount || "0")}건</small>
-    <small>${escapeHtml(summary.sellFillCount || "0")}건</small>
-  </section>`;
+  return `<tr>
+    <td>${escapeHtml(summary.date || "-")}</td>
+    <td><strong>${escapeHtml(summary.mode || "-")}</strong></td>
+    <td>${escapeHtml(summary.stopLossPercent || "-")}</td>
+    <td>${escapeHtml(summary.takeProfitPercent || "-")}</td>
+    <td>${escapeHtml(summary.partialTakeProfit || "-")}</td>
+    <td>${escapeHtml(summary.minTotalScore || "-")}</td>
+    <td>${escapeHtml(summary.priceRange || "-")}</td>
+    <td>${escapeHtml(summary.minOpeningPriceChangePercent || "-")}</td>
+    <td>${escapeHtml(summary.minVolumeRatio || "-")}</td>
+    <td>${escapeHtml(summary.maxOpeningGapPercent || "-")}</td>
+    <td>${escapeHtml(summary.profitUsd || "$0.00")}</td>
+    <td>${escapeHtml(summary.profitRate || "0.00%")}</td>
+    <td>${escapeHtml(summary.buyFillCount || "0")}건</td>
+    <td>${escapeHtml(summary.sellFillCount || "0")}건</td>
+  </tr>`;
 }
 
 function renderDailySummary() {
@@ -1261,7 +1305,7 @@ function renderDailySummaryRow(summary) {
       data-mode="${escapeHtml(summary.mode || "")}">
     <td><strong>${escapeHtml(summary.tradeDate || "-")}</strong></td>
     <td>${escapeHtml(modeText(summary.mode))}</td>
-    <td>${escapeHtml(summary.strategyVersion || "-")}</td>
+    <td>${escapeHtml(strategyVersionText(summary.strategyVersion))}</td>
     <td class="numeric">${escapeHtml(countText(summary.tradeCount))}</td>
     <td class="numeric ${profitClass(summary.totalProfitUsd)}">${escapeHtml(moneyText(summary.totalProfitUsd))}</td>
     <td class="numeric">${escapeHtml(percentText(summary.winRate))}</td>
@@ -1286,7 +1330,7 @@ function renderDailySummaryDetail(summary) {
       payload.exitReasonStats,
       ["청산 사유", "건수", "총 손익", "평균 수익률", "승률", "최대 손실"],
       (item) => [
-        item.reason,
+        exitReasonText(item.reason),
         countText(item.count),
         moneyText(item.totalProfitUsd),
         percentOrDash(item.averageProfitRate),
@@ -1299,7 +1343,7 @@ function renderDailySummaryDetail(summary) {
       payload.strategyStats,
       ["전략 버전", "거래 수", "총 손익", "평균 수익률", "승률"],
       (item) => [
-        item.strategyVersion,
+        strategyVersionText(item.strategyVersion),
         countText(item.count),
         moneyText(item.totalProfitUsd),
         percentOrDash(item.averageProfitRate),
@@ -1321,8 +1365,8 @@ function renderDailySummaryBasicInfo(summary) {
   return renderDailySummaryCardSection("기본 정보", [
     ["기준일", summary.tradeDate || "-"],
     ["모드", modeText(summary.mode)],
-    ["전략 버전", summary.strategyVersion || "-"],
-    ["설정 해시", summary.settingsSnapshotHash || "-"],
+    ["전략 버전", strategyVersionText(summary.strategyVersion)],
+    ["설정 해시", compactHashText(summary.settingsSnapshotHash)],
     ["생성 시각", summary.createdAt || "-"],
     ["갱신 시각", summary.updatedAt || "-"],
     ["표본 충분 여부", sampleText(summary, safeSummaryJson(summary.summaryJson))],
@@ -1335,7 +1379,7 @@ function renderDailySummaryPerformance(summary, payload) {
     ["총 수익률", percentOrDash(summary.totalProfitRate), profitClass(summary.totalProfitRate)],
     ["거래 수", countText(summary.tradeCount)],
     ["매수 수", countText(summary.buyCount)],
-    ["매도 수", countText(summary.sellCount)],
+    ["매도 수(분할익절 포함)", countText(summary.sellCount)],
     ["승률", percentOrDash(summary.winRate)],
     ["평균 거래 수익률", percentOrDash(dailySummaryMetric(payload, ["averageProfitRate", "averageTradeProfitRate"]))],
     ["MDD", percentOrDash(dailySummaryMetric(payload, ["maxDrawdown", "mdd", "maxDrawdownRate"]))],
@@ -1356,14 +1400,14 @@ function renderDailySummaryCardSection(title, rows) {
 function renderDailySummaryText(summaryText) {
   return `<section class="daily-summary-card-section">
     <h3>요약 텍스트</h3>
-    <pre class="daily-summary-text">${escapeHtml(summaryText || "저장된 요약 텍스트가 없습니다.")}</pre>
+    <pre class="daily-summary-text">${escapeHtml(dailySummaryTextForDisplay(summaryText))}</pre>
   </section>`;
 }
 
 function renderDailySummaryFlow(payload, summary) {
   const rows = [
-    ["후보 수", dailySummaryMetric(payload, ["candidateCount", "candidateSummary.candidateCount", "candidateSummary.totalCount"])],
-    ["선정 수", dailySummaryMetric(payload, ["selectedCount", "finalSelectedCount", "candidateSummary.selectedCount"])],
+    ["후보 수", dailySummaryMetric(payload, ["candidateSymbolCount", "candidateCount", "candidateSummary.candidateSymbolCount", "candidateSummary.candidateCount", "candidateSummary.totalCount"])],
+    ["선정 수", dailySummaryMetric(payload, ["tradedSymbolCount", "selectedCount", "finalSelectedCount", "candidateSummary.selectedCount"])],
     ["매수 의도 수", dailySummaryMetric(payload, ["buyIntentCount", "buyAllowedCount", "candidateSummary.buyIntentCount"])],
     ["주문 수", dailySummaryMetric(payload, ["orderCount", "orderSubmittedCount", "candidateSummary.orderSubmittedCount"])],
     ["체결 수", summary.tradeCount],
@@ -1383,7 +1427,7 @@ function renderDailySummaryStatsSection(title, rows, columns, mapper) {
   return `<section class="daily-summary-section">
     <h3>${escapeHtml(title)}</h3>
     <div class="table-wrap">
-      <table class="daily-summary-detail-table">
+      <table class="data-table daily-summary-detail-table">
         <thead><tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead>
         <tbody>${rows.map((item) => (
           `<tr>${mapper(item).map((value) => `<td>${escapeHtml(value == null ? "-" : value)}</td>`).join("")}</tr>`
@@ -1410,7 +1454,7 @@ function renderDailySummarySnapshotStats(stats) {
   return `<section class="daily-summary-section">
     <h3>진입 후 수익률 스냅샷</h3>
     <div class="table-wrap">
-      <table class="daily-summary-detail-table">
+      <table class="data-table daily-summary-detail-table">
         <thead><tr><th>구간</th><th>표본 수</th><th>음수 거래 수</th><th>음수 비율</th><th>음수 거래 최종 승률</th><th>양수 거래 최종 승률</th></tr></thead>
         <tbody>${rows.map((row) => (
           `<tr>${row.map((value) => `<td>${escapeHtml(value)}</td>`).join("")}</tr>`
@@ -1428,14 +1472,14 @@ function renderDailySummaryMajorTrades(payload) {
   return `<section class="daily-summary-section">
     <h3>주요 거래</h3>
     <div class="table-wrap">
-      <table class="daily-summary-detail-table">
+      <table class="data-table daily-summary-detail-table">
         <thead><tr><th>구분</th><th>종목</th><th>손익</th><th>수익률</th><th>청산 사유</th></tr></thead>
         <tbody>${rows.map(([label, trade]) => `<tr>
           <td>${escapeHtml(label)}</td>
           <td>${escapeHtml(trade.symbol || trade.ticker || "-")}</td>
           <td>${escapeHtml(moneyOrDash(dailySummaryMetric(trade, ["profitUsd", "profit", "pnlUsd"])))}</td>
           <td>${escapeHtml(percentOrDash(dailySummaryMetric(trade, ["profitRate", "returnRate", "pnlRate"])))}</td>
-          <td>${escapeHtml(trade.exitReason || trade.reason || "-")}</td>
+          <td>${escapeHtml(exitReasonText(trade.exitReason || trade.reason))}</td>
         </tr>`).join("")}</tbody>
       </table>
     </div>
@@ -1472,6 +1516,70 @@ function modeText(mode) {
   if (mode === "mock") return "모의투자";
   if (mode === "real") return "실투자";
   return mode || "-";
+}
+
+function strategyVersionText(value) {
+  const code = String(value || "").trim();
+  if (!code) return "-";
+  const labels = {
+    LEGACY_RELAXED: "기존 완화 전략",
+    STRICT_FIXED_NO_PYRAMIDING: "엄격 고정 전략",
+    STRICT_FIXED: "엄격 고정 전략",
+    STRICT: "엄격 전략",
+    RELAXED: "완화 전략",
+  };
+  return labels[code] || code;
+}
+
+function exitReasonText(value) {
+  const code = String(value || "").trim();
+  if (!code) return "-";
+  const labels = {
+    STOP_LOSS: "손절",
+    TAKE_PROFIT: "익절",
+    TRAILING_STOP: "트레일링 스탑",
+    PARTIAL_TAKE_PROFIT: "분할 익절",
+    EOD: "종가 청산",
+    END_OF_DAY: "종가 청산",
+    MANUAL_SELL: "수동 매도",
+    MANUAL: "수동 처리",
+    UNKNOWN: "미확인",
+  };
+  return labels[code] || code;
+}
+
+function compactHashText(value, visibleLength = 12) {
+  const text = String(value || "").trim();
+  if (!text) return "-";
+  if (text.length <= visibleLength) return text;
+  return `${text.slice(0, visibleLength)}...`;
+}
+
+function dailySummaryTextForDisplay(value) {
+  let text = value || "저장된 요약 텍스트가 없습니다.";
+  for (const code of [
+    "STRICT_FIXED_NO_PYRAMIDING",
+    "LEGACY_RELAXED",
+    "STRICT_FIXED",
+    "STRICT",
+    "RELAXED",
+  ]) {
+    text = text.replaceAll(code, strategyVersionText(code));
+  }
+  for (const code of [
+    "PARTIAL_TAKE_PROFIT",
+    "TRAILING_STOP",
+    "TAKE_PROFIT",
+    "STOP_LOSS",
+    "END_OF_DAY",
+    "MANUAL_SELL",
+    "UNKNOWN",
+    "MANUAL",
+    "EOD",
+  ]) {
+    text = text.replaceAll(code, exitReasonText(code));
+  }
+  return text;
 }
 
 function moneyText(value) {

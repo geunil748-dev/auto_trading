@@ -2,10 +2,12 @@ import json
 import os
 import time
 from datetime import date
+from types import SimpleNamespace
 
 from trading_bot.monitor_api import MonitorStateReader, authorize_bearer
 from trading_bot.monitor_server import (
     _DashboardStateReader,
+    _generate_daily_summary_state,
     _health_state,
     _monitor_bind_requires_token,
     _read_daily_summary_detail_state,
@@ -40,6 +42,42 @@ def test_daily_summary_state_falls_back_to_empty_for_non_sql_reader() -> None:
     assert _read_daily_summary_detail_state(Reader(), date(2026, 6, 1), "mock") == {
         "summary": None
     }
+
+
+def test_generate_daily_summary_state_returns_created_summary(monkeypatch) -> None:
+    calls = []
+
+    def fake_generate_daily_trade_summary(trade_date, mode):
+        calls.append((trade_date, mode))
+        report = SimpleNamespace(
+            trade_date=trade_date,
+            mode=mode,
+            strategy_version="STRICT_FIXED_NO_PYRAMIDING",
+            settings_snapshot_hash="abc123",
+            trade_count=4,
+            buy_count=2,
+            sell_count=2,
+            total_profit_usd=12.5,
+            total_profit_rate=3.2,
+            win_rate=50.0,
+        )
+        return SimpleNamespace(
+            report=report,
+            payload={"candidateCount": 5, "selectedCount": 2},
+        )
+
+    monkeypatch.setattr(
+        "trading_bot.monitor_server.generate_daily_trade_summary",
+        fake_generate_daily_trade_summary,
+    )
+
+    payload = _generate_daily_summary_state({"date": "2026-06-03", "mode": "mock"})
+
+    assert calls == [(date(2026, 6, 3), "mock")]
+    assert payload["ok"] is True
+    assert payload["summary"]["tradeDate"] == "2026-06-03"
+    assert payload["summary"]["candidateCount"] == 5
+    assert payload["summary"]["selectedCount"] == 2
 
 
 def test_dashboard_reader_falls_back_to_cached_state_when_sql_fails(tmp_path) -> None:

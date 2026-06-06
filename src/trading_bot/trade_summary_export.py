@@ -136,8 +136,16 @@ class SqlTradeSummaryDataSource:
         rows = self._query(
             """
             SELECT
+                (SELECT COUNT(*) FROM daily_target WHERE trade_date = ?),
                 (SELECT COUNT(DISTINCT ticker) FROM daily_target WHERE trade_date = ?),
+                (SELECT COUNT(*) FROM scoring WHERE trade_date = ?),
                 (SELECT COUNT(DISTINCT ticker) FROM scoring WHERE trade_date = ?),
+                (
+                    SELECT COUNT(*)
+                    FROM scoring
+                    WHERE trade_date = ?
+                      AND is_selected = 1
+                ),
                 (
                     SELECT COUNT(DISTINCT ticker)
                     FROM scoring
@@ -145,9 +153,9 @@ class SqlTradeSummaryDataSource:
                       AND is_selected = 1
                 )
             """,
-            (trade_date, trade_date, trade_date),
+            (trade_date, trade_date, trade_date, trade_date, trade_date, trade_date),
         )
-        return rows[0] if rows else (0, 0, 0)
+        return rows[0] if rows else (0, 0, 0, 0, 0, 0)
 
     def log_rows(self, trade_date: date) -> list[tuple[Any, ...]]:
         return self._query(

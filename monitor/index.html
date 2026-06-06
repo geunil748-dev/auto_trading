@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>자동매매 모니터</title>
     <link rel="stylesheet" href="./styles.css?v=32" />
-    <link rel="stylesheet" href="./panels.css?v=55" />
+    <link rel="stylesheet" href="./panels.css?v=56" />
   </head>
   <body>
     <div class="app-frame">
@@ -132,7 +132,7 @@
               </div>
             </div>
             <div class="table-wrap">
-              <table>
+              <table class="data-table">
                 <thead>
                   <tr>
                     <th>종목명</th>
@@ -158,7 +158,7 @@
               </div>
             </div>
             <div class="table-wrap">
-              <table>
+              <table class="data-table">
                 <thead>
                   <tr>
                     <th>종목명</th>
@@ -193,7 +193,7 @@
               종목이 적을 경우 후보 리스트 추가를 눌러 현재 조건으로 후보 종목을 다시 수집해 주세요.
             </p>
             <div class="table-wrap">
-              <table>
+              <table class="data-table">
                 <thead>
                   <tr>
                     <th>종목명</th>
@@ -249,24 +249,28 @@
                 <h2>일별 운용 결과</h2>
               </div>
             </div>
-            <div class="trade-list-box">
-            <div class="trade-list-head run-summary-head" aria-hidden="true">
-              <span>날짜</span>
-              <span>진행모드</span>
-              <span>손절</span>
-              <span>익절</span>
-              <span>분할익절</span>
-              <span>선정점수</span>
-              <span>가격</span>
-              <span>상승률</span>
-              <span>거래량</span>
-              <span>갭</span>
-              <span>수익금</span>
-              <span>수익률</span>
-              <span>매수체결</span>
-              <span>매도체결</span>
-            </div>
-            <div class="trade-list run-summary-list" id="runSummaryRows"></div>
+            <div class="table-wrap run-summary-table-wrap">
+              <table class="data-table run-summary-table">
+                <thead>
+                  <tr>
+                    <th>날짜</th>
+                    <th>진행모드</th>
+                    <th>손절</th>
+                    <th>익절</th>
+                    <th>분할익절</th>
+                    <th>선정점수</th>
+                    <th>가격</th>
+                    <th>상승률</th>
+                    <th>거래량</th>
+                    <th>갭</th>
+                    <th>수익금</th>
+                    <th>수익률</th>
+                    <th>매수체결</th>
+                    <th>매도체결</th>
+                  </tr>
+                </thead>
+                <tbody id="runSummaryRows"></tbody>
+              </table>
             </div>
           </article>
 
@@ -294,6 +298,10 @@
               <button class="ghost-action" id="refreshDailySummary" type="button">
                 <span>조회</span>
               </button>
+              <span class="button-spinner external-spinner" data-spinner-for="generateDailySummary"></span>
+              <button class="ghost-action" id="generateDailySummary" type="button">
+                <span>요약 생성/저장</span>
+              </button>
               <button class="ghost-action" id="reloadDailySummary" type="button">
                 <span>새로고침</span>
               </button>
@@ -301,7 +309,7 @@
             <p class="settings-status" id="dailySummaryStatus"></p>
             <div class="daily-summary-layout">
               <div class="table-wrap daily-summary-list-wrap">
-                <table>
+                <table class="data-table">
                   <thead>
                     <tr>
                       <th>기준일</th>
@@ -331,7 +339,7 @@
               </div>
             </div>
             <div class="table-wrap">
-              <table>
+              <table class="data-table">
                 <thead>
                   <tr>
                     <th>전략</th>
@@ -356,7 +364,7 @@
               </div>
             </div>
             <div class="table-wrap">
-              <table>
+              <table class="data-table">
                 <thead>
                   <tr>
                     <th>청산 사유</th>
@@ -379,7 +387,7 @@
               </div>
             </div>
             <div class="table-wrap">
-              <table>
+              <table class="data-table">
                 <thead>
                   <tr>
                     <th>진입일시</th>
@@ -408,7 +416,7 @@
             </div>
             <div class="snapshot-summary" id="entryProfitSnapshotStats"></div>
             <div class="table-wrap">
-              <table>
+              <table class="data-table">
                 <thead>
                   <tr>
                     <th>종목</th>
@@ -456,7 +464,7 @@
             </div>
             <p class="settings-status" id="backtestStatus">아직 실행하지 않았습니다.</p>
             <div class="table-wrap">
-              <table>
+              <table class="data-table">
                 <thead>
                   <tr>
                     <th>기간</th>
@@ -754,17 +762,21 @@
                 접기
               </button>
             </div>
-            <div class="trade-list-box">
-            <div class="trade-list-head" aria-hidden="true">
-              <span>날짜</span>
-              <span>종목명</span>
-              <span>종목</span>
-              <span>구분</span>
-              <span>가격</span>
-              <span>수량</span>
-              <span>내용</span>
-            </div>
-            <div class="trade-list" id="orderRows"></div>
+            <div class="table-wrap order-fill-table-wrap">
+              <table class="data-table order-fill-table">
+                <thead>
+                  <tr>
+                    <th>날짜</th>
+                    <th>종목명</th>
+                    <th>종목</th>
+                    <th>구분</th>
+                    <th>가격</th>
+                    <th>수량</th>
+                    <th>내용</th>
+                  </tr>
+                </thead>
+                <tbody id="orderRows"></tbody>
+              </table>
             </div>
           </article>
 
@@ -778,17 +790,21 @@
                 접기
               </button>
             </div>
-            <div class="trade-list-box">
-            <div class="trade-list-head" aria-hidden="true">
-              <span>날짜</span>
-              <span>종목명</span>
-              <span>종목</span>
-              <span>구분</span>
-              <span>가격</span>
-              <span>수량</span>
-              <span>내용</span>
-            </div>
-            <div class="trade-list" id="fillRows"></div>
+            <div class="table-wrap order-fill-table-wrap">
+              <table class="data-table order-fill-table">
+                <thead>
+                  <tr>
+                    <th>날짜</th>
+                    <th>종목명</th>
+                    <th>종목</th>
+                    <th>구분</th>
+                    <th>가격</th>
+                    <th>수량</th>
+                    <th>내용</th>
+                  </tr>
+                </thead>
+                <tbody id="fillRows"></tbody>
+              </table>
             </div>
           </article>
 
@@ -818,6 +834,6 @@
       </main>
     </div>
     <script src="./runtime-controls.js?v=3"></script>
-    <script src="./app.js?v=70"></script>
+    <script src="./app.js?v=71"></script>
   </body>
 </html>

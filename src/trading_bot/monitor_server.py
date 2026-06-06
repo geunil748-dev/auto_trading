@@ -19,6 +19,7 @@ from trading_bot.config import (
 )
 from trading_bot.backtest_service import run_backtest_from_monitor_state
 from trading_bot.database import mssql_dsn_from_env, pyodbc_connect_factory
+from trading_bot.daily_trade_summary import generate_daily_trade_summary
 from trading_bot.manual_sell import submit_manual_mock_sell, submit_manual_mock_sell_all
 from trading_bot.manual_screening import ManualScreeningRunner
 from trading_bot.market_calendar import is_current_us_regular_session
@@ -242,6 +243,9 @@ def _handler(
             if path == "/api/manual-screening":
                 self._start_manual_screening()
                 return
+            if path == "/api/daily-summary/generate":
+                self._generate_daily_summary()
+                return
             if path == "/api/trading-settings":
                 self._save_trading_settings()
                 return
@@ -313,6 +317,21 @@ def _handler(
                     {
                         "ok": False,
                         "error": "일일 요약을 불러오지 못했습니다.",
+                        "detail": _safe_error_text(exc),
+                    },
+                    status=500,
+                )
+
+        def _generate_daily_summary(self) -> None:
+            if not self._authorize_api():
+                return
+            try:
+                self._write_json(_generate_daily_summary_state(self._read_json_body()))
+            except Exception as exc:
+                self._write_json(
+                    {
+                        "ok": False,
+                        "error": "일일 요약을 생성/저장하지 못했습니다.",
                         "detail": _safe_error_text(exc),
                     },
                     status=500,
@@ -496,6 +515,30 @@ def _handler(
             self.wfile.write(payload)
 
     return MonitorHandler
+
+
+def _generate_daily_summary_state(body: dict[str, Any]) -> dict[str, object]:
+    raw_date = str(body.get("date") or "").strip()
+    trade_date = date.fromisoformat(raw_date) if raw_date else current_trade_date()
+    mode = str(body.get("mode") or "mock").strip().lower()
+    result = generate_daily_trade_summary(trade_date=trade_date, mode=mode)
+    return {
+        "ok": True,
+        "summary": {
+            "tradeDate": result.report.trade_date.isoformat(),
+            "mode": result.report.mode,
+            "strategyVersion": result.report.strategy_version,
+            "settingsSnapshotHash": result.report.settings_snapshot_hash,
+            "tradeCount": result.report.trade_count,
+            "buyCount": result.report.buy_count,
+            "sellCount": result.report.sell_count,
+            "totalProfitUsd": result.report.total_profit_usd,
+            "totalProfitRate": result.report.total_profit_rate,
+            "winRate": result.report.win_rate,
+            "candidateCount": result.payload.get("candidateCount", 0),
+            "selectedCount": result.payload.get("selectedCount", 0),
+        },
+    }
 
 
 def _health_state(
