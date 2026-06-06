@@ -10,6 +10,11 @@ from trading_bot.config import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_local_dotenv(monkeypatch) -> None:
+    monkeypatch.setattr("trading_bot.config.load_dotenv", None)
+
+
 def test_load_real_kis_settings_uses_dedicated_real_env(monkeypatch) -> None:
     monkeypatch.setenv("APP_MODE", "real")
     monkeypatch.setenv("KIS_REAL_APP_KEY", "real-key")

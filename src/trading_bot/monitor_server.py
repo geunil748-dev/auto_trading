@@ -127,6 +127,16 @@ class _DashboardStateReader:
     def read_history(self, trade_date: date) -> dict[str, object]:
         return self.sql_reader.read_history(trade_date)
 
+    def read_daily_summaries(
+        self,
+        mode: str | None = None,
+        limit: int = 30,
+    ) -> dict[str, object]:
+        return self.sql_reader.read_daily_summaries(mode=mode, limit=limit)
+
+    def read_daily_summary_detail(self, trade_date: date, mode: str) -> dict[str, object]:
+        return self.sql_reader.read_daily_summary_detail(trade_date, mode)
+
 
 def _accounts_from_cached_state(raw_state: dict[str, object]) -> dict[str, object]:
     if isinstance(raw_state.get("accounts"), dict):
@@ -199,6 +209,12 @@ def _handler(
             if path == "/api/history":
                 self._write_history()
                 return
+            if path == "/api/daily-summary":
+                self._write_daily_summary()
+                return
+            if path == "/api/daily-summary/detail":
+                self._write_daily_summary_detail()
+                return
             if path == "/api/trading-settings":
                 self._write_trading_settings()
                 return
@@ -259,6 +275,48 @@ def _handler(
             if not self._authorize_api():
                 return
             self._write_json(_read_history_state(reader, _query_date(self.path)))
+
+        def _write_daily_summary(self) -> None:
+            if not self._authorize_api():
+                return
+            try:
+                self._write_json(
+                    _read_daily_summary_state(
+                        reader,
+                        mode=_query_mode(self.path),
+                        limit=_query_limit(self.path, default=30, maximum=100),
+                    )
+                )
+            except Exception as exc:
+                self._write_json(
+                    {
+                        "ok": False,
+                        "error": "일일 요약을 불러오지 못했습니다.",
+                        "detail": _safe_error_text(exc),
+                    },
+                    status=500,
+                )
+
+        def _write_daily_summary_detail(self) -> None:
+            if not self._authorize_api():
+                return
+            try:
+                self._write_json(
+                    _read_daily_summary_detail_state(
+                        reader,
+                        _query_date(self.path),
+                        _query_mode(self.path) or "mock",
+                    )
+                )
+            except Exception as exc:
+                self._write_json(
+                    {
+                        "ok": False,
+                        "error": "일일 요약을 불러오지 못했습니다.",
+                        "detail": _safe_error_text(exc),
+                    },
+                    status=500,
+                )
 
         def _write_trading_settings(self) -> None:
             if not self._authorize_api():
@@ -705,6 +763,26 @@ def _read_history_state(reader: Any, trade_date: date) -> dict[str, object]:
     }
 
 
+def _read_daily_summary_state(
+    reader: Any,
+    mode: str | None = None,
+    limit: int = 30,
+) -> dict[str, object]:
+    if hasattr(reader, "read_daily_summaries"):
+        return reader.read_daily_summaries(mode=mode, limit=limit)
+    return {"summaries": []}
+
+
+def _read_daily_summary_detail_state(
+    reader: Any,
+    trade_date: date,
+    mode: str,
+) -> dict[str, object]:
+    if hasattr(reader, "read_daily_summary_detail"):
+        return reader.read_daily_summary_detail(trade_date, mode)
+    return {"summary": None}
+
+
 def _query_date(path: str) -> date:
     raw = parse_qs(urlparse(path).query).get("date", [""])[0].strip()
     if raw:
@@ -714,6 +792,22 @@ def _query_date(path: str) -> date:
             # 잘못된 날짜 파라미터는 화면을 깨뜨리지 않고 현재 거래일로 fallback 한다.
             pass
     return current_trade_date()
+
+
+def _query_mode(path: str) -> str | None:
+    raw = parse_qs(urlparse(path).query).get("mode", [""])[0].strip().lower()
+    return raw if raw in {"mock", "real"} else None
+
+
+def _query_limit(path: str, default: int = 30, maximum: int = 100) -> int:
+    raw = parse_qs(urlparse(path).query).get("limit", [""])[0].strip()
+    if not raw:
+        return default
+    try:
+        value = int(float(raw))
+    except ValueError:
+        return default
+    return max(1, min(value, maximum))
 
 
 def _query_tickers(path: str) -> list[str] | None:

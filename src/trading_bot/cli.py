@@ -48,10 +48,12 @@ from trading_bot.database import (
     pyodbc_connect_factory,
     repair_database_schema,
 )
+from trading_bot.daily_trade_summary import generate_daily_trade_summary
 from trading_bot.monitor_state import state_from_dry_run
 from trading_bot.live_monitor_state import live_kis_monitor_state
 from trading_bot.monitor_server import serve_monitor
 from trading_bot.readiness import mock_trading_readiness
+from trading_bot.trade_summary_export import export_trade_summary
 
 
 def main() -> None:
@@ -97,6 +99,17 @@ def main() -> None:
     intraday_backtest.add_argument("--recent-candidate-days", type=int, default=1)
     reset_runtime = subparsers.add_parser("reset-runtime-settings")
     reset_runtime.add_argument("--profile", choices=("strict_baseline",), required=True)
+    trade_summary = subparsers.add_parser("export-trade-summary")
+    trade_summary.add_argument("--date", dest="trade_date", type=date.fromisoformat)
+    trade_summary.add_argument("--mode", choices=("mock", "real"), default="mock")
+    trade_summary.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("monitor/reports"),
+    )
+    daily_summary = subparsers.add_parser("generate-daily-summary")
+    daily_summary.add_argument("--date", dest="trade_date", type=date.fromisoformat)
+    daily_summary.add_argument("--mode", choices=("mock", "real"), default="mock")
 
     args = parser.parse_args()
     if args.command == "show-settings":
@@ -137,6 +150,45 @@ def main() -> None:
         print(
             json.dumps(
                 _reset_runtime_settings(args.profile),
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return
+
+    if args.command == "export-trade-summary":
+        result = export_trade_summary(
+            trade_date=args.trade_date,
+            mode=args.mode,
+            output_dir=args.output_dir,
+        )
+        print(
+            json.dumps(
+                {
+                    "trade_date": result.trade_date.isoformat(),
+                    "mode": result.mode,
+                    "output_path": str(result.path),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return
+
+    if args.command == "generate-daily-summary":
+        result = generate_daily_trade_summary(
+            trade_date=args.trade_date,
+            mode=args.mode,
+        )
+        print(
+            json.dumps(
+                {
+                    "trade_date": result.report.trade_date.isoformat(),
+                    "mode": result.report.mode,
+                    "trade_count": result.report.trade_count,
+                    "total_profit_usd": result.report.total_profit_usd,
+                    "sample_sufficient": result.report.sample_sufficient,
+                },
                 indent=2,
                 ensure_ascii=False,
             )

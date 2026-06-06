@@ -11,6 +11,7 @@ from trading_bot.models import (
     CandidateEvaluation,
     DailyScore,
     DailyTarget,
+    DailyTradeSummaryReport,
     EntryProfitSnapshot,
     FillRecord,
     TradeRecord,
@@ -428,6 +429,85 @@ class SqlServerDailyRepository:
             ),
         )
 
+    def save_daily_trade_summary_report(self, report: DailyTradeSummaryReport) -> None:
+        self._ensure_daily_trade_summary_report_table()
+        self._execute(
+            """
+            IF EXISTS (
+                SELECT 1
+                FROM daily_trade_summary_report
+                WHERE trade_date = ? AND mode = ?
+            )
+            BEGIN
+                UPDATE daily_trade_summary_report
+                SET strategy_version = ?,
+                    settings_snapshot_hash = ?,
+                    summary_json = ?,
+                    summary_text = ?,
+                    total_profit_usd = ?,
+                    total_profit_rate = ?,
+                    trade_count = ?,
+                    buy_count = ?,
+                    sell_count = ?,
+                    win_rate = ?,
+                    stop_loss_count = ?,
+                    take_profit_count = ?,
+                    trailing_stop_count = ?,
+                    eod_count = ?,
+                    sample_sufficient = ?,
+                    updated_at = GETDATE()
+                WHERE trade_date = ? AND mode = ?
+            END
+            ELSE
+            BEGIN
+                INSERT INTO daily_trade_summary_report
+                    (trade_date, mode, strategy_version, settings_snapshot_hash,
+                     summary_json, summary_text, total_profit_usd, total_profit_rate,
+                     trade_count, buy_count, sell_count, win_rate, stop_loss_count,
+                     take_profit_count, trailing_stop_count, eod_count, sample_sufficient)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            END
+            """,
+            (
+                report.trade_date,
+                report.mode,
+                report.strategy_version,
+                report.settings_snapshot_hash,
+                report.summary_json,
+                report.summary_text,
+                report.total_profit_usd,
+                report.total_profit_rate,
+                report.trade_count,
+                report.buy_count,
+                report.sell_count,
+                report.win_rate,
+                report.stop_loss_count,
+                report.take_profit_count,
+                report.trailing_stop_count,
+                report.eod_count,
+                report.sample_sufficient,
+                report.trade_date,
+                report.mode,
+                report.trade_date,
+                report.mode,
+                report.strategy_version,
+                report.settings_snapshot_hash,
+                report.summary_json,
+                report.summary_text,
+                report.total_profit_usd,
+                report.total_profit_rate,
+                report.trade_count,
+                report.buy_count,
+                report.sell_count,
+                report.win_rate,
+                report.stop_loss_count,
+                report.take_profit_count,
+                report.trailing_stop_count,
+                report.eod_count,
+                report.sample_sufficient,
+            ),
+        )
+
     def save_trades(self, trades: Iterable[TradeRecord]) -> None:
         trade_items = list(trades)
         ticker_names = self._trade_ticker_names(item.ticker for item in trade_items)
@@ -574,6 +654,36 @@ class SqlServerDailyRepository:
                     *row,
                 ),
             )
+
+    def history_fills(self, trade_date: date, limit: int = 200) -> list[tuple[Any, ...]]:
+        try:
+            self._ensure_fill_history_table()
+            return self._query(
+                """
+                SELECT TOP (?) fill_date, fill_time, ticker, ticker_name, side,
+                       quantity, fill_price, fill_amount, profit_usd, profit_rate,
+                       entry_reason, entry_reason_detail, strategy_version
+                FROM fill_history
+                WHERE trade_date = ?
+                ORDER BY created_at DESC
+                """,
+                (limit, trade_date),
+            )
+        except Exception:
+            try:
+                return self._query(
+                    """
+                    SELECT TOP (?) fill_date, fill_time, ticker, ticker_name, side,
+                           quantity, fill_price, fill_amount, profit_usd, profit_rate,
+                           entry_reason, entry_reason_detail
+                    FROM fill_history
+                    WHERE trade_date = ?
+                    ORDER BY created_at DESC
+                    """,
+                    (limit, trade_date),
+                )
+            except Exception:
+                return []
 
     def save_entry_profit_snapshots(self, snapshots: Iterable[EntryProfitSnapshot]) -> None:
         rows = [
@@ -1398,6 +1508,97 @@ class SqlServerDailyRepository:
 
             IF COL_LENGTH('dbo.daily_run_summary', 'updated_at') IS NULL
                 ALTER TABLE dbo.daily_run_summary ADD updated_at DATETIME DEFAULT GETDATE()
+            """,
+        )
+
+    def _ensure_daily_trade_summary_report_table(self) -> None:
+        self._execute_statement(
+            """
+            IF OBJECT_ID(N'dbo.daily_trade_summary_report', N'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.daily_trade_summary_report (
+                    id INT IDENTITY PRIMARY KEY,
+                    trade_date DATE NOT NULL,
+                    mode VARCHAR(10) NOT NULL,
+                    strategy_version VARCHAR(60),
+                    settings_snapshot_hash VARCHAR(64),
+                    summary_json NVARCHAR(MAX),
+                    summary_text NVARCHAR(MAX),
+                    total_profit_usd DECIMAL(14, 2),
+                    total_profit_rate DECIMAL(12, 4),
+                    trade_count INT DEFAULT 0,
+                    buy_count INT DEFAULT 0,
+                    sell_count INT DEFAULT 0,
+                    win_rate DECIMAL(8, 4),
+                    stop_loss_count INT DEFAULT 0,
+                    take_profit_count INT DEFAULT 0,
+                    trailing_stop_count INT DEFAULT 0,
+                    eod_count INT DEFAULT 0,
+                    sample_sufficient BIT DEFAULT 0,
+                    created_at DATETIME DEFAULT GETDATE(),
+                    updated_at DATETIME DEFAULT GETDATE()
+                );
+            END
+
+            IF COL_LENGTH('dbo.daily_trade_summary_report', 'strategy_version') IS NULL
+                ALTER TABLE dbo.daily_trade_summary_report ADD strategy_version VARCHAR(60) NULL
+
+            IF COL_LENGTH('dbo.daily_trade_summary_report', 'settings_snapshot_hash') IS NULL
+                ALTER TABLE dbo.daily_trade_summary_report ADD settings_snapshot_hash VARCHAR(64) NULL
+
+            IF COL_LENGTH('dbo.daily_trade_summary_report', 'summary_json') IS NULL
+                ALTER TABLE dbo.daily_trade_summary_report ADD summary_json NVARCHAR(MAX) NULL
+
+            IF COL_LENGTH('dbo.daily_trade_summary_report', 'summary_text') IS NULL
+                ALTER TABLE dbo.daily_trade_summary_report ADD summary_text NVARCHAR(MAX) NULL
+
+            IF COL_LENGTH('dbo.daily_trade_summary_report', 'total_profit_usd') IS NULL
+                ALTER TABLE dbo.daily_trade_summary_report ADD total_profit_usd DECIMAL(14, 2) NULL
+
+            IF COL_LENGTH('dbo.daily_trade_summary_report', 'total_profit_rate') IS NULL
+                ALTER TABLE dbo.daily_trade_summary_report ADD total_profit_rate DECIMAL(12, 4) NULL
+
+            IF COL_LENGTH('dbo.daily_trade_summary_report', 'trade_count') IS NULL
+                ALTER TABLE dbo.daily_trade_summary_report ADD trade_count INT DEFAULT 0
+
+            IF COL_LENGTH('dbo.daily_trade_summary_report', 'buy_count') IS NULL
+                ALTER TABLE dbo.daily_trade_summary_report ADD buy_count INT DEFAULT 0
+
+            IF COL_LENGTH('dbo.daily_trade_summary_report', 'sell_count') IS NULL
+                ALTER TABLE dbo.daily_trade_summary_report ADD sell_count INT DEFAULT 0
+
+            IF COL_LENGTH('dbo.daily_trade_summary_report', 'win_rate') IS NULL
+                ALTER TABLE dbo.daily_trade_summary_report ADD win_rate DECIMAL(8, 4) NULL
+
+            IF COL_LENGTH('dbo.daily_trade_summary_report', 'stop_loss_count') IS NULL
+                ALTER TABLE dbo.daily_trade_summary_report ADD stop_loss_count INT DEFAULT 0
+
+            IF COL_LENGTH('dbo.daily_trade_summary_report', 'take_profit_count') IS NULL
+                ALTER TABLE dbo.daily_trade_summary_report ADD take_profit_count INT DEFAULT 0
+
+            IF COL_LENGTH('dbo.daily_trade_summary_report', 'trailing_stop_count') IS NULL
+                ALTER TABLE dbo.daily_trade_summary_report ADD trailing_stop_count INT DEFAULT 0
+
+            IF COL_LENGTH('dbo.daily_trade_summary_report', 'eod_count') IS NULL
+                ALTER TABLE dbo.daily_trade_summary_report ADD eod_count INT DEFAULT 0
+
+            IF COL_LENGTH('dbo.daily_trade_summary_report', 'sample_sufficient') IS NULL
+                ALTER TABLE dbo.daily_trade_summary_report ADD sample_sufficient BIT DEFAULT 0
+
+            IF COL_LENGTH('dbo.daily_trade_summary_report', 'created_at') IS NULL
+                ALTER TABLE dbo.daily_trade_summary_report ADD created_at DATETIME DEFAULT GETDATE()
+
+            IF COL_LENGTH('dbo.daily_trade_summary_report', 'updated_at') IS NULL
+                ALTER TABLE dbo.daily_trade_summary_report ADD updated_at DATETIME DEFAULT GETDATE()
+
+            IF NOT EXISTS (
+                SELECT 1
+                FROM sys.indexes
+                WHERE name = 'UQ_daily_trade_summary_report_trade_date_mode'
+                  AND object_id = OBJECT_ID(N'dbo.daily_trade_summary_report')
+            )
+                CREATE UNIQUE INDEX UQ_daily_trade_summary_report_trade_date_mode
+                ON dbo.daily_trade_summary_report (trade_date, mode)
             """,
         )
 
@@ -2418,6 +2619,62 @@ class SqlServerMonitorRepository:
             )
         except Exception:
             return []
+
+    def daily_trade_summary_reports(
+        self,
+        mode: str | None = None,
+        limit: int = 30,
+    ) -> list[tuple[Any, ...]]:
+        mode_filter = _text(mode).lower()
+        if mode_filter not in {"mock", "real"}:
+            mode_filter = ""
+        limit_value = max(1, min(int(_number(limit) or 30), 100))
+        try:
+            return self._query(
+                f"""
+                SELECT TOP ({limit_value}) trade_date, mode, strategy_version,
+                       total_profit_usd, total_profit_rate, trade_count,
+                       buy_count, sell_count, win_rate, stop_loss_count,
+                       take_profit_count, CAST(NULL AS INT) AS partial_take_profit_count,
+                       trailing_stop_count, eod_count, sample_sufficient,
+                       summary_json, updated_at
+                FROM daily_trade_summary_report
+                WHERE (? = '' OR mode = ?)
+                ORDER BY trade_date DESC, updated_at DESC, id DESC
+                """,
+                (mode_filter, mode_filter),
+            )
+        except Exception:
+            return []
+
+    def daily_trade_summary_report_detail(
+        self,
+        trade_date: date,
+        mode: str,
+    ) -> tuple[Any, ...] | None:
+        mode_filter = _text(mode).lower()
+        if mode_filter not in {"mock", "real"}:
+            mode_filter = "mock"
+        try:
+            rows = self._query(
+                """
+                SELECT TOP (1) trade_date, mode, strategy_version,
+                       settings_snapshot_hash, summary_json, summary_text,
+                       total_profit_usd, total_profit_rate, trade_count,
+                       buy_count, sell_count, win_rate, stop_loss_count,
+                       take_profit_count, CAST(NULL AS INT) AS partial_take_profit_count,
+                       trailing_stop_count, eod_count, sample_sufficient,
+                       created_at, updated_at
+                FROM daily_trade_summary_report
+                WHERE trade_date = ?
+                  AND mode = ?
+                ORDER BY updated_at DESC, id DESC
+                """,
+                (trade_date, mode_filter),
+            )
+        except Exception:
+            return None
+        return rows[0] if rows else None
 
     def _query(self, sql: str, row: tuple[Any, ...]) -> list[tuple[Any, ...]]:
         with closing(self.connect()) as connection:

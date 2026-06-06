@@ -109,6 +109,26 @@ class SqlMonitorStateSource:
             "summary": _summary(realized_profit),
         }
 
+    def read_daily_summaries(
+        self,
+        mode: str | None = None,
+        limit: int = 30,
+    ) -> dict[str, object]:
+        return {
+            "summaries": [
+                _daily_summary_report(row)
+                for row in self.repository.daily_trade_summary_reports(mode, limit)
+            ]
+        }
+
+    def read_daily_summary_detail(
+        self,
+        trade_date: date,
+        mode: str,
+    ) -> dict[str, object]:
+        row = self.repository.daily_trade_summary_report_detail(trade_date, mode)
+        return {"summary": None if row is None else _daily_summary_report_detail(row)}
+
 
 def _target(
     row: tuple[Any, ...],
@@ -475,6 +495,90 @@ def _run_summary(row: tuple[Any, ...]) -> dict[str, str]:
     }
 
 
+def _daily_summary_report(row: tuple[Any, ...]) -> dict[str, object]:
+    summary_json = _summary_json(row[15])
+    return {
+        "tradeDate": _date_text(row[0]),
+        "mode": str(row[1] or ""),
+        "strategyVersion": str(row[2] or ""),
+        "totalProfitUsd": _number(row[3]),
+        "totalProfitRate": _number(row[4]),
+        "tradeCount": int(_number(row[5])),
+        "buyCount": int(_number(row[6])),
+        "sellCount": int(_number(row[7])),
+        "winRate": _number(row[8]),
+        "stopLossCount": int(_number(row[9])),
+        "takeProfitCount": int(_number(row[10])),
+        "partialTakeProfitCount": _partial_take_profit_count(row[11], summary_json),
+        "trailingStopCount": int(_number(row[12])),
+        "eodCount": int(_number(row[13])),
+        "sampleSufficient": _bool_value(row[14]),
+        "summaryJson": summary_json,
+        "summaryJsonParseFailed": _summary_json_parse_failed(row[15]),
+        "updatedAt": _datetime_text(row[16]),
+    }
+
+
+def _daily_summary_report_detail(row: tuple[Any, ...]) -> dict[str, object]:
+    summary_json = _summary_json(row[4])
+    return {
+        "tradeDate": _date_text(row[0]),
+        "mode": str(row[1] or ""),
+        "strategyVersion": str(row[2] or ""),
+        "settingsSnapshotHash": str(row[3] or ""),
+        "summaryJson": summary_json,
+        "summaryJsonParseFailed": _summary_json_parse_failed(row[4]),
+        "summaryText": str(row[5] or ""),
+        "totalProfitUsd": _number(row[6]),
+        "totalProfitRate": _number(row[7]),
+        "tradeCount": int(_number(row[8])),
+        "buyCount": int(_number(row[9])),
+        "sellCount": int(_number(row[10])),
+        "winRate": _number(row[11]),
+        "stopLossCount": int(_number(row[12])),
+        "takeProfitCount": int(_number(row[13])),
+        "partialTakeProfitCount": _partial_take_profit_count(row[14], summary_json),
+        "trailingStopCount": int(_number(row[15])),
+        "eodCount": int(_number(row[16])),
+        "sampleSufficient": _bool_value(row[17]),
+        "createdAt": _datetime_text(row[18]),
+        "updatedAt": _datetime_text(row[19]),
+    }
+
+
+def _summary_json(value: Any) -> dict[str, object]:
+    try:
+        payload = json.loads(str(value or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _summary_json_parse_failed(value: Any) -> bool:
+    text = str(value or "")
+    if not text:
+        return False
+    try:
+        json.loads(text)
+    except json.JSONDecodeError:
+        return True
+    return False
+
+
+def _partial_take_profit_count(value: Any, summary_json: dict[str, object]) -> int:
+    if value is not None:
+        return int(_number(value))
+    stats = summary_json.get("exitReasonStats", [])
+    if not isinstance(stats, list):
+        return 0
+    for item in stats:
+        if not isinstance(item, dict):
+            continue
+        if item.get("reason") == "PARTIAL_TAKE_PROFIT":
+            return int(_number(item.get("count")))
+    return 0
+
+
 def _entry_reason_stat(row: tuple[Any, ...]) -> dict[str, str]:
     reason, count, total_profit, average_rate, win_rate = row[:5]
     return {
@@ -730,6 +834,17 @@ def _number(value: Any) -> float:
         return float(value)
     except TypeError:
         return float(str(value))
+
+
+def _bool_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    try:
+        return bool(int(float(str(value))))
+    except ValueError:
+        return str(value).strip().lower() in {"true", "yes", "y"}
 
 
 def _fallback_filter_score(volume_ratio: Any, price_change: Any) -> float:
