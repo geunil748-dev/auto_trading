@@ -24,6 +24,7 @@ from trading_bot.config import (
     load_notification_settings,
     load_settings,
 )
+from trading_bot.daily_trade_summary import generate_daily_trade_summary
 from trading_bot.daily_report import write_daily_report
 from trading_bot.database import mssql_dsn_from_env, pyodbc_connect_factory
 from trading_bot.fill_persistence import fill_records_from_monitor_rows
@@ -278,6 +279,7 @@ def live_mock_tasks(
             latest.cancelled_orders,
             len(trades),
         )
+        _save_daily_trade_summary_report()
         _send_market_close_notice()
         _send_market_close_report(state)
         return (
@@ -320,6 +322,27 @@ def _save_daily_run_summary(
         )
     except Exception:
         # 운용 결과 저장 실패가 장중 주문/감시 루프를 멈추지 않도록 무시한다.
+        return
+
+
+def _save_daily_trade_summary_report() -> None:
+    try:
+        generate_daily_trade_summary(trade_date=current_trade_date(), mode="mock")
+    except Exception as exc:
+        _log_daily_trade_summary_failure(exc)
+
+
+def _log_daily_trade_summary_failure(exc: Exception) -> None:
+    try:
+        SqlServerDailyRepository(pyodbc_connect_factory()).save_log(
+            BotLog(
+                "WARNING",
+                "summary",
+                f"SUMMARY_REPORT_SAVE_FAILED: {type(exc).__name__}",
+                reject_reason="SUMMARY_REPORT_SAVE_FAILED",
+            )
+        )
+    except Exception:
         return
 
 

@@ -74,6 +74,92 @@ IF COL_LENGTH('dbo.daily_run_summary', 'is_mock') IS NULL
 IF COL_LENGTH('dbo.daily_run_summary', 'updated_at') IS NULL
     ALTER TABLE dbo.daily_run_summary ADD updated_at DATETIME DEFAULT GETDATE();
 
+IF OBJECT_ID(N'dbo.daily_trade_summary_report', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.daily_trade_summary_report (
+        id INT IDENTITY PRIMARY KEY,
+        trade_date DATE NOT NULL,
+        mode VARCHAR(10) NOT NULL,
+        strategy_version VARCHAR(60),
+        settings_snapshot_hash VARCHAR(64),
+        summary_json NVARCHAR(MAX),
+        summary_text NVARCHAR(MAX),
+        total_profit_usd DECIMAL(14, 2),
+        total_profit_rate DECIMAL(12, 4),
+        trade_count INT DEFAULT 0,
+        buy_count INT DEFAULT 0,
+        sell_count INT DEFAULT 0,
+        win_rate DECIMAL(8, 4),
+        stop_loss_count INT DEFAULT 0,
+        take_profit_count INT DEFAULT 0,
+        trailing_stop_count INT DEFAULT 0,
+        eod_count INT DEFAULT 0,
+        sample_sufficient BIT DEFAULT 0,
+        created_at DATETIME DEFAULT GETDATE(),
+        updated_at DATETIME DEFAULT GETDATE()
+    );
+END;
+
+IF COL_LENGTH('dbo.daily_trade_summary_report', 'strategy_version') IS NULL
+    ALTER TABLE dbo.daily_trade_summary_report ADD strategy_version VARCHAR(60) NULL;
+
+IF COL_LENGTH('dbo.daily_trade_summary_report', 'settings_snapshot_hash') IS NULL
+    ALTER TABLE dbo.daily_trade_summary_report ADD settings_snapshot_hash VARCHAR(64) NULL;
+
+IF COL_LENGTH('dbo.daily_trade_summary_report', 'summary_json') IS NULL
+    ALTER TABLE dbo.daily_trade_summary_report ADD summary_json NVARCHAR(MAX) NULL;
+
+IF COL_LENGTH('dbo.daily_trade_summary_report', 'summary_text') IS NULL
+    ALTER TABLE dbo.daily_trade_summary_report ADD summary_text NVARCHAR(MAX) NULL;
+
+IF COL_LENGTH('dbo.daily_trade_summary_report', 'total_profit_usd') IS NULL
+    ALTER TABLE dbo.daily_trade_summary_report ADD total_profit_usd DECIMAL(14, 2) NULL;
+
+IF COL_LENGTH('dbo.daily_trade_summary_report', 'total_profit_rate') IS NULL
+    ALTER TABLE dbo.daily_trade_summary_report ADD total_profit_rate DECIMAL(12, 4) NULL;
+
+IF COL_LENGTH('dbo.daily_trade_summary_report', 'trade_count') IS NULL
+    ALTER TABLE dbo.daily_trade_summary_report ADD trade_count INT DEFAULT 0;
+
+IF COL_LENGTH('dbo.daily_trade_summary_report', 'buy_count') IS NULL
+    ALTER TABLE dbo.daily_trade_summary_report ADD buy_count INT DEFAULT 0;
+
+IF COL_LENGTH('dbo.daily_trade_summary_report', 'sell_count') IS NULL
+    ALTER TABLE dbo.daily_trade_summary_report ADD sell_count INT DEFAULT 0;
+
+IF COL_LENGTH('dbo.daily_trade_summary_report', 'win_rate') IS NULL
+    ALTER TABLE dbo.daily_trade_summary_report ADD win_rate DECIMAL(8, 4) NULL;
+
+IF COL_LENGTH('dbo.daily_trade_summary_report', 'stop_loss_count') IS NULL
+    ALTER TABLE dbo.daily_trade_summary_report ADD stop_loss_count INT DEFAULT 0;
+
+IF COL_LENGTH('dbo.daily_trade_summary_report', 'take_profit_count') IS NULL
+    ALTER TABLE dbo.daily_trade_summary_report ADD take_profit_count INT DEFAULT 0;
+
+IF COL_LENGTH('dbo.daily_trade_summary_report', 'trailing_stop_count') IS NULL
+    ALTER TABLE dbo.daily_trade_summary_report ADD trailing_stop_count INT DEFAULT 0;
+
+IF COL_LENGTH('dbo.daily_trade_summary_report', 'eod_count') IS NULL
+    ALTER TABLE dbo.daily_trade_summary_report ADD eod_count INT DEFAULT 0;
+
+IF COL_LENGTH('dbo.daily_trade_summary_report', 'sample_sufficient') IS NULL
+    ALTER TABLE dbo.daily_trade_summary_report ADD sample_sufficient BIT DEFAULT 0;
+
+IF COL_LENGTH('dbo.daily_trade_summary_report', 'created_at') IS NULL
+    ALTER TABLE dbo.daily_trade_summary_report ADD created_at DATETIME DEFAULT GETDATE();
+
+IF COL_LENGTH('dbo.daily_trade_summary_report', 'updated_at') IS NULL
+    ALTER TABLE dbo.daily_trade_summary_report ADD updated_at DATETIME DEFAULT GETDATE();
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.indexes
+    WHERE name = 'UQ_daily_trade_summary_report_trade_date_mode'
+      AND object_id = OBJECT_ID(N'dbo.daily_trade_summary_report')
+)
+    CREATE UNIQUE INDEX UQ_daily_trade_summary_report_trade_date_mode
+    ON dbo.daily_trade_summary_report (trade_date, mode);
+
 IF COL_LENGTH('dbo.daily_target', 'ticker_name') IS NULL
 BEGIN
     ALTER TABLE dbo.daily_target ADD ticker_name NVARCHAR(100) NULL;

@@ -264,6 +264,27 @@ class FillRecord:
 
 
 @dataclass(frozen=True)
+class DailyTradeSummaryReport:
+    trade_date: date
+    mode: str
+    strategy_version: str
+    settings_snapshot_hash: str
+    summary_json: str
+    summary_text: str
+    total_profit_usd: float
+    total_profit_rate: float
+    trade_count: int
+    buy_count: int
+    sell_count: int
+    win_rate: float
+    stop_loss_count: int
+    take_profit_count: int
+    trailing_stop_count: int
+    eod_count: int
+    sample_sufficient: bool
+
+
+@dataclass(frozen=True)
 class EntryProfitSnapshot:
     trade_date: date
     ticker: str

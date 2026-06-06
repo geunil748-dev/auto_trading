@@ -172,6 +172,7 @@ def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> N
     executor = Executor()
     notice_calls = []
     report_calls = []
+    summary_calls = []
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_live_exit_poll",
         lambda settings, kis_settings: (Accounts(), monitor, "repository"),
@@ -201,6 +202,10 @@ def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> N
         "trading_bot.scheduled_tasks._send_market_close_report",
         lambda state: report_calls.append(state),
     )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._save_daily_trade_summary_report",
+        lambda: summary_calls.append("saved"),
+    )
 
     tasks = live_mock_tasks(
         TradingSettings(),
@@ -213,6 +218,7 @@ def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> N
     assert "장마감 모의 매도 주문 1건 제출" in tasks.close_session()
     assert monitor.calls == [(["holding"], True)]
     assert executor.intents == [SellIntent("AAA", 2, 10.5, "EOD")]
+    assert summary_calls == ["saved"]
     assert notice_calls == ["sent"]
     assert report_calls == [{"orders": [], "fills": [], "holdings": []}]
 
