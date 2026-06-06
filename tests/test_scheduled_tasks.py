@@ -6,6 +6,7 @@ from trading_bot.scheduled_tasks import (
     _apply_stop_loss_entry_guards,
     _entry_profit_snapshots_from_fills,
     _holding_prices,
+    _persist_live_snapshot,
     live_mock_tasks,
 )
 
@@ -80,6 +81,44 @@ class RiskRepository:
 
     def save_log(self, log):
         self.logs.append(log)
+
+
+class SnapshotRepository:
+    def __init__(self) -> None:
+        self.fills: list[FillRecord] = []
+        self.entry_snapshots = []
+        self.updated_prices: dict[str, float] = {}
+        self.final_updates: list[date] = []
+
+    def save_account_snapshot(self, account, trade_date):
+        self.account = (account, trade_date)
+
+    def save_order_snapshot(self, orders, trade_date):
+        self.orders = (orders, trade_date)
+
+    def save_holdings(self, holdings, trade_date):
+        self.holdings = (holdings, trade_date)
+
+    def sell_entry_prices(self, trade_date):
+        return {}
+
+    def entry_reasons(self, trade_date):
+        return {"AAA": ("OPENING_BREAKOUT", "breakout detail")}
+
+    def history_fills(self, trade_date, limit=200):
+        return []
+
+    def save_fills(self, fills):
+        self.fills.extend(fills)
+
+    def save_entry_profit_snapshots(self, snapshots):
+        self.entry_snapshots.extend(snapshots)
+
+    def update_entry_profit_snapshots(self, trade_date, current_prices, now_text):
+        self.updated_prices.update(current_prices)
+
+    def update_entry_profit_snapshot_finals(self, trade_date):
+        self.final_updates.append(trade_date)
 
 
 class RecheckAccounts:
@@ -277,6 +316,53 @@ def test_holding_prices_parse_current_price_fields() -> None:
     )
 
     assert prices == {"AAA": 12.34, "BBB": 9.87}
+
+
+def test_persist_live_snapshot_saves_fill_history_and_entry_snapshot(monkeypatch) -> None:
+    repository = SnapshotRepository()
+    notifications = []
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.SqlServerDailyRepository",
+        lambda connect: repository,
+    )
+    monkeypatch.setattr("trading_bot.scheduled_tasks.pyodbc_connect_factory", lambda: object)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.current_trade_date", lambda: date(2026, 6, 5))
+    monkeypatch.setattr("trading_bot.scheduled_tasks.load_settings", lambda: TradingSettings())
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._send_fill_notifications",
+        lambda records, holdings: notifications.append((records, holdings)),
+    )
+
+    error = _persist_live_snapshot(
+        {
+            "account": {"cashUsd": "$100.00"},
+            "orders": [],
+            "holdings": [{"ticker": "AAA", "closePrice": "$11.00"}],
+            "fills": [
+                {
+                    "date": "2026-06-05",
+                    "time": "22:35:00",
+                    "ticker": "AAA",
+                    "name": "Alpha",
+                    "side": "BUY",
+                    "quantity": "3",
+                    "price": "$10.50",
+                    "total": "$31.50",
+                    "orderNo": "123",
+                }
+            ],
+        }
+    )
+
+    assert error == ""
+    assert len(repository.fills) == 1
+    assert repository.fills[0].ticker == "AAA"
+    assert repository.fills[0].entry_reason == "OPENING_BREAKOUT"
+    assert len(repository.entry_snapshots) == 1
+    assert repository.entry_snapshots[0].ticker == "AAA"
+    assert repository.updated_prices == {"AAA": 11.0}
+    assert repository.final_updates == [date(2026, 6, 5)]
+    assert notifications
 
 
 def test_consecutive_stop_loss_limit_blocks_all_new_entries() -> None:

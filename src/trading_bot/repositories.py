@@ -575,6 +575,36 @@ class SqlServerDailyRepository:
                 ),
             )
 
+    def history_fills(self, trade_date: date, limit: int = 200) -> list[tuple[Any, ...]]:
+        try:
+            self._ensure_fill_history_table()
+            return self._query(
+                """
+                SELECT TOP (?) fill_date, fill_time, ticker, ticker_name, side,
+                       quantity, fill_price, fill_amount, profit_usd, profit_rate,
+                       entry_reason, entry_reason_detail, strategy_version
+                FROM fill_history
+                WHERE trade_date = ?
+                ORDER BY created_at DESC
+                """,
+                (limit, trade_date),
+            )
+        except Exception:
+            try:
+                return self._query(
+                    """
+                    SELECT TOP (?) fill_date, fill_time, ticker, ticker_name, side,
+                           quantity, fill_price, fill_amount, profit_usd, profit_rate,
+                           entry_reason, entry_reason_detail
+                    FROM fill_history
+                    WHERE trade_date = ?
+                    ORDER BY created_at DESC
+                    """,
+                    (limit, trade_date),
+                )
+            except Exception:
+                return []
+
     def save_entry_profit_snapshots(self, snapshots: Iterable[EntryProfitSnapshot]) -> None:
         rows = [
             (
