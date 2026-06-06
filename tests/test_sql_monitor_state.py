@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from trading_bot.sql_monitor_state import SqlMonitorStateSource
 
@@ -542,6 +542,97 @@ def test_sql_monitor_history_includes_daily_run_summary() -> None:
             "sellFillCount": "2",
         }
     ]
+
+
+def test_sql_monitor_daily_summary_reports_are_formatted() -> None:
+    class SummaryRepository(Repository):
+        def daily_trade_summary_reports(self, mode=None, limit=30):
+            return [
+                (
+                    date(2026, 6, 1),
+                    "mock",
+                    "STRICT_FIXED_NO_PYRAMIDING",
+                    -120.5,
+                    -1.2,
+                    10,
+                    5,
+                    5,
+                    40.0,
+                    2,
+                    1,
+                    None,
+                    2,
+                    0,
+                    False,
+                    '{"candidateCount": 12, "selectedCount": 3}',
+                    datetime(2026, 6, 1, 21, 10),
+                )
+            ]
+
+    state = SqlMonitorStateSource(SummaryRepository()).read_daily_summaries(
+        mode="mock",
+        limit=30,
+    )
+
+    assert state["summaries"] == [
+        {
+            "tradeDate": "2026-06-01",
+            "mode": "mock",
+            "strategyVersion": "STRICT_FIXED_NO_PYRAMIDING",
+            "totalProfitUsd": -120.5,
+            "totalProfitRate": -1.2,
+            "tradeCount": 10,
+            "buyCount": 5,
+            "sellCount": 5,
+            "winRate": 40.0,
+            "stopLossCount": 2,
+            "takeProfitCount": 1,
+            "partialTakeProfitCount": 0,
+            "trailingStopCount": 2,
+            "eodCount": 0,
+            "sampleSufficient": False,
+            "summaryJson": {"candidateCount": 12, "selectedCount": 3},
+            "summaryJsonParseFailed": False,
+            "updatedAt": "2026-06-01 21:10:00",
+        }
+    ]
+
+
+def test_sql_monitor_daily_summary_detail_handles_broken_json() -> None:
+    class SummaryRepository(Repository):
+        def daily_trade_summary_report_detail(self, trade_date, mode):
+            return (
+                date(2026, 6, 1),
+                "mock",
+                "STRICT_FIXED_NO_PYRAMIDING",
+                "abc123",
+                "{broken",
+                "2026-06-01 모의투자 일일 요약",
+                -120.5,
+                -1.2,
+                10,
+                5,
+                5,
+                40.0,
+                2,
+                1,
+                None,
+                2,
+                0,
+                False,
+                "2026-06-01 21:00:00",
+                "2026-06-01 21:10:00",
+            )
+
+    state = SqlMonitorStateSource(SummaryRepository()).read_daily_summary_detail(
+        date(2026, 6, 1),
+        "mock",
+    )
+
+    assert state["summary"]["summaryJson"] == {}
+    assert state["summary"]["summaryJsonParseFailed"]
+    assert state["summary"]["summaryText"] == "2026-06-01 모의투자 일일 요약"
+    assert state["summary"]["partialTakeProfitCount"] == 0
 
 
 class PendingScoreRepository(Repository):

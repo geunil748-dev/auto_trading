@@ -2620,6 +2620,62 @@ class SqlServerMonitorRepository:
         except Exception:
             return []
 
+    def daily_trade_summary_reports(
+        self,
+        mode: str | None = None,
+        limit: int = 30,
+    ) -> list[tuple[Any, ...]]:
+        mode_filter = _text(mode).lower()
+        if mode_filter not in {"mock", "real"}:
+            mode_filter = ""
+        limit_value = max(1, min(int(_number(limit) or 30), 100))
+        try:
+            return self._query(
+                f"""
+                SELECT TOP ({limit_value}) trade_date, mode, strategy_version,
+                       total_profit_usd, total_profit_rate, trade_count,
+                       buy_count, sell_count, win_rate, stop_loss_count,
+                       take_profit_count, CAST(NULL AS INT) AS partial_take_profit_count,
+                       trailing_stop_count, eod_count, sample_sufficient,
+                       summary_json, updated_at
+                FROM daily_trade_summary_report
+                WHERE (? = '' OR mode = ?)
+                ORDER BY trade_date DESC, updated_at DESC, id DESC
+                """,
+                (mode_filter, mode_filter),
+            )
+        except Exception:
+            return []
+
+    def daily_trade_summary_report_detail(
+        self,
+        trade_date: date,
+        mode: str,
+    ) -> tuple[Any, ...] | None:
+        mode_filter = _text(mode).lower()
+        if mode_filter not in {"mock", "real"}:
+            mode_filter = "mock"
+        try:
+            rows = self._query(
+                """
+                SELECT TOP (1) trade_date, mode, strategy_version,
+                       settings_snapshot_hash, summary_json, summary_text,
+                       total_profit_usd, total_profit_rate, trade_count,
+                       buy_count, sell_count, win_rate, stop_loss_count,
+                       take_profit_count, CAST(NULL AS INT) AS partial_take_profit_count,
+                       trailing_stop_count, eod_count, sample_sufficient,
+                       created_at, updated_at
+                FROM daily_trade_summary_report
+                WHERE trade_date = ?
+                  AND mode = ?
+                ORDER BY updated_at DESC, id DESC
+                """,
+                (trade_date, mode_filter),
+            )
+        except Exception:
+            return None
+        return rows[0] if rows else None
+
     def _query(self, sql: str, row: tuple[Any, ...]) -> list[tuple[Any, ...]]:
         with closing(self.connect()) as connection:
             cursor = connection.cursor()

@@ -74,6 +74,12 @@ let historyState = {
   entryProfitSnapshots: [],
   entryProfitSnapshotStats: {},
 };
+let dailySummaryState = {
+  summaries: [],
+  detail: null,
+  error: "",
+  loading: false,
+};
 let backtestState = {
   tickers: [],
   results: [],
@@ -95,6 +101,10 @@ const authStatus = document.querySelector("#authStatus");
 const securityBar = document.querySelector(".security-bar");
 const historyDateInput = document.querySelector("#historyDate");
 const refreshHistoryButton = document.querySelector("#refreshHistory");
+const dailySummaryModeInput = document.querySelector("#dailySummaryMode");
+const dailySummaryDateInput = document.querySelector("#dailySummaryDate");
+const refreshDailySummaryButton = document.querySelector("#refreshDailySummary");
+const reloadDailySummaryButton = document.querySelector("#reloadDailySummary");
 const runBacktestButton = document.querySelector("#runBacktest");
 const backtestTickerInput = document.querySelector("#backtestTicker");
 const customBacktestTickerInput = document.querySelector("#customBacktestTicker");
@@ -152,6 +162,10 @@ customBacktestTickerInput?.addEventListener("keydown", (event) => {
   if (event.key === "Enter") loadBacktest();
 });
 refreshHistoryButton?.addEventListener("click", loadHistory);
+refreshDailySummaryButton?.addEventListener("click", loadDailySummaries);
+reloadDailySummaryButton?.addEventListener("click", loadDailySummaries);
+dailySummaryModeInput?.addEventListener("change", loadDailySummaries);
+dailySummaryDateInput?.addEventListener("change", loadDailySummaryDetail);
 showNoBuyLogsInput?.addEventListener("change", () => {
   render(currentState);
 });
@@ -188,12 +202,19 @@ navButtons.forEach((button) => {
       || activePage === "entryReasonStats"
       || activePage === "backtest"
     ) loadHistory();
+    if (activePage === "dailySummary") loadDailySummaries();
     if (activePage === "settings") loadRiskSettings();
   });
 });
 document.addEventListener("click", (event) => {
   const button = event.target.closest(".manual-sell-button");
   if (button) submitManualSell(button);
+  const summaryRow = event.target.closest(".daily-summary-row");
+  if (summaryRow) {
+    if (dailySummaryDateInput) dailySummaryDateInput.value = summaryRow.dataset.date || "";
+    if (dailySummaryModeInput && summaryRow.dataset.mode) dailySummaryModeInput.value = summaryRow.dataset.mode;
+    loadDailySummaryDetail();
+  }
 });
 
 loadState();
@@ -254,6 +275,122 @@ async function loadHistory() {
     setButtonLoading(refreshHistoryButton, false);
   }
   render(currentState);
+}
+
+async function loadDailySummaries() {
+  if (!refreshDailySummaryButton && !reloadDailySummaryButton) return;
+  setButtonLoading(refreshDailySummaryButton, true);
+  setButtonLoading(reloadDailySummaryButton, true);
+  dailySummaryState = { ...dailySummaryState, loading: true, error: "" };
+  renderDailySummary();
+  try {
+    const payload = await fetchDailySummaries();
+    dailySummaryState = {
+      summaries: payload.summaries || [],
+      detail: null,
+      error: "",
+      loading: false,
+    };
+    const seed = selectedDailySummarySeed();
+    if (seed) {
+      dailySummaryState.detail = await fetchDailySummaryDetail(seed.tradeDate, seed.mode);
+      if (dailySummaryDateInput) dailySummaryDateInput.value = seed.tradeDate || "";
+    }
+  } catch (error) {
+    dailySummaryState = {
+      summaries: [],
+      detail: null,
+      error: error.message || "일일 요약을 불러오지 못했습니다.",
+      loading: false,
+    };
+  } finally {
+    setButtonLoading(refreshDailySummaryButton, false);
+    setButtonLoading(reloadDailySummaryButton, false);
+  }
+  renderDailySummary();
+}
+
+async function loadDailySummaryDetail() {
+  const seed = selectedDailySummarySeed();
+  if (!seed) {
+    dailySummaryState = { ...dailySummaryState, detail: null };
+    renderDailySummary();
+    return;
+  }
+  setButtonLoading(refreshDailySummaryButton, true);
+  try {
+    dailySummaryState = {
+      ...dailySummaryState,
+      detail: await fetchDailySummaryDetail(seed.tradeDate, seed.mode),
+      error: "",
+    };
+  } catch (error) {
+    dailySummaryState = {
+      ...dailySummaryState,
+      detail: null,
+      error: error.message || "일일 요약 상세를 불러오지 못했습니다.",
+    };
+  } finally {
+    setButtonLoading(refreshDailySummaryButton, false);
+  }
+  renderDailySummary();
+}
+
+async function fetchDailySummaries() {
+  const mode = dailySummaryModeValue();
+  const modeQuery = mode ? `&mode=${encodeURIComponent(mode)}` : "";
+  const url = `/api/daily-summary?ts=${Date.now()}&limit=30${modeQuery}`;
+  const response = await fetch(url, fetchOptions("/api/daily-summary"));
+  const payload = await parseDailySummaryJson(response, "일일 요약 목록 조회 실패");
+  if (!response.ok || payload.ok === false) {
+    throw new Error(payload.error || "일일 요약 목록 조회 실패");
+  }
+  return payload;
+}
+
+async function fetchDailySummaryDetail(tradeDate, mode) {
+  const url = [
+    `/api/daily-summary/detail?ts=${Date.now()}`,
+    `date=${encodeURIComponent(tradeDate || todayText())}`,
+    `mode=${encodeURIComponent(mode || "mock")}`,
+  ].join("&");
+  const response = await fetch(url, fetchOptions("/api/daily-summary/detail"));
+  const payload = await parseDailySummaryJson(response, "일일 요약 상세 조회 실패");
+  if (!response.ok || payload.ok === false) {
+    throw new Error(payload.error || "일일 요약 상세 조회 실패");
+  }
+  return payload.summary || null;
+}
+
+async function parseDailySummaryJson(response, fallbackMessage) {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    const isHtml = text.trim().startsWith("<");
+    if (isHtml) {
+      throw new Error("일일 요약 API가 아직 서버에 반영되지 않았습니다. 모니터 서버를 최신 코드로 재시작해 주세요.");
+    }
+    throw new Error(fallbackMessage);
+  }
+}
+
+function selectedDailySummarySeed() {
+  const dateValue = (dailySummaryDateInput?.value || "").trim();
+  const modeValue = dailySummaryModeValue();
+  const rows = dailySummaryState.summaries || [];
+  if (dateValue) {
+    const matched = rows.find((item) => (
+      item.tradeDate === dateValue && (!modeValue || item.mode === modeValue)
+    ));
+    if (matched) return matched;
+    return { tradeDate: dateValue, mode: modeValue || "mock" };
+  }
+  return rows[0] || null;
+}
+
+function dailySummaryModeValue() {
+  return (dailySummaryModeInput?.value || "").trim().toLowerCase();
 }
 
 async function loadBacktest() {
@@ -870,6 +1007,7 @@ function renderTables(accountState) {
   );
   renderBacktestTickerOptions();
   renderBacktest();
+  renderDailySummary();
 }
 
 function renderRows(selector, rows, renderer, colspan, emptyText) {
@@ -1095,6 +1233,322 @@ function renderRunSummaryRow(summary) {
     <small>${escapeHtml(summary.buyFillCount || "0")}건</small>
     <small>${escapeHtml(summary.sellFillCount || "0")}건</small>
   </section>`;
+}
+
+function renderDailySummary() {
+  const status = document.querySelector("#dailySummaryStatus");
+  if (status) {
+    status.textContent = dailySummaryState.error
+      || (dailySummaryState.loading ? "일일 요약을 불러오는 중입니다." : "");
+  }
+  const summaries = dailySummaryState.summaries || [];
+  renderRows(
+    "#dailySummaryRows",
+    summaries,
+    renderDailySummaryRow,
+    8,
+    "저장된 일일 요약이 없습니다.",
+  );
+  renderDailySummaryDetail(dailySummaryState.detail);
+}
+
+function renderDailySummaryRow(summary) {
+  const selected = dailySummaryState.detail || {};
+  const payload = safeSummaryJson(summary.summaryJson);
+  const isActive = selected.tradeDate === summary.tradeDate && selected.mode === summary.mode;
+  return `<tr class="daily-summary-row${isActive ? " is-active" : ""}"
+      data-date="${escapeHtml(summary.tradeDate || "")}"
+      data-mode="${escapeHtml(summary.mode || "")}">
+    <td><strong>${escapeHtml(summary.tradeDate || "-")}</strong></td>
+    <td>${escapeHtml(modeText(summary.mode))}</td>
+    <td>${escapeHtml(summary.strategyVersion || "-")}</td>
+    <td class="numeric">${escapeHtml(countText(summary.tradeCount))}</td>
+    <td class="numeric ${profitClass(summary.totalProfitUsd)}">${escapeHtml(moneyText(summary.totalProfitUsd))}</td>
+    <td class="numeric">${escapeHtml(percentText(summary.winRate))}</td>
+    <td>${escapeHtml(sampleText(summary, payload))}</td>
+    <td>${escapeHtml(summary.updatedAt || "-")}</td>
+  </tr>`;
+}
+
+function renderDailySummaryDetail(summary) {
+  const target = document.querySelector("#dailySummaryDetail");
+  if (!target) return;
+  if (!summary) {
+    target.innerHTML = `<p class="empty-copy">저장된 일일 요약을 선택해 주세요.</p>`;
+    return;
+  }
+  const payload = safeSummaryJson(summary.summaryJson);
+  const jsonFailed = Boolean(summary.summaryJsonParseFailed);
+  const jsonSections = jsonFailed ? [] : [
+    renderDailySummaryFlow(payload, summary),
+    renderDailySummaryStatsSection(
+      "청산 사유별 성과",
+      payload.exitReasonStats,
+      ["청산 사유", "건수", "총 손익", "평균 수익률", "승률", "최대 손실"],
+      (item) => [
+        item.reason,
+        countText(item.count),
+        moneyText(item.totalProfitUsd),
+        percentOrDash(item.averageProfitRate),
+        percentOrDash(item.winRate),
+        moneyOrDash(dailySummaryMetric(item, ["maxLossUsd", "maxLoss", "max_loss_usd"])),
+      ],
+    ),
+    renderDailySummaryStatsSection(
+      "전략 버전별 성과",
+      payload.strategyStats,
+      ["전략 버전", "거래 수", "총 손익", "평균 수익률", "승률"],
+      (item) => [
+        item.strategyVersion,
+        countText(item.count),
+        moneyText(item.totalProfitUsd),
+        percentOrDash(item.averageProfitRate),
+        percentOrDash(item.winRate),
+      ],
+    ),
+    renderDailySummarySnapshotStats(payload.entryProfitSnapshotStats),
+  ];
+  target.innerHTML = [
+    renderDailySummaryBasicInfo(summary),
+    renderDailySummaryPerformance(summary, payload),
+    jsonFailed ? `<p class="daily-summary-json-warning">상세 JSON을 해석할 수 없습니다.</p>` : "",
+    ...jsonSections,
+    renderDailySummaryText(summary.summaryText),
+  ].filter(Boolean).join("");
+}
+
+function renderDailySummaryBasicInfo(summary) {
+  return renderDailySummaryCardSection("기본 정보", [
+    ["기준일", summary.tradeDate || "-"],
+    ["모드", modeText(summary.mode)],
+    ["전략 버전", summary.strategyVersion || "-"],
+    ["설정 해시", summary.settingsSnapshotHash || "-"],
+    ["생성 시각", summary.createdAt || "-"],
+    ["갱신 시각", summary.updatedAt || "-"],
+    ["표본 충분 여부", sampleText(summary, safeSummaryJson(summary.summaryJson))],
+  ]);
+}
+
+function renderDailySummaryPerformance(summary, payload) {
+  return renderDailySummaryCardSection("성과 요약", [
+    ["총 손익", moneyText(summary.totalProfitUsd), profitClass(summary.totalProfitUsd)],
+    ["총 수익률", percentOrDash(summary.totalProfitRate), profitClass(summary.totalProfitRate)],
+    ["거래 수", countText(summary.tradeCount)],
+    ["매수 수", countText(summary.buyCount)],
+    ["매도 수", countText(summary.sellCount)],
+    ["승률", percentOrDash(summary.winRate)],
+    ["평균 거래 수익률", percentOrDash(dailySummaryMetric(payload, ["averageProfitRate", "averageTradeProfitRate"]))],
+    ["MDD", percentOrDash(dailySummaryMetric(payload, ["maxDrawdown", "mdd", "maxDrawdownRate"]))],
+  ]);
+}
+
+function renderDailySummaryCardSection(title, rows) {
+  return `<section class="daily-summary-card-section">
+    <h3>${escapeHtml(title)}</h3>
+    <div class="daily-summary-cards">
+      ${rows.map(([label, value, extraClass]) => (
+        `<dl><dt>${escapeHtml(label)}</dt><dd class="${escapeHtml(extraClass || "")}">${escapeHtml(value)}</dd></dl>`
+      )).join("")}
+    </div>
+  </section>`;
+}
+
+function renderDailySummaryText(summaryText) {
+  return `<section class="daily-summary-card-section">
+    <h3>요약 텍스트</h3>
+    <pre class="daily-summary-text">${escapeHtml(summaryText || "저장된 요약 텍스트가 없습니다.")}</pre>
+  </section>`;
+}
+
+function renderDailySummaryFlow(payload, summary) {
+  const rows = [
+    ["후보 수", dailySummaryMetric(payload, ["candidateCount", "candidateSummary.candidateCount", "candidateSummary.totalCount"])],
+    ["선정 수", dailySummaryMetric(payload, ["selectedCount", "finalSelectedCount", "candidateSummary.selectedCount"])],
+    ["매수 의도 수", dailySummaryMetric(payload, ["buyIntentCount", "buyAllowedCount", "candidateSummary.buyIntentCount"])],
+    ["주문 수", dailySummaryMetric(payload, ["orderCount", "orderSubmittedCount", "candidateSummary.orderSubmittedCount"])],
+    ["체결 수", summary.tradeCount],
+    ["미체결 수", dailySummaryMetric(payload, ["unfilledCount", "unfilledOrderCount"])],
+    ["취소 수", dailySummaryMetric(payload, ["cancelCount", "cancelledOrderCount"])],
+  ];
+  return `<section class="daily-summary-section">
+    <h3>후보/선정 흐름</h3>
+    <div class="daily-summary-flow">
+      ${rows.map(([label, value]) => `<dl><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(countText(value))}</dd></dl>`).join("")}
+    </div>
+  </section>`;
+}
+
+function renderDailySummaryStatsSection(title, rows, columns, mapper) {
+  if (!Array.isArray(rows) || rows.length === 0) return "";
+  return `<section class="daily-summary-section">
+    <h3>${escapeHtml(title)}</h3>
+    <div class="table-wrap">
+      <table class="daily-summary-detail-table">
+        <thead><tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.map((item) => (
+          `<tr>${mapper(item).map((value) => `<td>${escapeHtml(value == null ? "-" : value)}</td>`).join("")}</tr>`
+        )).join("")}</tbody>
+      </table>
+    </div>
+  </section>`;
+}
+
+function renderDailySummarySnapshotStats(stats) {
+  if (!stats || typeof stats !== "object") return "";
+  const negativeCounts = stats.negativeCounts || {};
+  const finalWinRates = stats.negativeFinalWinRates || {};
+  const positiveFinalWinRates = stats.positiveFinalWinRates || {};
+  const sampleCount = Number(stats.sampleCount);
+  const rows = ["5m", "10m", "15m", "20m", "30m"].map((key) => [
+    key,
+    Number.isFinite(sampleCount) ? sampleCount : "-",
+    negativeCounts[key] == null ? 0 : negativeCounts[key],
+    negativeRatioText(negativeCounts[key], sampleCount),
+    finalWinRates[key] == null ? "-" : percentText(finalWinRates[key]),
+    positiveFinalWinRates[key] == null ? "-" : percentText(positiveFinalWinRates[key]),
+  ]);
+  return `<section class="daily-summary-section">
+    <h3>진입 후 수익률 스냅샷</h3>
+    <div class="table-wrap">
+      <table class="daily-summary-detail-table">
+        <thead><tr><th>구간</th><th>표본 수</th><th>음수 거래 수</th><th>음수 비율</th><th>음수 거래 최종 승률</th><th>양수 거래 최종 승률</th></tr></thead>
+        <tbody>${rows.map((row) => (
+          `<tr>${row.map((value) => `<td>${escapeHtml(value)}</td>`).join("")}</tr>`
+        )).join("")}</tbody>
+      </table>
+    </div>
+  </section>`;
+}
+
+function renderDailySummaryMajorTrades(payload) {
+  const rows = [
+    ["최대 수익 거래", dailySummaryTrade(payload, ["maxProfitTrade", "bestTrade", "topProfitTrade"])],
+    ["최대 손실 거래", dailySummaryTrade(payload, ["maxLossTrade", "worstTrade", "topLossTrade"])],
+  ];
+  return `<section class="daily-summary-section">
+    <h3>주요 거래</h3>
+    <div class="table-wrap">
+      <table class="daily-summary-detail-table">
+        <thead><tr><th>구분</th><th>종목</th><th>손익</th><th>수익률</th><th>청산 사유</th></tr></thead>
+        <tbody>${rows.map(([label, trade]) => `<tr>
+          <td>${escapeHtml(label)}</td>
+          <td>${escapeHtml(trade.symbol || trade.ticker || "-")}</td>
+          <td>${escapeHtml(moneyOrDash(dailySummaryMetric(trade, ["profitUsd", "profit", "pnlUsd"])))}</td>
+          <td>${escapeHtml(percentOrDash(dailySummaryMetric(trade, ["profitRate", "returnRate", "pnlRate"])))}</td>
+          <td>${escapeHtml(trade.exitReason || trade.reason || "-")}</td>
+        </tr>`).join("")}</tbody>
+      </table>
+    </div>
+  </section>`;
+}
+
+function renderDailySummaryLogSummary(payload) {
+  const logs = Array.isArray(payload.importantLogs) ? payload.importantLogs : [];
+  const messages = logs.slice(0, 5).map((item) => (
+    `<li>${escapeHtml([item.level, item.message].filter(Boolean).join(" - ") || "-")}</li>`
+  ));
+  return `<section class="daily-summary-section">
+    <h3>오류/경고 로그 요약</h3>
+    <div class="daily-summary-log-summary">
+      <dl><dt>ERROR 수</dt><dd>${escapeHtml(countText(dailyLogCount(payload, "ERROR")))}</dd></dl>
+      <dl><dt>WARNING 수</dt><dd>${escapeHtml(countText(dailyLogCount(payload, "WARNING")))}</dd></dl>
+    </div>
+    ${messages.length > 0 ? `<ul class="daily-summary-log-list">${messages.join("")}</ul>` : `<p class="empty-copy">주요 오류 메시지가 없습니다.</p>`}
+  </section>`;
+}
+
+function safeSummaryJson(value) {
+  if (!value) return {};
+  if (typeof value === "object" && !Array.isArray(value)) return value;
+  try {
+    const payload = JSON.parse(String(value));
+    return payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+  } catch {
+    return {};
+  }
+}
+
+function modeText(mode) {
+  if (mode === "mock") return "모의투자";
+  if (mode === "real") return "실투자";
+  return mode || "-";
+}
+
+function moneyText(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "$0.00";
+  const sign = number < 0 ? "-" : "";
+  return `${sign}$${Math.abs(number).toFixed(2)}`;
+}
+
+function moneyOrDash(value) {
+  return hasDisplayValue(value) ? moneyText(value) : "-";
+}
+
+function profitClass(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number === 0) return "";
+  return number > 0 ? "positive" : "negative";
+}
+
+function percentOrDash(value) {
+  return hasDisplayValue(value) ? percentText(value) : "-";
+}
+
+function countText(value) {
+  return hasDisplayValue(value) ? `${value}건` : "-";
+}
+
+function hasDisplayValue(value) {
+  return value !== null && value !== undefined && value !== "" && value !== "-";
+}
+
+function dailySummaryMetric(source, paths) {
+  for (const path of paths) {
+    const value = readSummaryPath(source, path);
+    if (hasDisplayValue(value)) return value;
+  }
+  return "-";
+}
+
+function readSummaryPath(source, path) {
+  if (!source || typeof source !== "object") return undefined;
+  let value = source;
+  for (const key of String(path).split(".")) {
+    if (!value || typeof value !== "object" || !(key in value)) return undefined;
+    value = value[key];
+  }
+  return value;
+}
+
+function dailyLogCount(payload, level) {
+  const explicit = dailySummaryMetric(payload, [
+    `${String(level).toLowerCase()}Count`,
+    `${String(level).toUpperCase()}Count`,
+  ]);
+  if (hasDisplayValue(explicit) && explicit !== "-") return explicit;
+  const logs = Array.isArray(payload.importantLogs) ? payload.importantLogs : [];
+  const normalized = String(level).toUpperCase();
+  return logs.filter((item) => String(item.level || "").toUpperCase() === normalized).length;
+}
+
+function sampleText(summary, payload) {
+  const stats = payload.entryProfitSnapshotStats || {};
+  const count = stats.sampleCount;
+  const suffix = hasDisplayValue(count) ? ` (${count}/30건)` : "";
+  return summary.sampleSufficient ? `충분${suffix}` : `부족${suffix}`;
+}
+
+function negativeRatioText(negativeCount, sampleCount) {
+  const negative = Number(negativeCount);
+  const sample = Number(sampleCount);
+  if (!Number.isFinite(negative) || !Number.isFinite(sample) || sample <= 0) return "-";
+  return `${(negative / sample * 100).toFixed(1)}%`;
+}
+
+function dailySummaryTrade(payload, paths) {
+  const trade = dailySummaryMetric(payload, paths);
+  return trade && typeof trade === "object" && !Array.isArray(trade) ? trade : {};
 }
 
 function renderEntryReasonRow(item) {

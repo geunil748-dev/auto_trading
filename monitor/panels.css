@@ -135,6 +135,226 @@ body[data-page="runSummary"] .run-summary {
   min-height: 250px;
 }
 
+body:not([data-page="dailySummary"]) .daily-summary-panel {
+  display: none;
+}
+
+body[data-page="dailySummary"] .account-summary,
+body[data-page="dailySummary"] .account-error,
+body[data-page="dailySummary"] .history-bar,
+body[data-page="dailySummary"] .candidates,
+body[data-page="dailySummary"] .holdings,
+body[data-page="dailySummary"] .candidate-history,
+body[data-page="dailySummary"] .trading-stats-panel,
+body[data-page="dailySummary"] .run-summary,
+body[data-page="dailySummary"] .entry-reason-stats,
+body[data-page="dailySummary"] .backtest-panel,
+body[data-page="dailySummary"] .settings-panel,
+body[data-page="dailySummary"] .logs,
+body[data-page="dailySummary"] .orders,
+body[data-page="dailySummary"] .fills {
+  display: none;
+}
+
+body[data-page="dailySummary"] .work-grid {
+  grid-template-columns: minmax(320px, 1fr);
+}
+
+.daily-summary-panel {
+  min-height: 250px;
+}
+
+.daily-summary-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.daily-summary-controls label {
+  display: inline-grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.daily-summary-controls select,
+.daily-summary-controls input {
+  min-width: 150px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #101c27;
+  color: var(--text);
+}
+
+.daily-summary-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.daily-summary-panel .settings-status {
+  padding: 0 0 12px;
+  text-align: left;
+}
+
+.daily-summary-list-wrap table {
+  min-width: 860px;
+  table-layout: auto;
+}
+
+.daily-summary-list-wrap th,
+.daily-summary-list-wrap td {
+  white-space: nowrap;
+}
+
+.daily-summary-list-wrap .numeric,
+.daily-summary-detail-table td:nth-child(n + 2) {
+  text-align: right;
+}
+
+.daily-summary-row {
+  cursor: pointer;
+}
+
+.daily-summary-row.is-active {
+  background: rgb(88 199 213 / 10%);
+}
+
+.daily-summary-detail {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.daily-summary-card-section {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgb(88 199 213 / 18%);
+  border-radius: 8px;
+  background: rgb(16 28 39 / 42%);
+}
+
+.daily-summary-card-section h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.98rem;
+}
+
+.daily-summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.daily-summary-flow,
+.daily-summary-log-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.daily-summary-cards dl {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid rgb(88 199 213 / 22%);
+  border-radius: 8px;
+  background: rgb(88 199 213 / 7%);
+}
+
+.daily-summary-flow dl,
+.daily-summary-log-summary dl {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgb(88 199 213 / 18%);
+  border-radius: 8px;
+  background: rgb(88 199 213 / 5%);
+}
+
+.daily-summary-cards dt {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.daily-summary-flow dt,
+.daily-summary-log-summary dt {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.daily-summary-cards dd {
+  margin: 6px 0 0;
+  color: var(--text);
+  font-weight: 700;
+  text-align: right;
+}
+
+.daily-summary-flow dd,
+.daily-summary-log-summary dd {
+  margin: 5px 0 0;
+  color: var(--text);
+  font-weight: 700;
+  text-align: right;
+}
+
+.daily-summary-panel .positive {
+  color: var(--success);
+}
+
+.daily-summary-panel .negative {
+  color: var(--danger);
+}
+
+.daily-summary-json-warning {
+  margin: 0;
+  color: var(--warning);
+  font-size: 0.86rem;
+}
+
+.daily-summary-log-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.daily-summary-text {
+  min-height: 180px;
+  max-height: 430px;
+  margin: 0;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #101c27;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.daily-summary-section {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid rgb(88 199 213 / 18%);
+  border-radius: 8px;
+  background: rgb(16 28 39 / 42%);
+}
+
+.daily-summary-section h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.daily-summary-detail-table {
+  min-width: 540px;
+}
+
 body[data-page="entryReasonStats"] .account-summary,
 body[data-page="entryReasonStats"] .account-error,
 body[data-page="entryReasonStats"] .history-bar,

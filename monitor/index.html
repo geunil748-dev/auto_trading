@@ -32,6 +32,9 @@
         <button class="nav-item" type="button" data-page="runSummary" data-icon="결">
           <span>일별 운용 결과</span>
         </button>
+        <button class="nav-item" type="button" data-page="dailySummary" data-icon="일">
+          <span>일일 요약</span>
+        </button>
         <button class="nav-item" type="button" data-page="entryReasonStats" data-icon="성">
           <span>전략별 성과</span>
         </button>
@@ -264,6 +267,59 @@
               <span>매도체결</span>
             </div>
             <div class="trade-list run-summary-list" id="runSummaryRows"></div>
+            </div>
+          </article>
+
+          <article class="panel daily-summary-panel">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">장마감 리포트</p>
+                <h2>일일 거래 요약</h2>
+              </div>
+            </div>
+            <div class="daily-summary-controls">
+              <label>
+                모드
+                <select id="dailySummaryMode">
+                  <option value="">전체</option>
+                  <option value="mock">모의투자</option>
+                  <option value="real">실투자</option>
+                </select>
+              </label>
+              <label>
+                날짜
+                <input id="dailySummaryDate" type="date" />
+              </label>
+              <span class="button-spinner external-spinner" data-spinner-for="refreshDailySummary"></span>
+              <button class="ghost-action" id="refreshDailySummary" type="button">
+                <span>조회</span>
+              </button>
+              <button class="ghost-action" id="reloadDailySummary" type="button">
+                <span>새로고침</span>
+              </button>
+            </div>
+            <p class="settings-status" id="dailySummaryStatus"></p>
+            <div class="daily-summary-layout">
+              <div class="table-wrap daily-summary-list-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>기준일</th>
+                      <th>모드</th>
+                      <th>전략</th>
+                      <th>거래 수</th>
+                      <th>손익</th>
+                      <th>승률</th>
+                      <th>표본</th>
+                      <th>갱신시각</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dailySummaryRows"></tbody>
+                </table>
+              </div>
+              <section class="daily-summary-detail" id="dailySummaryDetail">
+                <p class="empty-copy">저장된 일일 요약을 선택해 주세요.</p>
+              </section>
             </div>
           </article>
 

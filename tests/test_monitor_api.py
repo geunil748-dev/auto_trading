@@ -1,12 +1,15 @@
 import json
 import os
 import time
+from datetime import date
 
 from trading_bot.monitor_api import MonitorStateReader, authorize_bearer
 from trading_bot.monitor_server import (
     _DashboardStateReader,
     _health_state,
     _monitor_bind_requires_token,
+    _read_daily_summary_detail_state,
+    _read_daily_summary_state,
     _setting_float,
 )
 from trading_bot.repositories import SqlServerMonitorRepository
@@ -27,6 +30,16 @@ def test_setting_float_preserves_current_value_when_partial_payload() -> None:
 
     assert _setting_float({}, "stopLossPercent", current) == 5.0
     assert _setting_float({"takeProfitPercent": "12.5"}, "takeProfitPercent", current) == 12.5
+
+
+def test_daily_summary_state_falls_back_to_empty_for_non_sql_reader() -> None:
+    class Reader:
+        pass
+
+    assert _read_daily_summary_state(Reader()) == {"summaries": []}
+    assert _read_daily_summary_detail_state(Reader(), date(2026, 6, 1), "mock") == {
+        "summary": None
+    }
 
 
 def test_dashboard_reader_falls_back_to_cached_state_when_sql_fails(tmp_path) -> None:
