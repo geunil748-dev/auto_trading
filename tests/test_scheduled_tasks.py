@@ -2,6 +2,13 @@ from datetime import date, datetime, timedelta
 
 from trading_bot.config import KisSettings, NotificationSettings, TradingSettings
 from trading_bot.models import AccountState, BuyIntent, FillRecord, PositionState, ScoreRecord, SellIntent
+from trading_bot.scheduler_logging import safe_scheduler_log
+from trading_bot.scheduler_market_close import (
+    save_daily_run_summary,
+    save_daily_trade_summary_report,
+    send_market_close_notice,
+    send_market_close_report,
+)
 from trading_bot.scheduled_tasks import (
     _apply_stop_loss_entry_guards,
     _cancel_stale_mock_buy_orders,
@@ -10,13 +17,8 @@ from trading_bot.scheduled_tasks import (
     _holding_prices,
     _last_stop_loss_at,
     _persist_live_snapshot,
-    _safe_scheduler_log,
-    _save_daily_run_summary,
-    _save_daily_trade_summary_report,
     _saved_partial_take_profit_tickers,
     _send_fill_notifications,
-    _send_market_close_notice,
-    _send_market_close_report,
     live_mock_tasks,
 )
 
@@ -205,15 +207,15 @@ def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> N
         / "report.json",
     )
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks._send_market_close_notice",
+        "trading_bot.scheduled_tasks.send_market_close_notice",
         lambda: notice_calls.append("sent"),
     )
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks._send_market_close_report",
+        "trading_bot.scheduled_tasks.send_market_close_report",
         lambda state: report_calls.append(state),
     )
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks._save_daily_trade_summary_report",
+        "trading_bot.scheduled_tasks.save_daily_trade_summary_report",
         lambda: summary_calls.append("saved"),
     )
 
@@ -413,24 +415,24 @@ def test_market_close_report_uses_alert_telegram_settings(monkeypatch) -> None:
         telegram_chat_id="alert-chat",
     )
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks.SqlServerDailyRepository",
+        "trading_bot.scheduler_market_close.SqlServerDailyRepository",
         lambda connect: Repository(),
     )
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks.pyodbc_connect_factory",
+        "trading_bot.scheduler_market_close.pyodbc_connect_factory",
         lambda: object,
     )
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks.current_trade_date",
+        "trading_bot.scheduler_market_close.current_trade_date",
         lambda: date(2026, 6, 5),
     )
-    monkeypatch.setattr("trading_bot.scheduled_tasks.load_settings", lambda: TradingSettings())
+    monkeypatch.setattr("trading_bot.scheduler_market_close.load_settings", lambda: TradingSettings())
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks.load_notification_settings",
+        "trading_bot.scheduler_market_close.load_notification_settings",
         lambda: settings,
     )
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks.fill_records_from_monitor_rows",
+        "trading_bot.scheduler_market_close.fill_records_from_monitor_rows",
         lambda fills, entry_prices, entry_reasons, settings: ["record"],
     )
 
@@ -445,15 +447,15 @@ def test_market_close_report_uses_alert_telegram_settings(monkeypatch) -> None:
         return True
 
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks.send_market_close_report_from_records",
+        "trading_bot.scheduler_market_close.send_market_close_report_from_records",
         fake_send_report,
     )
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks.send_alert_telegram_message",
+        "trading_bot.scheduler_market_close.send_alert_telegram_message",
         fake_send_alert,
     )
 
-    _send_market_close_report(
+    send_market_close_report(
         {
             "fills": [{"ticker": "AAA"}],
             "holdings": [{"ticker": "AAA", "closePrice": "$11.00"}],
@@ -471,10 +473,10 @@ def test_safe_scheduler_log_ignores_db_log_failure(monkeypatch) -> None:
     def fail_repository(connect):
         raise RuntimeError("MSSQL_PASSWORD=secret")
 
-    monkeypatch.setattr("trading_bot.scheduled_tasks.SqlServerDailyRepository", fail_repository)
-    monkeypatch.setattr("trading_bot.scheduled_tasks.pyodbc_connect_factory", lambda: object)
+    monkeypatch.setattr("trading_bot.scheduler_logging.SqlServerDailyRepository", fail_repository)
+    monkeypatch.setattr("trading_bot.scheduler_logging.pyodbc_connect_factory", lambda: object)
 
-    _safe_scheduler_log(
+    safe_scheduler_log(
         "WARNING",
         "scheduler",
         "TEST_FAILED: RuntimeError",
@@ -492,13 +494,13 @@ def test_market_close_notice_failure_logs_warning_without_secret(monkeypatch) ->
         raise RuntimeError("ALERT_TELEGRAM_BOT_TOKEN=secret")
 
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks.load_notification_settings",
+        "trading_bot.scheduler_market_close.load_notification_settings",
         lambda: NotificationSettings(),
     )
-    monkeypatch.setattr("trading_bot.scheduled_tasks.send_market_close_done", fail_notice)
-    monkeypatch.setattr("trading_bot.scheduled_tasks._safe_scheduler_log", capture)
+    monkeypatch.setattr("trading_bot.scheduler_market_close.send_market_close_done", fail_notice)
+    monkeypatch.setattr("trading_bot.scheduler_market_close.safe_scheduler_log", capture)
 
-    _send_market_close_notice()
+    send_market_close_notice()
 
     assert logs[0][0] == "WARNING"
     assert logs[0][1] == "notification"
@@ -521,7 +523,7 @@ def test_fill_notification_failure_logs_warning_without_secret(monkeypatch) -> N
         "trading_bot.scheduled_tasks.send_fill_notifications",
         fail_notification,
     )
-    monkeypatch.setattr("trading_bot.scheduled_tasks._safe_scheduler_log", capture)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.safe_scheduler_log", capture)
 
     _send_fill_notifications([], [])
 
@@ -540,14 +542,14 @@ def test_market_close_report_failure_logs_warning_without_secret(monkeypatch) ->
         raise RuntimeError("MSSQL_PASSWORD=secret")
 
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks.load_notification_settings",
+        "trading_bot.scheduler_market_close.load_notification_settings",
         lambda: NotificationSettings(),
     )
-    monkeypatch.setattr("trading_bot.scheduled_tasks.SqlServerDailyRepository", fail_repository)
-    monkeypatch.setattr("trading_bot.scheduled_tasks.pyodbc_connect_factory", lambda: object)
-    monkeypatch.setattr("trading_bot.scheduled_tasks._safe_scheduler_log", capture)
+    monkeypatch.setattr("trading_bot.scheduler_market_close.SqlServerDailyRepository", fail_repository)
+    monkeypatch.setattr("trading_bot.scheduler_market_close.pyodbc_connect_factory", lambda: object)
+    monkeypatch.setattr("trading_bot.scheduler_market_close.safe_scheduler_log", capture)
 
-    _send_market_close_report({"fills": [{"ticker": "AAA"}], "holdings": []})
+    send_market_close_report({"fills": [{"ticker": "AAA"}], "holdings": []})
 
     assert logs[0][2] == "MARKET_CLOSE_REPORT_FAILED: RuntimeError"
     assert logs[0][3]["reject_reason"] == "MARKET_CLOSE_REPORT_FAILED"
@@ -561,13 +563,13 @@ def test_daily_summary_failures_log_warning_without_secret(monkeypatch) -> None:
     def capture(level, module, message, **kwargs):
         logs.append((level, module, message, kwargs))
 
-    monkeypatch.setattr("trading_bot.scheduled_tasks._safe_scheduler_log", capture)
+    monkeypatch.setattr("trading_bot.scheduler_market_close.safe_scheduler_log", capture)
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks.generate_daily_trade_summary",
+        "trading_bot.scheduler_market_close.generate_daily_trade_summary",
         lambda **kwargs: (_ for _ in ()).throw(RuntimeError("DB_PASSWORD=secret")),
     )
 
-    _save_daily_trade_summary_report()
+    save_daily_trade_summary_report()
 
     assert logs == [
         (
@@ -589,14 +591,14 @@ def test_daily_run_summary_failure_logs_warning_without_secret(monkeypatch) -> N
     def fail_monitor_repository(connect):
         raise RuntimeError("MSSQL_PASSWORD=secret")
 
-    monkeypatch.setattr("trading_bot.scheduled_tasks._safe_scheduler_log", capture)
+    monkeypatch.setattr("trading_bot.scheduler_market_close.safe_scheduler_log", capture)
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks.SqlServerMonitorRepository",
+        "trading_bot.scheduler_market_close.SqlServerMonitorRepository",
         fail_monitor_repository,
     )
-    monkeypatch.setattr("trading_bot.scheduled_tasks.pyodbc_connect_factory", lambda: object)
+    monkeypatch.setattr("trading_bot.scheduler_market_close.pyodbc_connect_factory", lambda: object)
 
-    _save_daily_run_summary(TradingSettings(), None, None)
+    save_daily_run_summary(TradingSettings(), None, None)
 
     assert logs[0][2] == "DAILY_RUN_SUMMARY_SAVE_FAILED: RuntimeError"
     assert logs[0][3]["reject_reason"] == "DAILY_RUN_SUMMARY_SAVE_FAILED"
@@ -619,7 +621,7 @@ def test_stop_loss_lookup_failures_return_safe_defaults_and_log(monkeypatch) -> 
         def partial_take_profit_tickers(self, trade_date):
             raise RuntimeError("MONITOR_BEARER_TOKEN=secret")
 
-    monkeypatch.setattr("trading_bot.scheduled_tasks._safe_scheduler_log", capture)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.safe_scheduler_log", capture)
 
     repository = FailingRiskRepository()
 
@@ -645,7 +647,7 @@ def test_cancel_stale_mock_buy_lookup_failure_logs_warning(monkeypatch) -> None:
         raise RuntimeError("Authorization Bearer secret")
 
     monkeypatch.setattr("trading_bot.scheduled_tasks._mock_order_rows", fail_mock_orders)
-    monkeypatch.setattr("trading_bot.scheduled_tasks._safe_scheduler_log", capture)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.safe_scheduler_log", capture)
 
     result = _cancel_stale_mock_buy_orders(
         KisSettings("key", "secret", "account", "01", "https://kis.example"),
