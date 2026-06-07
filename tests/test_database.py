@@ -46,11 +46,18 @@ def test_initialize_database_executes_schema_and_commits(tmp_path) -> None:
 def test_repair_database_schema_runs_explicit_repair_sql() -> None:
     connection = Connection()
 
-    repair_database_schema(lambda: connection)
+    actions = repair_database_schema(lambda: connection)
 
     script = connection.cursor_value.scripts[0]
     assert "ALTER TABLE dbo.daily_target ALTER COLUMN volume_ratio" in script
     assert "ALTER TABLE dbo.daily_target ALTER COLUMN price_change" in script
+    assert actions == [
+        {
+            "name": "daily_target_numeric_columns",
+            "action": "executed_if_table_exists",
+            "detail": "volume_ratio and price_change are repaired to DECIMAL(12, 2) NULL",
+        }
+    ]
     assert connection.commits == 1
     assert connection.closed
 

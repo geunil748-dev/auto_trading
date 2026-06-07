@@ -220,14 +220,17 @@ def main() -> None:
         return
 
     if args.command == "repair-db-schema":
-        ensure_mssql_database_exists()
-        initialize_database(pyodbc_connect_factory())
-        repair_database_schema(pyodbc_connect_factory())
+        repair_actions = repair_database_schema(pyodbc_connect_factory())
         readiness = mock_trading_readiness(
             args.monitor_state,
             market_date=args.us_date,
             repair_schema=True,
         )
+        readiness["repair"] = {
+            "mode": "explicit",
+            "init_db_executed": False,
+            "actions": repair_actions,
+        }
         print(
             json.dumps(
                 readiness,
