@@ -17,33 +17,7 @@
         <div class="side-action">
           <button id="toggleRealOrders" type="button">실투자 주문 허용</button>
         </div>
-        <button class="nav-item active" type="button" data-page="dashboard" data-icon="홈">
-          <span>대시보드</span>
-        </button>
-        <button class="nav-item" type="button" data-page="activity" data-icon="주">
-          <span>주문/체결</span>
-        </button>
-        <button class="nav-item" type="button" data-page="candidateHistory" data-icon="후">
-          <span>후보 리스트</span>
-        </button>
-        <button class="nav-item" type="button" data-page="tradingStats" data-icon="지">
-          <span>운영 지표</span>
-        </button>
-        <button class="nav-item" type="button" data-page="runSummary" data-icon="결">
-          <span>일별 운용 결과</span>
-        </button>
-        <button class="nav-item" type="button" data-page="dailySummary" data-icon="일">
-          <span>일일 요약</span>
-        </button>
-        <button class="nav-item" type="button" data-page="entryReasonStats" data-icon="성">
-          <span>전략별 성과</span>
-        </button>
-        <button class="nav-item" type="button" data-page="backtest" data-icon="백">
-          <span>백테스트</span>
-        </button>
-        <button class="nav-item" type="button" data-page="settings" data-icon="설">
-          <span>설정</span>
-        </button>
+        <div class="side-menu" id="sideNavMenu"></div>
         <div class="side-bottom-action">
           <button id="sellAllPositions" type="button">전량 매도</button>
         </div>
@@ -834,6 +808,6 @@
       </main>
     </div>
     <script src="./runtime-controls.js?v=3"></script>
-    <script src="./app.js?v=71"></script>
+    <script type="module" src="./app.js?v=72"></script>
   </body>
 </html>
