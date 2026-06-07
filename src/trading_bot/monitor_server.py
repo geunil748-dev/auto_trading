@@ -7,14 +7,14 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
+from trading_bot.backtest_service import run_backtest_from_monitor_state
 from trading_bot.config import (
     load_settings,
     runtime_risk_settings_payload,
     save_runtime_risk_settings,
 )
-from trading_bot.backtest_service import run_backtest_from_monitor_state
 from trading_bot.database import mssql_dsn_from_env, pyodbc_connect_factory
 from trading_bot.daily_trade_summary import generate_daily_trade_summary
 from trading_bot.manual_sell import submit_manual_mock_sell, submit_manual_mock_sell_all
@@ -26,6 +26,36 @@ from trading_bot.monitor_health import (
     _safe_error_text,
 )
 from trading_bot.monitor_api import MonitorStateReader, authorize_bearer
+from trading_bot.monitor_request import (
+    _optional_bool,
+    _optional_float,
+    _optional_int,
+    _optional_text,
+    _query_date,
+    _query_limit,
+    _query_mode,
+    _query_tickers,
+    _setting_float,
+    read_json_body,
+)
+from trading_bot.monitor_routes import (
+    GET_BACKTEST,
+    GET_DAILY_SUMMARY,
+    GET_DAILY_SUMMARY_DETAIL,
+    GET_HEALTH,
+    GET_HISTORY,
+    GET_MANUAL_SCREENING,
+    GET_STATE,
+    GET_TRADING_SETTINGS,
+    INDEX_FILE,
+    INDEX_PATH,
+    POST_DAILY_SUMMARY_GENERATE,
+    POST_MANUAL_MOCK_SELL,
+    POST_MANUAL_MOCK_SELL_ALL,
+    POST_MANUAL_SCREENING,
+    POST_REAL_TRADING_CONTROL,
+    POST_TRADING_SETTINGS,
+)
 from trading_bot.real_trading_control import load_real_trading_control, save_manual_enabled
 from trading_bot.repositories import SqlServerMonitorRepository
 from trading_bot.sql_monitor_state import SqlMonitorStateSource
@@ -201,52 +231,52 @@ def _handler(
 
         def do_GET(self) -> None:
             path = urlparse(self.path).path
-            if path == "/health":
+            if path == GET_HEALTH:
                 self._write_health()
                 return
-            if path == "/api/state":
+            if path == GET_STATE:
                 self._write_state()
                 return
-            if path == "/api/history":
+            if path == GET_HISTORY:
                 self._write_history()
                 return
-            if path == "/api/daily-summary":
+            if path == GET_DAILY_SUMMARY:
                 self._write_daily_summary()
                 return
-            if path == "/api/daily-summary/detail":
+            if path == GET_DAILY_SUMMARY_DETAIL:
                 self._write_daily_summary_detail()
                 return
-            if path == "/api/trading-settings":
+            if path == GET_TRADING_SETTINGS:
                 self._write_trading_settings()
                 return
-            if path == "/api/manual-screening":
+            if path == GET_MANUAL_SCREENING:
                 self._write_manual_screening_status()
                 return
-            if path == "/api/backtest":
+            if path == GET_BACKTEST:
                 self._write_backtest()
                 return
-            if path == "/":
-                self.path = "/index.html"
+            if path == INDEX_PATH:
+                self.path = INDEX_FILE
             super().do_GET()
 
         def do_POST(self) -> None:
             path = urlparse(self.path).path
-            if path == "/api/real-trading-control":
+            if path == POST_REAL_TRADING_CONTROL:
                 self._write_real_trading_control()
                 return
-            if path == "/api/manual-mock-sell":
+            if path == POST_MANUAL_MOCK_SELL:
                 self._write_manual_mock_sell()
                 return
-            if path == "/api/manual-mock-sell-all":
+            if path == POST_MANUAL_MOCK_SELL_ALL:
                 self._write_manual_mock_sell_all()
                 return
-            if path == "/api/manual-screening":
+            if path == POST_MANUAL_SCREENING:
                 self._start_manual_screening()
                 return
-            if path == "/api/daily-summary/generate":
+            if path == POST_DAILY_SUMMARY_GENERATE:
                 self._generate_daily_summary()
                 return
-            if path == "/api/trading-settings":
+            if path == POST_TRADING_SETTINGS:
                 self._save_trading_settings()
                 return
             self.send_error(404, "Not found")
@@ -499,12 +529,7 @@ def _handler(
                 return False
 
         def _read_json_body(self) -> dict[str, Any]:
-            length = int(self.headers.get("Content-Length", "0") or 0)
-            if length <= 0:
-                return {}
-            raw = self.rfile.read(min(length, 4096))
-            value = json.loads(raw.decode("utf-8"))
-            return value if isinstance(value, dict) else {}
+            return read_json_body(self.rfile, self.headers.get("Content-Length"))
 
         def _write_json(self, value: dict[str, object], status: int = 200) -> None:
             payload = json.dumps(value, ensure_ascii=False, default=str).encode("utf-8")
@@ -580,72 +605,6 @@ def _read_daily_summary_detail_state(
     if hasattr(reader, "read_daily_summary_detail"):
         return reader.read_daily_summary_detail(trade_date, mode)
     return {"summary": None}
-
-
-def _query_date(path: str) -> date:
-    raw = parse_qs(urlparse(path).query).get("date", [""])[0].strip()
-    if raw:
-        try:
-            return date.fromisoformat(raw)
-        except ValueError:
-            # 잘못된 날짜 파라미터는 화면을 깨뜨리지 않고 현재 거래일로 fallback 한다.
-            pass
-    return current_trade_date()
-
-
-def _query_mode(path: str) -> str | None:
-    raw = parse_qs(urlparse(path).query).get("mode", [""])[0].strip().lower()
-    return raw if raw in {"mock", "real"} else None
-
-
-def _query_limit(path: str, default: int = 30, maximum: int = 100) -> int:
-    raw = parse_qs(urlparse(path).query).get("limit", [""])[0].strip()
-    if not raw:
-        return default
-    try:
-        value = int(float(raw))
-    except ValueError:
-        return default
-    return max(1, min(value, maximum))
-
-
-def _query_tickers(path: str) -> list[str] | None:
-    raw = parse_qs(urlparse(path).query).get("ticker", [""])[0].strip()
-    if not raw or raw.upper() == "ALL":
-        return None
-    return [item.strip().upper() for item in raw.split(",") if item.strip()]
-
-
-def _optional_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    return int(float(str(value).replace(",", "").replace("주", "")))
-
-
-def _optional_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    return float(str(value).replace(",", ""))
-
-
-def _optional_bool(value: Any) -> bool | None:
-    if value in (None, ""):
-        return None
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() in {"1", "true", "yes", "y"}
-
-
-def _optional_text(value: Any) -> str | None:
-    if value in (None, ""):
-        return None
-    return str(value)
-
-
-def _setting_float(body: dict[str, Any], key: str, current: dict[str, float]) -> float:
-    if key in body and body[key] not in (None, ""):
-        return _optional_float(body[key]) or 0.0
-    return float(current.get(key, 0.0))
 
 
 def _runtime_state(
