@@ -103,6 +103,7 @@ def test_preflight_read_only_reports_trade_and_fill_metadata_columns(monkeypatch
             if action["action"] == "read_only_missing"
         ]
     ) == 6
+    assert not any("ALTER TABLE" in sql for sql, _ in cursor.calls)
     assert connection.commits == 0
     assert connection.closed is True
 

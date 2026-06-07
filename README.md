@@ -49,6 +49,9 @@ For automatic server updates from `origin/main`, see
 For sharing one KIS access token across the real and test servers, see
 [docs/kis_token_cache.md](docs/kis_token_cache.md).
 
+For DB preflight/init/repair command boundaries, see
+[docs/db_migration_repair.md](docs/db_migration_repair.md).
+
 ## Telegram Alerts
 
 운영 텔레그램 알림은 `ALERT_TELEGRAM_BOT_TOKEN`과

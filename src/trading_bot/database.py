@@ -279,7 +279,20 @@ def initialize_database(
         connection.commit()
 
 
-def repair_database_schema(connect: Callable[[], Any]) -> None:
+def repair_database_schema(connect: Callable[[], Any]) -> list[dict[str, str]]:
+    """Run explicit, idempotent schema repairs for an existing database.
+
+    This function is intentionally separate from ``initialize_database``. It is
+    called only by the explicit ``repair-db-schema`` CLI command and must not be
+    used by read-only preflight checks.
+    """
     with closing(connect()) as connection:
         connection.cursor().execute(DAILY_TARGET_REPAIR_SQL)
         connection.commit()
+    return [
+        {
+            "name": "daily_target_numeric_columns",
+            "action": "executed_if_table_exists",
+            "detail": "volume_ratio and price_change are repaired to DECIMAL(12, 2) NULL",
+        }
+    ]

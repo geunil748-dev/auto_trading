@@ -79,6 +79,12 @@ After `.env` is filled, initialize MSSQL tables if needed:
 powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup_scheduler\setup_windows.ps1 -SkipInstall -InitDb
 ```
 
+`init-db`, `preflight`, and `repair-db-schema` have separate roles. `preflight`
+is read-only, `repair-db-schema` is an explicit safe repair command, and
+`init-db` is for first-time schema setup. See
+[db_migration_repair.md](db_migration_repair.md) before running repair or init
+commands on an operating server.
+
 ## 7. Register Monitor and Scheduler
 
 Reuse the existing task registration flow:

@@ -72,7 +72,11 @@ def test_repair_db_schema_cli_runs_explicit_repair(monkeypatch, capsys) -> None:
     monkeypatch.setattr(sys, "argv", ["trading-bot", "repair-db-schema"])
     monkeypatch.setattr(cli, "ensure_mssql_database_exists", lambda: calls.append("ensure-db"))
     monkeypatch.setattr(cli, "initialize_database", lambda *_: calls.append("init-schema"))
-    monkeypatch.setattr(cli, "repair_database_schema", lambda *_: calls.append("repair-schema"))
+    monkeypatch.setattr(
+        cli,
+        "repair_database_schema",
+        lambda *_: calls.append("repair-schema") or [{"name": "sample", "action": "executed"}],
+    )
     monkeypatch.setattr(cli, "pyodbc_connect_factory", lambda: lambda: object())
 
     def fake_readiness(*args, **kwargs):
@@ -83,9 +87,15 @@ def test_repair_db_schema_cli_runs_explicit_repair(monkeypatch, capsys) -> None:
 
     cli.main()
 
-    assert calls == ["ensure-db", "init-schema", "repair-schema"]
+    assert calls == ["repair-schema"]
     assert readiness_calls[0]["repair_schema"] is True
-    assert json.loads(capsys.readouterr().out)["mssql"]["connected"] is True
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mssql"]["connected"] is True
+    assert payload["repair"] == {
+        "mode": "explicit",
+        "init_db_executed": False,
+        "actions": [{"name": "sample", "action": "executed"}],
+    }
 
 
 @pytest.mark.parametrize(
