@@ -71,6 +71,14 @@ def account(**changes: float) -> AccountState:
     return AccountState(**values)
 
 
+def entry_test_settings(**overrides: object) -> TradingSettings:
+    values = {
+        "max_entry_price_change": 0.30,
+    }
+    values.update(overrides)
+    return TradingSettings(**values)
+
+
 def test_global_gate_uses_market_priority_before_fx() -> None:
     blocked = global_entry_gate(99, 100, 0.03, account(), SETTINGS)
 
@@ -285,7 +293,7 @@ def test_entry_planner_blocks_overheated_intraday_entry() -> None:
 
 
 def test_entry_planner_can_require_extra_intraday_confirmation() -> None:
-    settings = TradingSettings(
+    settings = entry_test_settings(
         breakout_hold_minutes=2,
         require_5m_close_above_breakout=True,
         require_5m_volume_increase=True,
@@ -316,7 +324,7 @@ def test_entry_planner_can_require_extra_intraday_confirmation() -> None:
 
 
 def test_entry_planner_soft_score_condition_does_not_block_entry() -> None:
-    settings = TradingSettings(
+    settings = entry_test_settings(
         require_5m_close_above_breakout=True,
         breakout_close_condition_mode="SOFT_SCORE",
         require_5m_volume_increase=False,
@@ -342,7 +350,7 @@ def test_entry_planner_soft_score_condition_does_not_block_entry() -> None:
 
 
 def test_entry_planner_hard_filter_condition_blocks_entry() -> None:
-    settings = TradingSettings(
+    settings = entry_test_settings(
         require_5m_close_above_breakout=True,
         breakout_close_condition_mode="HARD_FILTER",
         require_5m_volume_increase=False,
@@ -368,7 +376,7 @@ def test_entry_planner_hard_filter_condition_blocks_entry() -> None:
 
 def test_entry_planner_saves_unbought_hard_filter_evaluation() -> None:
     repository = InMemoryDailyRepository()
-    settings = TradingSettings(
+    settings = entry_test_settings(
         require_5m_close_above_breakout=True,
         breakout_close_condition_mode="HARD_FILTER",
         require_5m_volume_increase=False,
@@ -403,7 +411,7 @@ def test_entry_planner_saves_unbought_hard_filter_evaluation() -> None:
 
 def test_entry_planner_saves_bought_and_soft_score_evaluation() -> None:
     repository = InMemoryDailyRepository()
-    settings = TradingSettings(
+    settings = entry_test_settings(
         require_5m_close_above_breakout=True,
         breakout_close_condition_mode="SOFT_SCORE",
         require_5m_volume_increase=False,
@@ -443,7 +451,7 @@ def test_entry_planner_saves_bought_and_soft_score_evaluation() -> None:
 
 
 def test_entry_planner_requires_configured_5m_volume_increase_percent() -> None:
-    settings = TradingSettings(
+    settings = entry_test_settings(
         require_5m_volume_increase=True,
         volume_increase_condition_mode="HARD_FILTER",
         min_5m_volume_increase_percent=5.0,
@@ -473,7 +481,7 @@ def test_entry_planner_requires_configured_5m_volume_increase_percent() -> None:
 
 def test_entry_planner_records_insufficient_5m_volume_data_without_zero_division() -> None:
     repository = InMemoryDailyRepository()
-    settings = TradingSettings(
+    settings = entry_test_settings(
         require_5m_volume_increase=True,
         volume_increase_condition_mode="SOFT_SCORE",
         min_5m_volume_increase_percent=5.0,
@@ -512,7 +520,7 @@ def test_entry_planner_records_insufficient_5m_volume_data_without_zero_division
 
 def test_entry_planner_hard_filter_blocks_failed_5m_volume_increase() -> None:
     repository = InMemoryDailyRepository()
-    settings = TradingSettings(
+    settings = entry_test_settings(
         require_5m_volume_increase=True,
         volume_increase_condition_mode="HARD_FILTER",
         min_5m_volume_increase_percent=5.0,
@@ -547,7 +555,7 @@ def test_entry_planner_hard_filter_blocks_failed_5m_volume_increase() -> None:
 
 def test_entry_planner_records_vwap_ma20_or_pass_with_vwap_only_data() -> None:
     repository = InMemoryDailyRepository()
-    settings = TradingSettings(
+    settings = entry_test_settings(
         require_vwap_or_ma20=True,
         vwap_ma20_condition_mode="HARD_FILTER",
         vwap_ma20_condition_type="OR",
@@ -582,7 +590,7 @@ def test_entry_planner_records_vwap_ma20_or_pass_with_vwap_only_data() -> None:
 
 def test_entry_planner_records_vwap_ma20_or_fail_with_data() -> None:
     repository = InMemoryDailyRepository()
-    settings = TradingSettings(
+    settings = entry_test_settings(
         require_vwap_or_ma20=True,
         vwap_ma20_condition_mode="HARD_FILTER",
         vwap_ma20_condition_type="OR",
@@ -617,7 +625,7 @@ def test_entry_planner_records_vwap_ma20_or_fail_with_data() -> None:
 
 def test_entry_planner_records_vwap_ma20_skipped_no_data_without_blocking() -> None:
     repository = InMemoryDailyRepository()
-    settings = TradingSettings(
+    settings = entry_test_settings(
         require_vwap_or_ma20=True,
         vwap_ma20_condition_mode="HARD_FILTER",
         vwap_ma20_condition_type="OR",
@@ -653,7 +661,7 @@ def test_entry_planner_records_vwap_ma20_skipped_no_data_without_blocking() -> N
 
 def test_entry_planner_vwap_ma20_soft_score_failure_only_adjusts_score() -> None:
     repository = InMemoryDailyRepository()
-    settings = TradingSettings(
+    settings = entry_test_settings(
         require_5m_volume_increase=False,
         require_vwap_or_ma20=True,
         vwap_ma20_condition_mode="SOFT_SCORE",
@@ -707,7 +715,7 @@ def test_entry_planner_vwap_ma20_only_modes_and_disabled_status() -> None:
         [ScoreRecord("ONLY", 95, 90)],
         base,
         account(),
-        TradingSettings(require_vwap_or_ma20=True, vwap_ma20_condition_type="VWAP_ONLY"),
+        entry_test_settings(require_vwap_or_ma20=True, vwap_ma20_condition_type="VWAP_ONLY"),
         repository=vwap_repository,
         trade_date=date(2026, 5, 22),
     )
@@ -715,7 +723,7 @@ def test_entry_planner_vwap_ma20_only_modes_and_disabled_status() -> None:
         [ScoreRecord("ONLY", 95, 90)],
         base,
         account(),
-        TradingSettings(
+        entry_test_settings(
             require_vwap_or_ma20=True,
             vwap_ma20_condition_type="MA20_ONLY",
             vwap_ma20_condition_mode="SOFT_SCORE",
@@ -727,7 +735,7 @@ def test_entry_planner_vwap_ma20_only_modes_and_disabled_status() -> None:
         [ScoreRecord("ONLY", 95, 90)],
         base,
         account(),
-        TradingSettings(require_vwap_or_ma20=False),
+        entry_test_settings(require_vwap_or_ma20=False),
         repository=off_repository,
         trade_date=date(2026, 5, 22),
     )
@@ -759,7 +767,7 @@ def test_entry_planner_default_vwap_ma20_off_does_not_block_or_adjust_score() ->
             ),
         },
         account(),
-        TradingSettings(require_5m_volume_increase=False),
+        entry_test_settings(require_5m_volume_increase=False),
         repository=repository,
         trade_date=date(2026, 5, 22),
     )
@@ -776,7 +784,7 @@ def test_entry_planner_default_vwap_ma20_off_does_not_block_or_adjust_score() ->
 
 
 def test_entry_planner_ignores_unavailable_intraday_confirmation_data() -> None:
-    settings = TradingSettings(
+    settings = entry_test_settings(
         breakout_hold_minutes=2,
         require_5m_close_above_breakout=True,
         require_5m_volume_increase=True,
