@@ -37,7 +37,10 @@ from trading_bot.market_calendar import (
 )
 from trading_bot.models import BotLog, BuyIntent, EntryProfitSnapshot, FillRecord, PositionState
 from trading_bot.monitor_state import state_from_dry_run
-from trading_bot.notifications import send_market_close_done
+from trading_bot.notifications import (
+    send_alert_telegram_message,
+    send_market_close_done,
+)
 from trading_bot.order_cancellation import (
     cancel_unfilled_orders,
     stale_unfilled_buy_cancel_requests,
@@ -368,6 +371,7 @@ def _send_market_close_report(state: dict[str, object]) -> None:
     if not isinstance(fills, list):
         return
     try:
+        notification_settings = load_notification_settings()
         repository = SqlServerDailyRepository(pyodbc_connect_factory())
         trade_date = current_trade_date()
         records = fill_records_from_monitor_rows(
@@ -379,6 +383,10 @@ def _send_market_close_report(state: dict[str, object]) -> None:
         send_market_close_report_from_records(
             records,
             holdings if isinstance(holdings, list) else [],
+            sender=lambda message: send_alert_telegram_message(
+                message,
+                notification_settings,
+            ),
         )
     except Exception:
         # 장마감 요약 알림 실패는 장마감 처리 결과와 분리한다.

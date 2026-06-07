@@ -1,12 +1,13 @@
 from datetime import date, datetime, timedelta
 
-from trading_bot.config import KisSettings, TradingSettings
+from trading_bot.config import KisSettings, NotificationSettings, TradingSettings
 from trading_bot.models import AccountState, BuyIntent, FillRecord, PositionState, ScoreRecord, SellIntent
 from trading_bot.scheduled_tasks import (
     _apply_stop_loss_entry_guards,
     _entry_profit_snapshots_from_fills,
     _holding_prices,
     _persist_live_snapshot,
+    _send_market_close_report,
     live_mock_tasks,
 )
 
@@ -369,6 +370,76 @@ def test_persist_live_snapshot_saves_fill_history_and_entry_snapshot(monkeypatch
     assert repository.updated_prices == {"AAA": 11.0}
     assert repository.final_updates == [date(2026, 6, 5)]
     assert notifications
+
+
+def test_market_close_report_uses_alert_telegram_settings(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class Repository:
+        def sell_entry_prices(self, trade_date: date) -> dict[str, float]:
+            captured["trade_date"] = trade_date
+            return {}
+
+        def entry_reasons(self, trade_date: date) -> dict[str, str]:
+            return {}
+
+    settings = NotificationSettings(
+        telegram_bot_token="alert-token",
+        telegram_chat_id="alert-chat",
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.SqlServerDailyRepository",
+        lambda connect: Repository(),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.pyodbc_connect_factory",
+        lambda: object,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.current_trade_date",
+        lambda: date(2026, 6, 5),
+    )
+    monkeypatch.setattr("trading_bot.scheduled_tasks.load_settings", lambda: TradingSettings())
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.load_notification_settings",
+        lambda: settings,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.fill_records_from_monitor_rows",
+        lambda fills, entry_prices, entry_reasons, settings: ["record"],
+    )
+
+    def fake_send_report(records, holdings, sender):
+        captured["records"] = records
+        captured["holdings"] = holdings
+        return sender("market close report")
+
+    def fake_send_alert(message, notification_settings):
+        captured["message"] = message
+        captured["notification_settings"] = notification_settings
+        return True
+
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_market_close_report_from_records",
+        fake_send_report,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_alert_telegram_message",
+        fake_send_alert,
+    )
+
+    _send_market_close_report(
+        {
+            "fills": [{"ticker": "AAA"}],
+            "holdings": [{"ticker": "AAA", "closePrice": "$11.00"}],
+        }
+    )
+
+    assert captured["trade_date"] == date(2026, 6, 5)
+    assert captured["records"] == ["record"]
+    assert captured["holdings"] == [{"ticker": "AAA", "closePrice": "$11.00"}]
+    assert captured["message"] == "market close report"
+    assert captured["notification_settings"] is settings
 
 
 def test_consecutive_stop_loss_limit_blocks_all_new_entries() -> None:

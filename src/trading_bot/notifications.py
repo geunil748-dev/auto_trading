@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import os
+from dataclasses import dataclass
 from html import escape
 from typing import Protocol
 
@@ -20,6 +22,18 @@ except ImportError:  # pragma: no cover - dependency absence is handled at runti
 
 MARKET_CLOSE_DONE_MESSAGE = "[자동매매]\n장마감 처리가 정상 완료되었습니다.\n운용 결과는 모니터에서 확인하세요."
 TELEGRAM_TIMEOUT_SECONDS = 10
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class TelegramCredentials:
+    token: str
+    chat_id: str
+    source: str
+
+    @property
+    def complete(self) -> bool:
+        return bool(self.token and self.chat_id)
 
 
 class Sender(Protocol):
@@ -27,33 +41,67 @@ class Sender(Protocol):
 
 
 def send_telegram_message(message: str) -> bool:
-    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-    return _post_telegram_message(token, chat_id, message)
+    return send_alert_telegram_message(message)
 
 
-def send_market_close_done(settings: NotificationSettings, sender: Sender | None = None) -> bool:
-    if not settings.telegram_bot_token or not settings.telegram_chat_id:
+def send_alert_telegram_message(
+    message: str,
+    settings: NotificationSettings | None = None,
+) -> bool:
+    return _post_telegram_message(resolve_alert_telegram_credentials(settings), message)
+
+
+def send_market_close_done(
+    settings: NotificationSettings,
+    sender: Sender | None = None,
+) -> bool:
+    credentials = resolve_alert_telegram_credentials(settings)
+    if not credentials.complete:
+        _log_missing_credentials(credentials)
         return False
     return (sender or send_telegram_notice)(settings, MARKET_CLOSE_DONE_MESSAGE)
 
 
 def send_telegram_notice(settings: NotificationSettings, message: str) -> bool:
-    return _post_telegram_message(
-        settings.telegram_bot_token,
-        settings.telegram_chat_id,
-        message,
-    )
+    return _post_telegram_message(resolve_alert_telegram_credentials(settings), message)
 
 
-def _post_telegram_message(token: str, chat_id: str, message: str) -> bool:
-    if not token or not chat_id or requests is None:
+def resolve_alert_telegram_credentials(
+    settings: NotificationSettings | None = None,
+) -> TelegramCredentials:
+    alert_token = (
+        settings.telegram_bot_token
+        if settings is not None and settings.telegram_bot_token
+        else os.getenv("ALERT_TELEGRAM_BOT_TOKEN", "")
+    ).strip()
+    alert_chat_id = (
+        settings.telegram_chat_id
+        if settings is not None and settings.telegram_chat_id
+        else os.getenv("ALERT_TELEGRAM_CHAT_ID", "")
+    ).strip()
+    if alert_token or alert_chat_id:
+        return TelegramCredentials(alert_token, alert_chat_id, "ALERT_TELEGRAM")
+
+    legacy_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    legacy_chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    return TelegramCredentials(legacy_token, legacy_chat_id, "TELEGRAM")
+
+
+def _post_telegram_message(credentials: TelegramCredentials, message: str) -> bool:
+    if not credentials.complete:
+        _log_missing_credentials(credentials)
+        return False
+    if requests is None:
+        logger.warning(
+            "telegram alert send skipped: requests_unavailable source=%s",
+            credentials.source,
+        )
         return False
     try:
         response = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
+            f"https://api.telegram.org/bot{credentials.token}/sendMessage",
             data={
-                "chat_id": chat_id,
+                "chat_id": credentials.chat_id,
                 "text": escape(message, quote=False),
                 "parse_mode": "HTML",
                 "disable_web_page_preview": "true",
@@ -61,11 +109,37 @@ def _post_telegram_message(token: str, chat_id: str, message: str) -> bool:
             timeout=TELEGRAM_TIMEOUT_SECONDS,
         )
         if not response.ok:
+            logger.warning(
+                "telegram alert send failed: status_code=%s source=%s",
+                getattr(response, "status_code", "unknown"),
+                credentials.source,
+            )
             return False
         payload = response.json()
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "telegram alert send failed: exception=%s source=%s",
+            type(exc).__name__,
+            credentials.source,
+        )
         return False
-    return isinstance(payload, dict) and bool(payload.get("ok"))
+    ok = isinstance(payload, dict) and bool(payload.get("ok"))
+    if not ok:
+        logger.warning(
+            "telegram alert send failed: response_ok=false source=%s",
+            credentials.source,
+        )
+    return ok
+
+
+def _log_missing_credentials(credentials: TelegramCredentials) -> None:
+    logger.warning(
+        "telegram alert send skipped: missing credentials "
+        "token_present=%s chat_id_present=%s source=%s",
+        bool(credentials.token),
+        bool(credentials.chat_id),
+        credentials.source,
+    )
 
 
 __all__ = [
@@ -77,6 +151,8 @@ __all__ = [
     "get_current_price",
     "is_market_day",
     "now_kst",
+    "resolve_alert_telegram_credentials",
+    "send_alert_telegram_message",
     "send_market_close_done",
     "send_telegram_message",
     "send_telegram_notice",

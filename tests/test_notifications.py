@@ -1,11 +1,13 @@
 from datetime import date
 
+import trading_bot.notifications as notifications_module
 from trading_bot.config import NotificationSettings
 from trading_bot.models import FillRecord
-import trading_bot.notifications as notifications_module
 from trading_bot.notifications import (
     MARKET_CLOSE_DONE_MESSAGE,
     TradeNotifier,
+    resolve_alert_telegram_credentials,
+    send_alert_telegram_message,
     send_market_close_done,
     send_telegram_message,
 )
@@ -17,8 +19,15 @@ from trading_bot.trade_fill_notifications import (
 )
 
 
-def test_send_market_close_done_skips_without_telegram_settings() -> None:
+def test_send_market_close_done_skips_without_telegram_settings(monkeypatch) -> None:
     calls: list[str] = []
+    for key in (
+        "ALERT_TELEGRAM_BOT_TOKEN",
+        "ALERT_TELEGRAM_CHAT_ID",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
+    ):
+        monkeypatch.delenv(key, raising=False)
 
     sent = send_market_close_done(
         NotificationSettings(),
@@ -44,6 +53,19 @@ def test_send_market_close_done_sends_notice_only() -> None:
     assert "체결" not in calls[0]
 
 
+def test_resolve_alert_telegram_credentials_prefers_alert(monkeypatch) -> None:
+    monkeypatch.setenv("ALERT_TELEGRAM_BOT_TOKEN", "alert-token")
+    monkeypatch.setenv("ALERT_TELEGRAM_CHAT_ID", "alert-chat")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "legacy-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "legacy-chat")
+
+    credentials = resolve_alert_telegram_credentials()
+
+    assert credentials.token == "alert-token"
+    assert credentials.chat_id == "alert-chat"
+    assert credentials.source == "ALERT_TELEGRAM"
+
+
 def test_send_telegram_message_posts_with_env(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 
@@ -59,6 +81,8 @@ def test_send_telegram_message_posts_with_env(monkeypatch) -> None:
             calls.append({"url": url, "data": data, "timeout": timeout})
             return Response()
 
+    monkeypatch.delenv("ALERT_TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("ALERT_TELEGRAM_CHAT_ID", raising=False)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "1234")
     monkeypatch.setattr(notifications_module, "requests", FakeRequests)
@@ -71,6 +95,78 @@ def test_send_telegram_message_posts_with_env(monkeypatch) -> None:
     assert data["chat_id"] == "1234"
     assert data["parse_mode"] == "HTML"
     assert data["text"] == "A &lt; B"
+
+
+def test_send_telegram_message_prefers_alert_env(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class Response:
+        ok = True
+
+        def json(self) -> dict[str, bool]:
+            return {"ok": True}
+
+    class FakeRequests:
+        @staticmethod
+        def post(url: str, data: dict[str, object], timeout: int) -> Response:
+            calls.append({"url": url, "data": data, "timeout": timeout})
+            return Response()
+
+    monkeypatch.setenv("ALERT_TELEGRAM_BOT_TOKEN", "alert-token")
+    monkeypatch.setenv("ALERT_TELEGRAM_CHAT_ID", "alert-chat")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "legacy-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "legacy-chat")
+    monkeypatch.setattr(notifications_module, "requests", FakeRequests)
+
+    assert send_telegram_message("daily report") is True
+
+    assert calls[0]["url"] == "https://api.telegram.org/botalert-token/sendMessage"
+    assert calls[0]["data"]["chat_id"] == "alert-chat"
+
+
+def test_send_market_close_done_falls_back_to_legacy_env(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class Response:
+        ok = True
+
+        def json(self) -> dict[str, bool]:
+            return {"ok": True}
+
+    class FakeRequests:
+        @staticmethod
+        def post(url: str, data: dict[str, object], timeout: int) -> Response:
+            calls.append({"url": url, "data": data, "timeout": timeout})
+            return Response()
+
+    monkeypatch.delenv("ALERT_TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("ALERT_TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "legacy-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "legacy-chat")
+    monkeypatch.setattr(notifications_module, "requests", FakeRequests)
+
+    assert send_market_close_done(NotificationSettings()) is True
+
+    assert calls[0]["url"] == "https://api.telegram.org/botlegacy-token/sendMessage"
+    assert calls[0]["data"]["chat_id"] == "legacy-chat"
+
+
+def test_send_alert_telegram_message_logs_missing_credentials_without_secret(
+    monkeypatch,
+    caplog,
+) -> None:
+    monkeypatch.setenv("ALERT_TELEGRAM_BOT_TOKEN", "secret-token")
+    monkeypatch.delenv("ALERT_TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "legacy-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "legacy-chat")
+
+    assert send_alert_telegram_message("daily report") is False
+
+    log_text = "\n".join(item.message for item in caplog.records)
+    assert "token_present=True" in log_text
+    assert "chat_id_present=False" in log_text
+    assert "secret-token" not in log_text
+    assert "legacy-token" not in log_text
 
 
 def test_trade_notifier_buy_success_updates_position_and_daily() -> None:

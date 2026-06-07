@@ -49,6 +49,17 @@ For automatic server updates from `origin/main`, see
 For sharing one KIS access token across the real and test servers, see
 [docs/kis_token_cache.md](docs/kis_token_cache.md).
 
+## Telegram Alerts
+
+운영 텔레그램 알림은 `ALERT_TELEGRAM_BOT_TOKEN`과
+`ALERT_TELEGRAM_CHAT_ID`를 우선 사용합니다. 장마감 완료 안내와 장마감
+체결/보유 요약 리포트는 같은 `ALERT_TELEGRAM_*` 설정을 사용합니다.
+
+기존 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`는 하위 호환 fallback입니다.
+새 운영 서버 설정은 `ALERT_TELEGRAM_*`에만 값을 넣고, 실제 토큰과 chat id는
+`.env`에만 저장합니다. 토큰, chat id, API key, 계좌번호, DB 접속정보는
+커밋하지 않습니다.
+
 ## Trading Bot Phase 2
 
 This repository starts the mock-trading foundation described in the planning
