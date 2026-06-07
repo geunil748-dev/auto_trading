@@ -66,6 +66,42 @@ def test_resolve_alert_telegram_credentials_prefers_alert(monkeypatch) -> None:
     assert credentials.source == "ALERT_TELEGRAM"
 
 
+def test_resolve_alert_telegram_credentials_uses_legacy_when_alert_absent(monkeypatch) -> None:
+    monkeypatch.delenv("ALERT_TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("ALERT_TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "legacy-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "legacy-chat")
+
+    credentials = resolve_alert_telegram_credentials()
+
+    assert credentials.token == "legacy-token"
+    assert credentials.chat_id == "legacy-chat"
+    assert credentials.source == "LEGACY_TELEGRAM"
+
+
+def test_resolve_alert_telegram_credentials_falls_back_for_partial_alert(
+    monkeypatch,
+    caplog,
+) -> None:
+    monkeypatch.setenv("ALERT_TELEGRAM_BOT_TOKEN", "alert-token")
+    monkeypatch.delenv("ALERT_TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "legacy-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "legacy-chat")
+
+    credentials = resolve_alert_telegram_credentials()
+
+    assert credentials.token == "legacy-token"
+    assert credentials.chat_id == "legacy-chat"
+    assert credentials.source == "LEGACY_TELEGRAM"
+    log_text = "\n".join(item.message for item in caplog.records)
+    assert "falling back to legacy credentials" in log_text
+    assert "alert_token_present=True" in log_text
+    assert "alert_chat_id_present=False" in log_text
+    assert "alert-token" not in log_text
+    assert "legacy-token" not in log_text
+    assert "legacy-chat" not in log_text
+
+
 def test_send_telegram_message_posts_with_env(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 
@@ -151,6 +187,35 @@ def test_send_market_close_done_falls_back_to_legacy_env(monkeypatch) -> None:
     assert calls[0]["data"]["chat_id"] == "legacy-chat"
 
 
+def test_send_market_close_done_falls_back_to_legacy_for_partial_alert_settings(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class Response:
+        ok = True
+
+        def json(self) -> dict[str, bool]:
+            return {"ok": True}
+
+    class FakeRequests:
+        @staticmethod
+        def post(url: str, data: dict[str, object], timeout: int) -> Response:
+            calls.append({"url": url, "data": data, "timeout": timeout})
+            return Response()
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "legacy-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "legacy-chat")
+    monkeypatch.setattr(notifications_module, "requests", FakeRequests)
+
+    settings = NotificationSettings(telegram_bot_token="alert-token", telegram_chat_id="")
+
+    assert send_market_close_done(settings) is True
+
+    assert calls[0]["url"] == "https://api.telegram.org/botlegacy-token/sendMessage"
+    assert calls[0]["data"]["chat_id"] == "legacy-chat"
+
+
 def test_send_alert_telegram_message_logs_missing_credentials_without_secret(
     monkeypatch,
     caplog,
@@ -158,13 +223,14 @@ def test_send_alert_telegram_message_logs_missing_credentials_without_secret(
     monkeypatch.setenv("ALERT_TELEGRAM_BOT_TOKEN", "secret-token")
     monkeypatch.delenv("ALERT_TELEGRAM_CHAT_ID", raising=False)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "legacy-token")
-    monkeypatch.setenv("TELEGRAM_CHAT_ID", "legacy-chat")
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
 
     assert send_alert_telegram_message("daily report") is False
 
     log_text = "\n".join(item.message for item in caplog.records)
     assert "token_present=True" in log_text
     assert "chat_id_present=False" in log_text
+    assert "source=ALERT_TELEGRAM_PARTIAL" in log_text
     assert "secret-token" not in log_text
     assert "legacy-token" not in log_text
 

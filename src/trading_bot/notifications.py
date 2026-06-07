@@ -71,20 +71,40 @@ def resolve_alert_telegram_credentials(
 ) -> TelegramCredentials:
     alert_token = (
         settings.telegram_bot_token
-        if settings is not None and settings.telegram_bot_token
+        if settings is not None
         else os.getenv("ALERT_TELEGRAM_BOT_TOKEN", "")
     ).strip()
     alert_chat_id = (
         settings.telegram_chat_id
-        if settings is not None and settings.telegram_chat_id
+        if settings is not None
         else os.getenv("ALERT_TELEGRAM_CHAT_ID", "")
     ).strip()
-    if alert_token or alert_chat_id:
-        return TelegramCredentials(alert_token, alert_chat_id, "ALERT_TELEGRAM")
-
     legacy_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     legacy_chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-    return TelegramCredentials(legacy_token, legacy_chat_id, "TELEGRAM")
+
+    alert_complete = bool(alert_token and alert_chat_id)
+    legacy_complete = bool(legacy_token and legacy_chat_id)
+
+    if alert_complete:
+        return TelegramCredentials(alert_token, alert_chat_id, "ALERT_TELEGRAM")
+
+    if legacy_complete:
+        if alert_token or alert_chat_id:
+            logger.warning(
+                "telegram alert config partial; falling back to legacy credentials "
+                "alert_token_present=%s alert_chat_id_present=%s",
+                bool(alert_token),
+                bool(alert_chat_id),
+            )
+        return TelegramCredentials(legacy_token, legacy_chat_id, "LEGACY_TELEGRAM")
+
+    if alert_token or alert_chat_id:
+        return TelegramCredentials(alert_token, alert_chat_id, "ALERT_TELEGRAM_PARTIAL")
+
+    if legacy_token or legacy_chat_id:
+        return TelegramCredentials(legacy_token, legacy_chat_id, "LEGACY_TELEGRAM_PARTIAL")
+
+    return TelegramCredentials("", "", "MISSING")
 
 
 def _post_telegram_message(credentials: TelegramCredentials, message: str) -> bool:
