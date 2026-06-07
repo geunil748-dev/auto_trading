@@ -323,7 +323,13 @@ def _save_daily_run_summary(
             buy_count,
             sell_count,
         )
-    except Exception:
+    except Exception as exc:
+        _safe_scheduler_log(
+            "WARNING",
+            "summary",
+            f"DAILY_RUN_SUMMARY_SAVE_FAILED: {_safe_exception_summary(exc)}",
+            reject_reason="DAILY_RUN_SUMMARY_SAVE_FAILED",
+        )
         # 운용 결과 저장 실패가 장중 주문/감시 루프를 멈추지 않도록 무시한다.
         return
 
@@ -336,13 +342,38 @@ def _save_daily_trade_summary_report() -> None:
 
 
 def _log_daily_trade_summary_failure(exc: Exception) -> None:
+    _safe_scheduler_log(
+        "WARNING",
+        "summary",
+        f"SUMMARY_REPORT_SAVE_FAILED: {_safe_exception_summary(exc)}",
+        reject_reason="SUMMARY_REPORT_SAVE_FAILED",
+    )
+
+
+def _safe_exception_summary(exc: Exception) -> str:
+    return type(exc).__name__
+
+
+def _safe_scheduler_log(
+    level: str,
+    module: str,
+    message: str,
+    *,
+    reject_reason: str = "",
+    symbol: str = "",
+    actual_value: float | None = None,
+    threshold_value: float | None = None,
+) -> None:
     try:
         SqlServerDailyRepository(pyodbc_connect_factory()).save_log(
             BotLog(
-                "WARNING",
-                "summary",
-                f"SUMMARY_REPORT_SAVE_FAILED: {type(exc).__name__}",
-                reject_reason="SUMMARY_REPORT_SAVE_FAILED",
+                level,
+                module,
+                message,
+                symbol=symbol,
+                reject_reason=reject_reason,
+                actual_value=actual_value,
+                threshold_value=threshold_value,
             )
         )
     except Exception:
@@ -352,7 +383,13 @@ def _log_daily_trade_summary_failure(exc: Exception) -> None:
 def _send_market_close_notice() -> None:
     try:
         send_market_close_done(load_notification_settings())
-    except Exception:
+    except Exception as exc:
+        _safe_scheduler_log(
+            "WARNING",
+            "notification",
+            f"MARKET_CLOSE_NOTICE_FAILED: {_safe_exception_summary(exc)}",
+            reject_reason="MARKET_CLOSE_NOTICE_FAILED",
+        )
         # 알림 실패는 주문/장마감 정산 흐름과 분리한다.
         return
 
@@ -360,7 +397,13 @@ def _send_market_close_notice() -> None:
 def _send_fill_notifications(records: list[FillRecord], holdings: list[object]) -> None:
     try:
         send_fill_notifications(records, holdings)
-    except Exception:
+    except Exception as exc:
+        _safe_scheduler_log(
+            "WARNING",
+            "notification",
+            f"FILL_NOTIFICATION_FAILED: {_safe_exception_summary(exc)}",
+            reject_reason="FILL_NOTIFICATION_FAILED",
+        )
         # 체결 알림 실패는 주문/DB 저장 흐름과 분리한다.
         return
 
@@ -388,7 +431,13 @@ def _send_market_close_report(state: dict[str, object]) -> None:
                 notification_settings,
             ),
         )
-    except Exception:
+    except Exception as exc:
+        _safe_scheduler_log(
+            "WARNING",
+            "notification",
+            f"MARKET_CLOSE_REPORT_FAILED: {_safe_exception_summary(exc)}",
+            reject_reason="MARKET_CLOSE_REPORT_FAILED",
+        )
         # 장마감 요약 알림 실패는 장마감 처리 결과와 분리한다.
         return
 
@@ -436,7 +485,13 @@ def _consecutive_stop_loss_count(repository) -> int:
     try:
         if hasattr(repository, "consecutive_stop_loss_count"):
             return int(repository.consecutive_stop_loss_count(current_trade_date()))
-    except Exception:
+    except Exception as exc:
+        _safe_scheduler_log(
+            "WARNING",
+            "risk",
+            f"STOP_LOSS_COUNT_LOOKUP_FAILED: {_safe_exception_summary(exc)}",
+            reject_reason="STOP_LOSS_COUNT_LOOKUP_FAILED",
+        )
         return 0
     return 0
 
@@ -445,7 +500,14 @@ def _last_stop_loss_at(repository, ticker: str):
     try:
         if hasattr(repository, "last_stop_loss_at"):
             return repository.last_stop_loss_at(current_trade_date(), ticker)
-    except Exception:
+    except Exception as exc:
+        _safe_scheduler_log(
+            "WARNING",
+            "risk",
+            f"STOP_LOSS_COOLDOWN_LOOKUP_FAILED: {_safe_exception_summary(exc)}",
+            symbol=ticker,
+            reject_reason="STOP_LOSS_COOLDOWN_LOOKUP_FAILED",
+        )
         return None
     return None
 
@@ -466,7 +528,13 @@ def _saved_partial_take_profit_tickers(repository) -> set[str]:
     try:
         if hasattr(repository, "partial_take_profit_tickers"):
             return set(repository.partial_take_profit_tickers(current_trade_date()))
-    except Exception:
+    except Exception as exc:
+        _safe_scheduler_log(
+            "WARNING",
+            "risk",
+            f"PARTIAL_TAKE_PROFIT_LOOKUP_FAILED: {_safe_exception_summary(exc)}",
+            reject_reason="PARTIAL_TAKE_PROFIT_LOOKUP_FAILED",
+        )
         return set()
     return set()
 
@@ -697,7 +765,7 @@ def _persist_live_snapshot(live_state: dict[str, object]) -> str:
     except ValueError:
         return ""
     except Exception as exc:
-        return f"모니터 DB 저장 실패: {exc}"
+        return f"모니터 DB 저장 실패: {_safe_exception_summary(exc)}"
     return ""
 
 
@@ -897,7 +965,13 @@ def _cancel_stale_mock_buy_orders(
         return []
     try:
         rows = _mock_order_rows(kis_settings)
-    except Exception:
+    except Exception as exc:
+        _safe_scheduler_log(
+            "WARNING",
+            "orders",
+            f"STALE_MOCK_BUY_ORDER_LOOKUP_FAILED: {_safe_exception_summary(exc)}",
+            reject_reason="STALE_MOCK_BUY_ORDER_LOOKUP_FAILED",
+        )
         return []
     requests = stale_unfilled_buy_cancel_requests(
         rows,
