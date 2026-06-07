@@ -4,9 +4,18 @@ from trading_bot.config import KisSettings, NotificationSettings, TradingSetting
 from trading_bot.models import AccountState, BuyIntent, FillRecord, PositionState, ScoreRecord, SellIntent
 from trading_bot.scheduled_tasks import (
     _apply_stop_loss_entry_guards,
+    _cancel_stale_mock_buy_orders,
+    _consecutive_stop_loss_count,
     _entry_profit_snapshots_from_fills,
     _holding_prices,
+    _last_stop_loss_at,
     _persist_live_snapshot,
+    _safe_scheduler_log,
+    _save_daily_run_summary,
+    _save_daily_trade_summary_report,
+    _saved_partial_take_profit_tickers,
+    _send_fill_notifications,
+    _send_market_close_notice,
     _send_market_close_report,
     live_mock_tasks,
 )
@@ -372,6 +381,22 @@ def test_persist_live_snapshot_saves_fill_history_and_entry_snapshot(monkeypatch
     assert notifications
 
 
+def test_persist_live_snapshot_masks_db_failure_message(monkeypatch) -> None:
+    def fail_repository(connect):
+        raise RuntimeError("MSSQL_PASSWORD=secret")
+
+    monkeypatch.setattr("trading_bot.scheduled_tasks.SqlServerDailyRepository", fail_repository)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.pyodbc_connect_factory", lambda: object)
+
+    error = _persist_live_snapshot(
+        {"account": {}, "orders": [], "holdings": [], "fills": []}
+    )
+
+    assert error == "모니터 DB 저장 실패: RuntimeError"
+    assert "secret" not in error
+    assert "MSSQL_PASSWORD" not in error
+
+
 def test_market_close_report_uses_alert_telegram_settings(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -440,6 +465,199 @@ def test_market_close_report_uses_alert_telegram_settings(monkeypatch) -> None:
     assert captured["holdings"] == [{"ticker": "AAA", "closePrice": "$11.00"}]
     assert captured["message"] == "market close report"
     assert captured["notification_settings"] is settings
+
+
+def test_safe_scheduler_log_ignores_db_log_failure(monkeypatch) -> None:
+    def fail_repository(connect):
+        raise RuntimeError("MSSQL_PASSWORD=secret")
+
+    monkeypatch.setattr("trading_bot.scheduled_tasks.SqlServerDailyRepository", fail_repository)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.pyodbc_connect_factory", lambda: object)
+
+    _safe_scheduler_log(
+        "WARNING",
+        "scheduler",
+        "TEST_FAILED: RuntimeError",
+        reject_reason="TEST_FAILED",
+    )
+
+
+def test_market_close_notice_failure_logs_warning_without_secret(monkeypatch) -> None:
+    logs = []
+
+    def capture(level, module, message, **kwargs):
+        logs.append((level, module, message, kwargs))
+
+    def fail_notice(settings):
+        raise RuntimeError("ALERT_TELEGRAM_BOT_TOKEN=secret")
+
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.load_notification_settings",
+        lambda: NotificationSettings(),
+    )
+    monkeypatch.setattr("trading_bot.scheduled_tasks.send_market_close_done", fail_notice)
+    monkeypatch.setattr("trading_bot.scheduled_tasks._safe_scheduler_log", capture)
+
+    _send_market_close_notice()
+
+    assert logs[0][0] == "WARNING"
+    assert logs[0][1] == "notification"
+    assert logs[0][2] == "MARKET_CLOSE_NOTICE_FAILED: RuntimeError"
+    assert logs[0][3]["reject_reason"] == "MARKET_CLOSE_NOTICE_FAILED"
+    assert "secret" not in logs[0][2]
+    assert "ALERT_TELEGRAM_BOT_TOKEN" not in logs[0][2]
+
+
+def test_fill_notification_failure_logs_warning_without_secret(monkeypatch) -> None:
+    logs = []
+
+    def capture(level, module, message, **kwargs):
+        logs.append((level, module, message, kwargs))
+
+    def fail_notification(records, holdings):
+        raise TimeoutError("telegram token secret")
+
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_fill_notifications",
+        fail_notification,
+    )
+    monkeypatch.setattr("trading_bot.scheduled_tasks._safe_scheduler_log", capture)
+
+    _send_fill_notifications([], [])
+
+    assert logs[0][2] == "FILL_NOTIFICATION_FAILED: TimeoutError"
+    assert logs[0][3]["reject_reason"] == "FILL_NOTIFICATION_FAILED"
+    assert "secret" not in logs[0][2]
+
+
+def test_market_close_report_failure_logs_warning_without_secret(monkeypatch) -> None:
+    logs = []
+
+    def capture(level, module, message, **kwargs):
+        logs.append((level, module, message, kwargs))
+
+    def fail_repository(connect):
+        raise RuntimeError("MSSQL_PASSWORD=secret")
+
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.load_notification_settings",
+        lambda: NotificationSettings(),
+    )
+    monkeypatch.setattr("trading_bot.scheduled_tasks.SqlServerDailyRepository", fail_repository)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.pyodbc_connect_factory", lambda: object)
+    monkeypatch.setattr("trading_bot.scheduled_tasks._safe_scheduler_log", capture)
+
+    _send_market_close_report({"fills": [{"ticker": "AAA"}], "holdings": []})
+
+    assert logs[0][2] == "MARKET_CLOSE_REPORT_FAILED: RuntimeError"
+    assert logs[0][3]["reject_reason"] == "MARKET_CLOSE_REPORT_FAILED"
+    assert "secret" not in logs[0][2]
+    assert "MSSQL_PASSWORD" not in logs[0][2]
+
+
+def test_daily_summary_failures_log_warning_without_secret(monkeypatch) -> None:
+    logs = []
+
+    def capture(level, module, message, **kwargs):
+        logs.append((level, module, message, kwargs))
+
+    monkeypatch.setattr("trading_bot.scheduled_tasks._safe_scheduler_log", capture)
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.generate_daily_trade_summary",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("DB_PASSWORD=secret")),
+    )
+
+    _save_daily_trade_summary_report()
+
+    assert logs == [
+        (
+            "WARNING",
+            "summary",
+            "SUMMARY_REPORT_SAVE_FAILED: RuntimeError",
+            {"reject_reason": "SUMMARY_REPORT_SAVE_FAILED"},
+        )
+    ]
+    assert "secret" not in logs[0][2]
+
+
+def test_daily_run_summary_failure_logs_warning_without_secret(monkeypatch) -> None:
+    logs = []
+
+    def capture(level, module, message, **kwargs):
+        logs.append((level, module, message, kwargs))
+
+    def fail_monitor_repository(connect):
+        raise RuntimeError("MSSQL_PASSWORD=secret")
+
+    monkeypatch.setattr("trading_bot.scheduled_tasks._safe_scheduler_log", capture)
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.SqlServerMonitorRepository",
+        fail_monitor_repository,
+    )
+    monkeypatch.setattr("trading_bot.scheduled_tasks.pyodbc_connect_factory", lambda: object)
+
+    _save_daily_run_summary(TradingSettings(), None, None)
+
+    assert logs[0][2] == "DAILY_RUN_SUMMARY_SAVE_FAILED: RuntimeError"
+    assert logs[0][3]["reject_reason"] == "DAILY_RUN_SUMMARY_SAVE_FAILED"
+    assert "secret" not in logs[0][2]
+
+
+def test_stop_loss_lookup_failures_return_safe_defaults_and_log(monkeypatch) -> None:
+    logs = []
+
+    def capture(level, module, message, **kwargs):
+        logs.append((level, module, message, kwargs))
+
+    class FailingRiskRepository:
+        def consecutive_stop_loss_count(self, trade_date):
+            raise RuntimeError("MSSQL_PASSWORD=secret")
+
+        def last_stop_loss_at(self, trade_date, ticker):
+            raise RuntimeError("KIS_APP_SECRET=secret")
+
+        def partial_take_profit_tickers(self, trade_date):
+            raise RuntimeError("MONITOR_BEARER_TOKEN=secret")
+
+    monkeypatch.setattr("trading_bot.scheduled_tasks._safe_scheduler_log", capture)
+
+    repository = FailingRiskRepository()
+
+    assert _consecutive_stop_loss_count(repository) == 0
+    assert _last_stop_loss_at(repository, "AAA") is None
+    assert _saved_partial_take_profit_tickers(repository) == set()
+    assert [item[3]["reject_reason"] for item in logs] == [
+        "STOP_LOSS_COUNT_LOOKUP_FAILED",
+        "STOP_LOSS_COOLDOWN_LOOKUP_FAILED",
+        "PARTIAL_TAKE_PROFIT_LOOKUP_FAILED",
+    ]
+    assert logs[1][3]["symbol"] == "AAA"
+    assert all("secret" not in item[2] for item in logs)
+
+
+def test_cancel_stale_mock_buy_lookup_failure_logs_warning(monkeypatch) -> None:
+    logs = []
+
+    def capture(level, module, message, **kwargs):
+        logs.append((level, module, message, kwargs))
+
+    def fail_mock_orders(kis_settings):
+        raise RuntimeError("Authorization Bearer secret")
+
+    monkeypatch.setattr("trading_bot.scheduled_tasks._mock_order_rows", fail_mock_orders)
+    monkeypatch.setattr("trading_bot.scheduled_tasks._safe_scheduler_log", capture)
+
+    result = _cancel_stale_mock_buy_orders(
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        2,
+        set(),
+    )
+
+    assert result == []
+    assert logs[0][1] == "orders"
+    assert logs[0][2] == "STALE_MOCK_BUY_ORDER_LOOKUP_FAILED: RuntimeError"
+    assert logs[0][3]["reject_reason"] == "STALE_MOCK_BUY_ORDER_LOOKUP_FAILED"
+    assert "secret" not in logs[0][2]
 
 
 def test_consecutive_stop_loss_limit_blocks_all_new_entries() -> None:
