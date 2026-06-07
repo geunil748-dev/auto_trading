@@ -48,7 +48,8 @@ class Breakout:
 
 
 def test_dry_run_runtime_plans_buy_intents_and_monitor_state() -> None:
-    result = DryRunRuntime(Pipeline(), Accounts(), Breakout(), TradingSettings()).run()
+    settings = TradingSettings(max_entry_price_change=0.30)
+    result = DryRunRuntime(Pipeline(), Accounts(), Breakout(), settings).run()
     state = state_from_dry_run(result)
 
     assert [(item.ticker, item.quantity) for item in result.buy_intents] == [("AAA", 153)]
