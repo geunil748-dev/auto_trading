@@ -280,6 +280,98 @@ counts, snapshot failures, elapsed time, and the stopped reason so operators can
 see whether evaluation stopped by target, max candidate limit, timeout, or
 candidate exhaustion.
 
+## 운영 기능 요약
+
+현재 운영 흐름은 KIS 모의투자 기반 후보 수집, 후보 평가, 모의 주문,
+체결/보유 동기화, 일일 요약 저장, 모니터 화면 표시로 구성됩니다. 실투자
+주문은 `APP_MODE=real`, `REAL_TRADING_ENABLED=true`,
+`REAL_EMERGENCY_STOP=false`, 별도 런타임 잠금 해제가 모두 만족되기 전에는
+열리지 않도록 설계되어 있습니다.
+
+### 후보 수집과 후보 평가
+
+스케줄러는 KIS 해외주식 상승률, 거래량, 거래대금 랭킹을 읽어 후보군을
+만듭니다. 이후 가격, 시가 갭, 거래량 비율, 장초반 등락률, 점수 기준을
+통과한 종목만 최종 후보가 됩니다. 평가 과정에서 매수까지 가지 않은 종목도
+`candidate_evaluations`에 저장되어, 왜 주문이 제출되지 않았는지 나중에
+확인할 수 있습니다.
+
+주요 판단 컬럼은 다음과 같습니다.
+
+- `buy_allowed`: 매수 판단까지 허용됐는지 여부
+- `order_submitted`: 실제 주문 제출까지 이어졌는지 여부
+- `buy_block_reason`: 매수 차단 또는 미제출 사유
+- `condition_result_json`: 과열, 5분봉, 거래량 증가, VWAP/장중 20선,
+  눌림 후 재돌파 등 조건별 평가 결과
+
+최근 기본 운용 기준은 매수 과열 상한 15%, 돌파 유지 시간 1분입니다. 5분봉
+종가 돌파와 5분 거래량 증가 조건은 점수 감산 방식으로 사용할 수 있고,
+과열 상한은 하드 필터로 동작합니다.
+
+### VWAP/장중 20선 조건 상태
+
+VWAP/장중 20선 조건은 UI, 설정 저장, 후보 평가, 로그/DB 저장 구조가
+준비되어 있습니다. 다만 현재 라이브 KIS 매수 판단 입력은 현재가, 시가,
+전일 고가/저가를 중심으로 만들어지며 `BreakoutInput.vwap_usd`와
+`BreakoutInput.intraday_ma20_usd`를 채우는 실시간 데이터 공급은 아직
+연결되어 있지 않습니다.
+
+따라서 VWAP/장중 20선 조건을 켜더라도 데이터가 없으면
+`SKIPPED_NO_DATA`로 기록되고 매수 차단 조건으로 작동하지 않습니다. 실제
+필터로 쓰려면 KIS 또는 다른 데이터 소스에서 장중 분봉을 가져와 VWAP와
+장중 20선을 계산한 뒤 `BreakoutInput`에 넣는 구현이 필요합니다.
+
+### 주문, 체결, 보유 저장
+
+모니터/스케줄러의 라이브 스냅샷 저장은 주문, 체결, 보유, 계좌 상태를
+SQL Server에 기록합니다. 주문 스냅샷은 `order_snapshot`, 체결 이력은
+`fill_history`, 매수 주문/매도 주문 기록은 `trade_history`에 저장됩니다.
+매수 체결은 `entry_profit_snapshot`으로 이어져 5/10/15/20/30/60분 후
+수익률과 최종 청산 사유를 분석할 수 있게 합니다.
+
+중복 체결 저장을 피하기 위해 기존 `fill_history`를 조회한 뒤 새 체결만
+저장합니다. 장마감 이후에는 `daily_run_summary`와 일일 요약 리포트를
+갱신합니다.
+
+### 일일 요약 리포트
+
+장마감 흐름과 수동 CLI는 당일 거래 데이터를 요약해
+`daily_trade_summary_report`에 저장합니다. 기준은 `trade_date + mode`이며,
+같은 날짜와 모드로 다시 생성하면 중복 삽입하지 않고 업데이트합니다.
+
+수동 생성 예시:
+
+```powershell
+$env:PYTHONPATH='src'
+python -m trading_bot generate-daily-summary --date 2026-06-05 --mode mock
+```
+
+텍스트 파일로 내보내는 CLI도 있습니다.
+
+```powershell
+$env:PYTHONPATH='src'
+python -m trading_bot export-trade-summary --date 2026-06-05 --mode mock
+```
+
+요약에는 총 손익, 총 수익률, 매수/매도 체결 수, 승률, 청산 사유별 성과,
+전략 버전별 성과, 진입 후 수익률 스냅샷, 후보/선정 요약, 주요 오류 로그가
+포함됩니다. 민감정보인 계좌번호, KIS 토큰, API key, DB 접속정보, `.env`
+내용은 포함하지 않습니다.
+
+### 주요 DB 테이블
+
+- `daily_target`: 당일 후보 리스트
+- `listed_target_snapshot`: 후보 스냅샷
+- `scoring`: 점수 계산 결과
+- `candidate_evaluations`: 매수 후보별 조건 평가와 주문 제출 여부
+- `trade_history`: 매수/매도 주문 기록
+- `fill_history`: KIS 체결 이력
+- `entry_profit_snapshot`: 매수 진입 후 수익률 추적
+- `daily_run_summary`: 일 단위 실행 요약
+- `daily_trade_summary_report`: 일일 거래 요약 화면/리포트
+- `bot_log`: 후보, 주문, 체결, 오류, 차단 사유 로그
+- `KisTokenCache`: 서버 간 공유 KIS 토큰 캐시
+
 ## Monitor
 
 The browser monitor lives in `monitor/`. It first requests `/api/state` from

@@ -210,7 +210,11 @@ def test_load_settings_uses_candidate_collection_defaults(tmp_path, monkeypatch)
     assert settings.min_opening_price_change == 0.0
     assert settings.min_volume_ratio == 1.0
     assert settings.max_opening_gap == 0.30
+    assert settings.max_entry_price_change == 0.15
+    assert settings.breakout_hold_minutes == 1.0
     assert settings.min_5m_volume_increase_percent == 5.0
+    assert runtime_risk_settings_payload(settings)["maxEntryPriceChangePercent"] == 15.0
+    assert runtime_risk_settings_payload(settings)["breakoutHoldMinutes"] == 1.0
     assert runtime_risk_settings_payload(settings)["min5mVolumeIncreasePercent"] == 5.0
     assert runtime_risk_settings_payload(settings)["initialRankedEvaluationLimit"] == 50
     assert runtime_risk_settings_payload(settings)["rankedEvaluationBatchSize"] == 25

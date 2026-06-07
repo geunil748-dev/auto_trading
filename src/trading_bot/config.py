@@ -151,9 +151,9 @@ class TradingSettings:
     intraday_refresh_candidate_limit: int = 3
     hybrid_candidate_limit: int = 8
     min_pyramiding_profit_rate: float = 0.03
-    max_entry_price_change: float = 0.25
+    max_entry_price_change: float = 0.15
     overheat_limit_condition_mode: str = CONDITION_MODE_HARD_FILTER
-    breakout_hold_minutes: float = 0.0
+    breakout_hold_minutes: float = 1.0
     require_5m_close_above_breakout: bool = True
     breakout_close_condition_mode: str = CONDITION_MODE_SOFT_SCORE
     require_5m_volume_increase: bool = True
@@ -264,12 +264,12 @@ def load_settings() -> TradingSettings:
         intraday_refresh_candidate_limit=_int_env("INTRADAY_REFRESH_CANDIDATE_LIMIT", 3),
         hybrid_candidate_limit=_int_env("HYBRID_CANDIDATE_LIMIT", 8),
         min_pyramiding_profit_rate=_float_env("MIN_PYRAMIDING_PROFIT_RATE", 0.03),
-        max_entry_price_change=_float_env("MAX_ENTRY_PRICE_CHANGE", 0.25),
+        max_entry_price_change=_float_env("MAX_ENTRY_PRICE_CHANGE", 0.15),
         overheat_limit_condition_mode=_condition_mode_env(
             "OVERHEAT_LIMIT_CONDITION_MODE",
             CONDITION_MODE_HARD_FILTER,
         ),
-        breakout_hold_minutes=_float_env("BREAKOUT_HOLD_MINUTES", 0.0),
+        breakout_hold_minutes=_float_env("BREAKOUT_HOLD_MINUTES", 1.0),
         require_5m_close_above_breakout=_bool_env("REQUIRE_5M_CLOSE_ABOVE_BREAKOUT", True),
         breakout_close_condition_mode=_condition_mode_env(
             "BREAKOUT_CLOSE_CONDITION_MODE",
