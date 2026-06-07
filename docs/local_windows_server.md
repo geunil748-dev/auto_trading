@@ -140,6 +140,20 @@ Get-Content .\logs\startup-monitor.log -Tail 50
 Get-Content .\logs\startup-scheduler.log -Tail 50
 ```
 
+Check monitor APIs from the server. `/health` is public enough for readiness
+checks, but `/api/state` requires a bearer header when `MONITOR_BEARER_TOKEN`
+is configured:
+
+```powershell
+curl.exe http://localhost:4174/health
+curl.exe http://localhost:4174/api/state
+curl.exe -H "Authorization: Bearer <MONITOR_BEARER_TOKEN>" http://localhost:4174/api/state
+```
+
+Keep the real monitor bearer token out of logs, chat messages, screenshots, and
+committed files. Use `<MONITOR_BEARER_TOKEN>` only as a placeholder in
+documentation.
+
 ## 10. Files That Must Stay Local
 
 Do not commit secrets or runtime output. The repository ignores these paths and patterns:

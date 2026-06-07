@@ -408,6 +408,9 @@ curl.exe http://localhost:4174/health
 
 curl.exe http://localhost:4174/api/state
 
+# When MONITOR_BEARER_TOKEN is configured:
+curl.exe -H "Authorization: Bearer <MONITOR_BEARER_TOKEN>" http://localhost:4174/api/state
+
 Get-Content "C:\auto_trading\logs\startup-monitor.log" -Tail 80 |
 Select-String -Pattern "ModuleNotFoundError|No module named 'clr'|Traceback"
 ```
@@ -425,6 +428,9 @@ Expected startup behavior:
 - If monitor binds to `0.0.0.0` or a LAN address, `MONITOR_BEARER_TOKEN` is
   required for `/api/*`; `/health` reports `security_status=fail` when it is
   missing.
+- Do not paste the real monitor bearer token into logs, chat messages, shell
+  history screenshots, or committed files. Use placeholders such as
+  `<MONITOR_BEARER_TOKEN>` in documentation and reports.
 - Scheduler trading cycles skip with `SKIP trading cycle: monitor degraded ...`
   when dependencies, DB connectivity, or monitor state freshness are not ready.
 
