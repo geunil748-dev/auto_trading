@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  python-and-monitor:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,integrations]"
+
+      - name: Run pytest
+        shell: pwsh
+        run: |
+          python -m pytest
+
+      - name: Compile Python files
+        shell: pwsh
+        run: |
+          python -m compileall src tools tests
+
+      - name: Check monitor JavaScript syntax
+        shell: pwsh
+        run: |
+          node --check monitor/app.js
+          if (Test-Path monitor/js) {
+            Get-ChildItem monitor/js -Recurse -Filter *.js | ForEach-Object {
+              node --check $_.FullName
+            }
+          }
