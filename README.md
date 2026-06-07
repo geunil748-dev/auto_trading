@@ -56,6 +56,8 @@ For sharing one KIS access token across the real and test servers, see
 체결/보유 요약 리포트는 같은 `ALERT_TELEGRAM_*` 설정을 사용합니다.
 
 기존 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`는 하위 호환 fallback입니다.
+`ALERT_TELEGRAM_*`가 일부만 설정되어 있고 기존 `TELEGRAM_*`가 완전하면
+legacy fallback을 사용하며, 실제 토큰과 chat id 값은 로그에 남기지 않습니다.
 새 운영 서버 설정은 `ALERT_TELEGRAM_*`에만 값을 넣고, 실제 토큰과 chat id는
 `.env`에만 저장합니다. 토큰, chat id, API key, 계좌번호, DB 접속정보는
 커밋하지 않습니다.
