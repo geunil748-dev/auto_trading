@@ -1,3 +1,10 @@
+import { createApiClient } from "./js/apiClient.js";
+import { readStoredMonitorToken, removeStoredMonitorToken, storeMonitorToken } from "./js/auth.js";
+import { MONITOR_MENU_ITEMS } from "./js/menuConfig.js";
+import { shouldLoadHistoryForPage } from "./js/pages/index.js";
+import { createRouter } from "./js/router.js";
+import { initSidebar, setActiveSidebarItem } from "./js/sidebar.js";
+
 // 기본 상태
 const emptyTradingStats = {
   lookback_days: 30,
@@ -90,11 +97,10 @@ let activePage = "dashboard";
 let historyDateTouched = false;
 let candidateHistoryMessage = "";
 
-const tokenStorageKey = "monitorBearerToken";
 const refreshButton = document.querySelector("#refreshState");
 const manualScreeningButton = document.querySelector("#manualScreening");
 const tabButtons = document.querySelectorAll(".tab-button");
-const navButtons = document.querySelectorAll(".nav-item");
+const sideNav = document.querySelector("#sideNav");
 const tokenInput = document.querySelector("#monitorToken");
 const saveTokenButton = document.querySelector("#saveMonitorToken");
 const authStatus = document.querySelector("#authStatus");
@@ -143,10 +149,28 @@ const sellAllButton = document.querySelector("#sellAllPositions");
 const showNoBuyLogsInput = document.querySelector("#showNoBuyLogs");
 const showNoSellLogsInput = document.querySelector("#showNoSellLogs");
 const panelToggleButtons = document.querySelectorAll("[data-collapse-target]");
+const apiClient = createApiClient({ getToken: bearerToken });
+const router = createRouter({
+  defaultPage: activePage,
+  allowedPages: MONITOR_MENU_ITEMS.map((item) => item.page),
+  onPageChange: (page) => {
+    activePage = page;
+    renderPage();
+    if (shouldLoadHistoryForPage(activePage)) loadHistory();
+    if (activePage === "dailySummary") loadDailySummaries();
+    if (activePage === "settings") loadRiskSettings();
+  },
+});
 
 document.body.dataset.page = activePage;
 if (historyDateInput) historyDateInput.value = todayText();
-if (tokenInput) tokenInput.value = localStorage.getItem(tokenStorageKey) || "";
+if (tokenInput) tokenInput.value = readStoredMonitorToken();
+initSidebar({
+  container: sideNav,
+  items: MONITOR_MENU_ITEMS,
+  activePage,
+  onNavigate: (page) => router.navigate(page),
+});
 
 saveTokenButton?.addEventListener("click", saveTokenAndReload);
 tokenInput?.addEventListener("keydown", (event) => {
@@ -193,21 +217,6 @@ tabButtons.forEach((button) => {
     render(currentState);
   });
 });
-navButtons.forEach((button) => {
-  button.addEventListener("click", () => {
-    activePage = button.dataset.page || "dashboard";
-    renderPage();
-    if (
-      activePage === "activity"
-      || activePage === "candidateHistory"
-      || activePage === "runSummary"
-      || activePage === "entryReasonStats"
-      || activePage === "backtest"
-    ) loadHistory();
-    if (activePage === "dailySummary") loadDailySummaries();
-    if (activePage === "settings") loadRiskSettings();
-  });
-});
 document.addEventListener("click", (event) => {
   const button = event.target.closest(".manual-sell-button");
   if (button) submitManualSell(button);
@@ -224,7 +233,7 @@ loadHistory();
 loadRiskSettings();
 
 function saveTokenAndReload() {
-  localStorage.setItem(tokenStorageKey, bearerToken());
+  storeMonitorToken(bearerToken());
   setAuthStatus("토큰을 저장했습니다.");
   loadState();
 }
@@ -735,14 +744,12 @@ function bearerToken() {
 }
 
 function clearSavedMonitorToken() {
-  localStorage.removeItem(tokenStorageKey);
+  removeStoredMonitorToken();
   if (tokenInput) tokenInput.value = "";
 }
 
 function fetchOptions(url, options = {}) {
-  const token = bearerToken();
-  if (!token || !url.startsWith("/api/")) return options;
-  return { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` } };
+  return apiClient.fetchOptions(url, options);
 }
 
 function setAuthStatus(message) {
@@ -919,7 +926,7 @@ function render(state) {
 // 화면 렌더링
 function renderPage() {
   document.body.dataset.page = activePage;
-  navButtons.forEach((button) => button.classList.toggle("active", button.dataset.page === activePage));
+  setActiveSidebarItem(sideNav, activePage);
 }
 
 function renderRuntime(runtime) {
