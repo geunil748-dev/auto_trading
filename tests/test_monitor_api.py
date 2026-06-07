@@ -7,11 +7,11 @@ from types import SimpleNamespace
 from trading_bot.monitor_api import MonitorStateReader, authorize_bearer
 from trading_bot.monitor_health import _health_state, _monitor_bind_requires_token
 from trading_bot.monitor_request import _setting_float
-from trading_bot.monitor_server import (
-    _DashboardStateReader,
-    _generate_daily_summary_state,
-    _read_daily_summary_detail_state,
-    _read_daily_summary_state,
+from trading_bot.monitor_response import generate_daily_summary_state
+from trading_bot.monitor_state_service import (
+    DashboardStateReader,
+    read_daily_summary_detail_state,
+    read_daily_summary_state,
 )
 from trading_bot.repositories import SqlServerMonitorRepository
 
@@ -37,8 +37,8 @@ def test_daily_summary_state_falls_back_to_empty_for_non_sql_reader() -> None:
     class Reader:
         pass
 
-    assert _read_daily_summary_state(Reader()) == {"summaries": []}
-    assert _read_daily_summary_detail_state(Reader(), date(2026, 6, 1), "mock") == {
+    assert read_daily_summary_state(Reader()) == {"summaries": []}
+    assert read_daily_summary_detail_state(Reader(), date(2026, 6, 1), "mock") == {
         "summary": None
     }
 
@@ -66,11 +66,11 @@ def test_generate_daily_summary_state_returns_created_summary(monkeypatch) -> No
         )
 
     monkeypatch.setattr(
-        "trading_bot.monitor_server.generate_daily_trade_summary",
+        "trading_bot.monitor_response.generate_daily_trade_summary",
         fake_generate_daily_trade_summary,
     )
 
-    payload = _generate_daily_summary_state({"date": "2026-06-03", "mode": "mock"})
+    payload = generate_daily_summary_state({"date": "2026-06-03", "mode": "mock"})
 
     assert calls == [(date(2026, 6, 3), "mock")]
     assert payload["ok"] is True
@@ -96,7 +96,7 @@ def test_dashboard_reader_falls_back_to_cached_state_when_sql_fails(tmp_path) ->
         def read(self) -> dict[str, object]:
             raise RuntimeError("No module named 'clr'")
 
-    payload = _DashboardStateReader(BrokenSqlReader(), MonitorStateReader(state)).read()
+    payload = DashboardStateReader(BrokenSqlReader(), MonitorStateReader(state)).read()
 
     assert payload["accounts"]["mock"]["account"]["cashUsd"] == "$1.00"
     assert payload["accounts"]["mock"]["targets"] == [["AAA"]]

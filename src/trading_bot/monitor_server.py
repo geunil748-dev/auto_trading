@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
 from pathlib import Path
@@ -15,17 +14,14 @@ from trading_bot.config import (
     runtime_risk_settings_payload,
     save_runtime_risk_settings,
 )
-from trading_bot.database import mssql_dsn_from_env, pyodbc_connect_factory
-from trading_bot.daily_trade_summary import generate_daily_trade_summary
 from trading_bot.manual_sell import submit_manual_mock_sell, submit_manual_mock_sell_all
 from trading_bot.manual_screening import ManualScreeningRunner
 from trading_bot.monitor_health import (
     _health_state,
     _monitor_bind_requires_token,
-    _monitor_security_state,
     _safe_error_text,
 )
-from trading_bot.monitor_api import MonitorStateReader, authorize_bearer
+from trading_bot.monitor_api import authorize_bearer
 from trading_bot.monitor_request import (
     _optional_bool,
     _optional_float,
@@ -38,6 +34,7 @@ from trading_bot.monitor_request import (
     _setting_float,
     read_json_body,
 )
+from trading_bot.monitor_response import generate_daily_summary_state, runtime_state
 from trading_bot.monitor_routes import (
     GET_BACKTEST,
     GET_DAILY_SUMMARY,
@@ -56,16 +53,14 @@ from trading_bot.monitor_routes import (
     POST_REAL_TRADING_CONTROL,
     POST_TRADING_SETTINGS,
 )
-from trading_bot.real_trading_control import load_real_trading_control, save_manual_enabled
-from trading_bot.repositories import SqlServerMonitorRepository
-from trading_bot.sql_monitor_state import SqlMonitorStateSource
-from trading_bot.trading_date import current_trade_date
-
-# 선택 의존성: .env 파일이 없어도 배포 환경의 환경변수를 그대로 사용할 수 있다.
-try:
-    from dotenv import load_dotenv
-except ImportError:  # pragma: no cover - 실행 환경에 따라 선택 의존성을 허용한다.
-    load_dotenv = None
+from trading_bot.monitor_state_service import (
+    build_state_reader,
+    read_daily_summary_detail_state,
+    read_daily_summary_state,
+    read_history_state,
+    read_monitor_state,
+)
+from trading_bot.real_trading_control import save_manual_enabled
 
 
 def serve_monitor(
@@ -74,7 +69,7 @@ def serve_monitor(
     state_path: Path = Path("monitor/state.json"),
     monitor_dir: Path = Path("monitor"),
 ) -> None:
-    reader = _state_reader(state_path)
+    reader = build_state_reader(state_path)
     handler = _handler(
         reader,
         monitor_dir,
@@ -83,137 +78,6 @@ def serve_monitor(
         bind_host=host,
     )
     ThreadingHTTPServer((host, port), handler).serve_forever()
-
-
-def _state_reader(state_path: Path) -> Any:
-    if load_dotenv is not None:
-        load_dotenv()
-    if mssql_dsn_from_env():
-        return _DashboardStateReader(
-            SqlMonitorStateSource(SqlServerMonitorRepository(pyodbc_connect_factory())),
-            MonitorStateReader(state_path),
-        )
-    return MonitorStateReader(state_path)
-
-
-class _DashboardStateReader:
-    def __init__(
-        self,
-        sql_reader: SqlMonitorStateSource,
-        state_reader: MonitorStateReader,
-    ) -> None:
-        self.sql_reader = sql_reader
-        self.state_reader = state_reader
-
-    def read(self) -> dict[str, object]:
-        try:
-            cached_state = self.state_reader.read()
-        except Exception:
-            cached_state = {}
-        state = _accounts_from_cached_state(cached_state)
-        try:
-            sql_state = self.sql_reader.read()
-        except Exception as exc:
-            state["sql"] = {
-                "connected": False,
-                "error": _safe_error_text(exc),
-            }
-            return state
-        mock = state["accounts"]["mock"]
-        if isinstance(mock, dict):
-            # 화면은 API 응답을 직접 가공하지 않고 DB에 저장된 스냅샷을 우선 표시한다.
-            sql_account = sql_state.get("account")
-            if isinstance(sql_account, dict) and sql_account.get("cashUsd") != "-":
-                mock["account"] = sql_account
-            mock["targets"] = sql_state.get("targets", [])
-            mock["holdings"] = sql_state.get("holdings", [])
-            mock["orders"] = sql_state.get("orders", [])
-            mock["fills"] = sql_state.get("fills", [])
-            mock["trades"] = sql_state.get("trades", [])
-            mock["strategyStats"] = sql_state.get("strategyStats", [])
-            mock["exitReasonStats"] = sql_state.get("exitReasonStats", [])
-            mock["recentTrades"] = sql_state.get("recentTrades", [])
-            mock["entryProfitSnapshots"] = sql_state.get("entryProfitSnapshots", [])
-            mock["entryProfitSnapshotStats"] = sql_state.get("entryProfitSnapshotStats", {})
-            mock["trading_stats"] = sql_state.get("trading_stats", {})
-            if isinstance(mock.get("account"), dict):
-                mock["account"]["realizedProfitUsd"] = (
-                    sql_state.get("summary", {}).get("realizedProfitUsd", "$0.00")
-                    if isinstance(sql_state.get("summary"), dict)
-                    else "$0.00"
-                )
-            mock["logs"] = list(mock.get("logs", [])) + list(sql_state.get("logs", []))
-        real = state["accounts"].get("real") if isinstance(state.get("accounts"), dict) else None
-        sql_real_account = sql_state.get("realAccount")
-        if isinstance(real, dict) and isinstance(sql_real_account, dict):
-            if sql_real_account.get("cashUsd") != "-" or sql_real_account.get("cashKrw") != "-":
-                real["account"] = sql_real_account
-                real["connected"] = True
-                real["error"] = ""
-        state["date"] = sql_state.get("date")
-        state["trading_stats"] = sql_state.get("trading_stats", {})
-        state["sql"] = sql_state
-        return state
-
-    def read_history(self, trade_date: date) -> dict[str, object]:
-        return self.sql_reader.read_history(trade_date)
-
-    def read_daily_summaries(
-        self,
-        mode: str | None = None,
-        limit: int = 30,
-    ) -> dict[str, object]:
-        return self.sql_reader.read_daily_summaries(mode=mode, limit=limit)
-
-    def read_daily_summary_detail(self, trade_date: date, mode: str) -> dict[str, object]:
-        return self.sql_reader.read_daily_summary_detail(trade_date, mode)
-
-
-def _accounts_from_cached_state(raw_state: dict[str, object]) -> dict[str, object]:
-    if isinstance(raw_state.get("accounts"), dict):
-        return raw_state
-    return {
-        "accounts": {
-            "mock": {
-                "label": "모의투자",
-                "connected": True,
-                "error": "",
-                "account": raw_state.get("account", _empty_account()),
-                "targets": raw_state.get("targets", []),
-                "holdings": raw_state.get("holdings", []),
-                "orders": raw_state.get("orders", []),
-                "fills": raw_state.get("fills", []),
-                "logs": raw_state.get("logs", []),
-                "trades": raw_state.get("trades", []),
-                "trading_stats": raw_state.get("trading_stats", {}),
-            },
-            "real": {
-                "label": "실투자",
-                "connected": False,
-                "error": "실투자 화면은 마지막 연결 상태만 표시합니다.",
-                "account": _empty_account(),
-                "targets": [],
-                "holdings": [],
-                "orders": [],
-                "fills": [],
-                "logs": [],
-                "trades": [],
-            },
-        }
-    }
-
-
-def _empty_account() -> dict[str, str]:
-    return {
-        "cashUsd": "-",
-        "equityUsd": "-",
-        "investedUsd": "-",
-        "cashKrw": "-",
-        "equityKrw": "-",
-        "openPositions": "-",
-        "dailyProfitRate": "-",
-        "realizedProfitUsd": "-",
-    }
 
 
 def _handler(
@@ -295,8 +159,8 @@ def _handler(
         def _write_state(self) -> None:
             if not self._authorize_api():
                 return
-            state = _read_monitor_state(reader)
-            state["runtime"] = _runtime_state(
+            state = read_monitor_state(reader)
+            state["runtime"] = runtime_state(
                 local_bypass=self._allow_local_bypass(),
                 bind_host=bind_host,
             )
@@ -308,14 +172,14 @@ def _handler(
         def _write_history(self) -> None:
             if not self._authorize_api():
                 return
-            self._write_json(_read_history_state(reader, _query_date(self.path)))
+            self._write_json(read_history_state(reader, _query_date(self.path)))
 
         def _write_daily_summary(self) -> None:
             if not self._authorize_api():
                 return
             try:
                 self._write_json(
-                    _read_daily_summary_state(
+                    read_daily_summary_state(
                         reader,
                         mode=_query_mode(self.path),
                         limit=_query_limit(self.path, default=30, maximum=100),
@@ -336,7 +200,7 @@ def _handler(
                 return
             try:
                 self._write_json(
-                    _read_daily_summary_detail_state(
+                    read_daily_summary_detail_state(
                         reader,
                         _query_date(self.path),
                         _query_mode(self.path) or "mock",
@@ -356,7 +220,7 @@ def _handler(
             if not self._authorize_api():
                 return
             try:
-                self._write_json(_generate_daily_summary_state(self._read_json_body()))
+                self._write_json(generate_daily_summary_state(self._read_json_body()))
             except Exception as exc:
                 self._write_json(
                     {
@@ -382,7 +246,7 @@ def _handler(
             control = save_manual_enabled(enabled)
             self._write_json(
                 {
-                    "runtime": _runtime_state(
+                    "runtime": runtime_state(
                         control,
                         local_bypass=self._allow_local_bypass(),
                         bind_host=bind_host,
@@ -430,7 +294,7 @@ def _handler(
             try:
                 trade_date = _query_date(self.path)
                 tickers = _query_tickers(self.path)
-                state = _read_history_state(reader, trade_date)
+                state = read_history_state(reader, trade_date)
                 self._write_json(
                     run_backtest_from_monitor_state(
                         state,
@@ -540,90 +404,3 @@ def _handler(
             self.wfile.write(payload)
 
     return MonitorHandler
-
-
-def _generate_daily_summary_state(body: dict[str, Any]) -> dict[str, object]:
-    raw_date = str(body.get("date") or "").strip()
-    trade_date = date.fromisoformat(raw_date) if raw_date else current_trade_date()
-    mode = str(body.get("mode") or "mock").strip().lower()
-    result = generate_daily_trade_summary(trade_date=trade_date, mode=mode)
-    return {
-        "ok": True,
-        "summary": {
-            "tradeDate": result.report.trade_date.isoformat(),
-            "mode": result.report.mode,
-            "strategyVersion": result.report.strategy_version,
-            "settingsSnapshotHash": result.report.settings_snapshot_hash,
-            "tradeCount": result.report.trade_count,
-            "buyCount": result.report.buy_count,
-            "sellCount": result.report.sell_count,
-            "totalProfitUsd": result.report.total_profit_usd,
-            "totalProfitRate": result.report.total_profit_rate,
-            "winRate": result.report.win_rate,
-            "candidateCount": result.payload.get("candidateCount", 0),
-            "selectedCount": result.payload.get("selectedCount", 0),
-        },
-    }
-
-
-def _read_monitor_state(reader: Any) -> dict[str, object]:
-    return reader.read()
-
-
-def _read_history_state(reader: Any, trade_date: date) -> dict[str, object]:
-    if hasattr(reader, "read_history"):
-        return reader.read_history(trade_date)
-    return {
-        "date": trade_date.isoformat(),
-        "targets": [],
-        "orders": [],
-        "fills": [],
-        "logs": [],
-        "trades": [],
-        "entryReasonStats": [],
-        "strategyStats": [],
-        "exitReasonStats": [],
-        "recentTrades": [],
-    }
-
-
-def _read_daily_summary_state(
-    reader: Any,
-    mode: str | None = None,
-    limit: int = 30,
-) -> dict[str, object]:
-    if hasattr(reader, "read_daily_summaries"):
-        return reader.read_daily_summaries(mode=mode, limit=limit)
-    return {"summaries": []}
-
-
-def _read_daily_summary_detail_state(
-    reader: Any,
-    trade_date: date,
-    mode: str,
-) -> dict[str, object]:
-    if hasattr(reader, "read_daily_summary_detail"):
-        return reader.read_daily_summary_detail(trade_date, mode)
-    return {"summary": None}
-
-
-def _runtime_state(
-    control: Any | None = None,
-    local_bypass: bool = False,
-    bind_host: str = "127.0.0.1",
-) -> dict[str, object]:
-    if control is None:
-        control = load_real_trading_control(load_settings())
-    security = _monitor_security_state(bind_host)
-    return {
-        "activeMode": "real" if control.orders_unlocked else "mock",
-        "modeLabel": control.mode_label,
-        "monitorAuth": {
-            "localBypass": local_bypass,
-            "tokenConfigured": bool(os.getenv("MONITOR_BEARER_TOKEN", "").strip()),
-            "tokenRequired": bool(security["token_required"]),
-            "status": security["status"],
-            "bindHost": bind_host,
-        },
-        "realTrading": control.to_dict(),
-    }
