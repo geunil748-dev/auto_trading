@@ -6,12 +6,12 @@ from types import SimpleNamespace
 
 from trading_bot.monitor_api import MonitorStateReader, authorize_bearer
 from trading_bot.monitor_health import _health_state, _monitor_bind_requires_token
+from trading_bot.monitor_request import _setting_float
 from trading_bot.monitor_server import (
     _DashboardStateReader,
     _generate_daily_summary_state,
     _read_daily_summary_detail_state,
     _read_daily_summary_state,
-    _setting_float,
 )
 from trading_bot.repositories import SqlServerMonitorRepository
 
