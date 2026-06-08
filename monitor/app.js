@@ -1312,7 +1312,7 @@ function renderDailySummaryPerformance(summary, payload) {
 function renderDailySummaryCardSection(title, rows) {
   return `<section class="daily-summary-card-section">
     <h3>${escapeHtml(title)}</h3>
-    <div class="daily-summary-cards">
+    <div class="daily-summary-cards metric-grid">
       ${rows.map(([label, value, extraClass]) => (
         `<dl><dt>${escapeHtml(label)}</dt><dd class="${escapeHtml(extraClass || "")}">${escapeHtml(value)}</dd></dl>`
       )).join("")}
@@ -1337,9 +1337,9 @@ function renderDailySummaryFlow(payload, summary) {
     ["미체결 수", dailySummaryMetric(payload, ["unfilledCount", "unfilledOrderCount"])],
     ["취소 수", dailySummaryMetric(payload, ["cancelCount", "cancelledOrderCount"])],
   ];
-  return `<section class="daily-summary-section">
+  return `<section class="daily-summary-card-section">
     <h3>후보/선정 흐름</h3>
-    <div class="daily-summary-flow">
+    <div class="daily-summary-flow metric-grid">
       ${rows.map(([label, value]) => `<dl><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(countText(value))}</dd></dl>`).join("")}
     </div>
   </section>`;

@@ -259,27 +259,32 @@ body[data-page="dailySummary"] .work-grid {
 }
 
 .daily-summary-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 10px;
+  --metric-card-min: 150px;
+  --metric-card-height: 68px;
+  --metric-card-padding: 12px;
+  --metric-card-border: rgb(88 199 213 / 22%);
+  --metric-card-bg: rgb(88 199 213 / 7%);
+  --metric-label-size: 0.78rem;
+  --metric-value-size: 1rem;
 }
 
 .daily-summary-flow,
+.daily-summary-log-summary {
+  --metric-card-min: 130px;
+  --metric-card-height: 62px;
+  --metric-card-padding: 10px 12px;
+  --metric-card-border: rgb(88 199 213 / 18%);
+  --metric-card-bg: rgb(88 199 213 / 5%);
+  --metric-label-size: 0.76rem;
+  --metric-value-size: 1rem;
+}
+
 .daily-summary-log-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 10px;
 }
 
-.daily-summary-cards dl {
-  margin: 0;
-  padding: 12px;
-  border: 1px solid rgb(88 199 213 / 22%);
-  border-radius: 8px;
-  background: rgb(88 199 213 / 7%);
-}
-
-.daily-summary-flow dl,
 .daily-summary-log-summary dl {
   margin: 0;
   padding: 10px 12px;
@@ -288,25 +293,11 @@ body[data-page="dailySummary"] .work-grid {
   background: rgb(88 199 213 / 5%);
 }
 
-.daily-summary-cards dt {
-  color: var(--muted);
-  font-size: 0.78rem;
-}
-
-.daily-summary-flow dt,
 .daily-summary-log-summary dt {
   color: var(--muted);
   font-size: 0.76rem;
 }
 
-.daily-summary-cards dd {
-  margin: 6px 0 0;
-  color: var(--text);
-  font-weight: 700;
-  text-align: right;
-}
-
-.daily-summary-flow dd,
 .daily-summary-log-summary dd {
   margin: 5px 0 0;
   color: var(--text);
@@ -853,60 +844,63 @@ body[data-page="backtest"] .work-grid {
   color: var(--text);
 }
 
-.account-summary {
+.metric-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(var(--metric-card-min, 190px), 1fr));
+  gap: var(--metric-grid-gap, 12px);
+  align-items: stretch;
 }
 
-.account-summary dl {
-  min-height: 72px;
+.metric-grid dl {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  min-height: var(--metric-card-height, 72px);
   margin: 0;
-  padding: 13px 14px;
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--teal);
+  padding: var(--metric-card-padding, 13px 14px);
+  border: 1px solid var(--metric-card-border, var(--line));
+  border-left: 3px solid var(--metric-card-accent, var(--teal));
   border-radius: 8px;
-  background: var(--surface);
+  background: var(--metric-card-bg, var(--surface));
 }
 
-.account-summary dt {
-  margin-bottom: 6px;
+.metric-grid dt {
+  margin: 0 0 var(--metric-label-gap, 6px);
   color: var(--muted);
-  font-size: 0.76rem;
+  font-size: var(--metric-label-size, 0.76rem);
+  overflow: hidden;
+  text-align: var(--metric-label-align, center);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.account-summary dd {
+.metric-grid dd {
   margin: 0;
-  font-size: 1.15rem;
+  color: var(--text);
+  font-size: var(--metric-value-size, 1.15rem);
   font-weight: 700;
+  line-height: 1.25;
+  overflow: hidden;
+  text-align: var(--metric-value-align, center);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-summary {
+  --metric-card-min: 190px;
+  --metric-card-height: 72px;
+  --metric-value-size: 1.15rem;
 }
 
 .trading-stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 12px;
-}
-
-.trading-stats-grid dl {
-  min-height: 82px;
-  margin: 0;
-  padding: 15px;
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--teal);
-  border-radius: 8px;
-  background: rgb(17 26 34 / 86%);
-}
-
-.trading-stats-grid dt {
-  margin-bottom: 8px;
-  color: var(--muted);
-  font-size: 0.78rem;
-}
-
-.trading-stats-grid dd {
-  margin: 0;
-  font-size: 1.18rem;
-  font-weight: 700;
+  --metric-card-min: 210px;
+  --metric-card-height: 82px;
+  --metric-card-padding: 15px;
+  --metric-card-bg: rgb(17 26 34 / 86%);
+  --metric-label-gap: 8px;
+  --metric-label-size: 0.78rem;
+  --metric-value-size: 1.18rem;
 }
 
 .account-error {

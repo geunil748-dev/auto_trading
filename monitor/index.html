@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>자동매매 모니터</title>
     <link rel="stylesheet" href="./styles.css?v=32" />
-    <link rel="stylesheet" href="./panels.css?v=56" />
+    <link rel="stylesheet" href="./panels.css?v=57" />
   </head>
   <body>
     <div class="app-frame">
@@ -55,7 +55,7 @@
           <span id="authStatus"></span>
         </section>
 
-        <section class="account-summary" aria-label="계좌 요약">
+        <section class="account-summary metric-grid" aria-label="계좌 요약">
           <dl>
             <dt>달러 현금</dt>
             <dd id="cashUsd">-</dd>
@@ -192,7 +192,7 @@
                 <h2>운영 지표</h2>
               </div>
             </div>
-            <div class="trading-stats-grid" aria-label="최근 30거래일 운영 지표">
+            <div class="trading-stats-grid metric-grid" aria-label="최근 30거래일 운영 지표">
               <dl>
                 <dt>최근 거래일</dt>
                 <dd id="statsTradingDays">-</dd>
@@ -808,6 +808,6 @@
       </main>
     </div>
     <script src="./runtime-controls.js?v=3"></script>
-    <script type="module" src="./app.js?v=72"></script>
+    <script type="module" src="./app.js?v=73"></script>
   </body>
 </html>
