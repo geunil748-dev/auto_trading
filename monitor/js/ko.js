@@ -31,7 +31,10 @@ export const KO_LABELS = {
     QUOTE_LOOKUP_FAILED: "호가 조회 실패",
     RANKING_FETCH_FAILED: "랭킹 조회 실패",
     RETRY: "재시도",
+    RECHECK_NOT_AVAILABLE: "재평가 없음",
+    ORDER_SUBMITTED: "주문 제출",
     STRICT_FILTER_NO_CANDIDATES: "엄격 필터 후보 부족",
+    UNKNOWN_BLOCK_REASON: "차단 사유 미확인",
     VOLUME_INCREASE_FAILED: "5분 거래량 증가 미충족",
     VWAP_MA20_FAILED: "VWAP/MA20 조건 미충족",
     VWAP_MA20_DATA_MISSING: "VWAP/MA20 데이터 없음",
@@ -55,6 +58,17 @@ export const KO_LABELS = {
     VWAP_ONLY: "VWAP만",
     MA20_ONLY: "MA20만",
     OFF: "꺼짐",
+  },
+  recheckStatuses: {
+    RECHECK_NOT_AVAILABLE: "재평가 없음",
+    BUY_ALLOWED: "매수 판단 통과",
+    ORDER_SUBMITTED: "주문 제출",
+    BLOCKED: "매수 차단",
+  },
+  recheckSources: {
+    fixed_recheck: "장초반 고정 후보 재평가",
+    hybrid_recheck: "하이브리드 재평가",
+    dry_run: "신규 후보 재수집",
   },
   strategyVersions: {
     LEGACY_RELAXED: "기존 완화 전략",
@@ -111,6 +125,14 @@ export function conditionStatusLabel(code) {
 
 export function conditionTypeLabel(code) {
   return labelFromMap(KO_LABELS.conditionTypes, code);
+}
+
+export function recheckStatusLabel(code) {
+  return labelFromMap(KO_LABELS.recheckStatuses, code);
+}
+
+export function recheckSourceLabel(code) {
+  return labelFromMap(KO_LABELS.recheckSources, code);
 }
 
 export function strategyVersionLabel(code) {

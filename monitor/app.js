@@ -6,6 +6,7 @@ import {
   conditionTypeLabel,
   exitReasonLabel,
   reasonLabel,
+  recheckStatusLabel,
   strategyVersionLabel,
   translateDailySummaryText,
   translateStructuredLogMessage,
@@ -1003,7 +1004,13 @@ function numericStat(value) {
 
 function renderTables(accountState) {
   const names = tickerNames(accountState);
-  renderRows("#targetRows", accountState.targets, (row) => renderTargetRow(row, names), 8, "오늘 조건에 맞는 종목 없음");
+  renderRows(
+    "#targetRows",
+    accountState.targets,
+    (row) => renderTargetRow(row, names, { showRecheck: true }),
+    11,
+    "오늘 조건에 맞는 종목 없음",
+  );
   renderRows(
     "#candidateHistoryRows",
     historyState.targets,
@@ -1076,18 +1083,24 @@ function renderList(selector, rows, renderer, emptyText) {
     : rows.map(renderer).join("");
 }
 
-function renderTargetRow(row, names = {}) {
-  const [ticker, name, price, volume, volumeRatio, gap, score, state] =
+function renderTargetRow(row, names = {}, options = {}) {
+  const [ticker, name, price, volume, volumeRatio, gap, score, state, recheckScore, recheckStatus, recheckReason] =
     row.length >= 8
       ? row
       : row.length >= 7
         ? [row[0], row[1], row[2], "-", ...row.slice(3)]
         : [row[0], names[row[0]] || "-", row[1], "-", ...row.slice(2)];
+  const recheckCells = options.showRecheck
+    ? `<td class="score">${escapeHtml(recheckScore || "-")}</td>
+    <td><span class="trade-state">${escapeHtml(recheckStatusLabel(recheckStatus))}</span></td>
+    <td>${escapeHtml(candidateReasonText(recheckReason))}</td>`
+    : "";
   return `<tr>
     <td><strong>${escapeHtml(name && name !== "-" ? name : names[ticker] || "-")}</strong></td>
     <td>${escapeHtml(ticker)}</td><td>${escapeHtml(price)}</td><td>${escapeHtml(volume)}</td>
     <td>${escapeHtml(volumeRatio)}</td><td>${escapeHtml(gap)}</td><td class="score">${escapeHtml(score)}</td>
     <td><span class="trade-state">${escapeHtml(state)}</span></td>
+    ${recheckCells}
   </tr>`;
 }
 

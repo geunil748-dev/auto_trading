@@ -2103,6 +2103,39 @@ class SqlServerMonitorRepository:
             return []
         return rows
 
+    def latest_recheck_evaluations(
+        self,
+        trade_date: date | None = None,
+    ) -> list[tuple[Any, ...]]:
+        target_date = trade_date or current_trade_date()
+        try:
+            return self._query(
+                """
+                SELECT symbol, source, evaluation_time, selection_score,
+                       soft_score_adjustment, final_score, buy_allowed,
+                       order_submitted, buy_block_reason, buy_block_reasons,
+                       final_decision, condition_result_json
+                FROM (
+                    SELECT symbol, source, evaluation_time, selection_score,
+                           soft_score_adjustment, final_score, buy_allowed,
+                           order_submitted, buy_block_reason, buy_block_reasons,
+                           final_decision, condition_result_json, id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY symbol
+                               ORDER BY evaluation_time DESC, id DESC
+                           ) AS rn
+                    FROM candidate_evaluations
+                    WHERE trading_date = ?
+                      AND source IN ('fixed_recheck', 'hybrid_recheck', 'dry_run')
+                ) latest
+                WHERE rn = 1
+                ORDER BY evaluation_time DESC, symbol
+                """,
+                (target_date,),
+            )
+        except Exception:
+            return []
+
     def _latest_screening_saved_no_targets(self) -> bool:
         target_date = current_trade_date()
         try:

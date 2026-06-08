@@ -10,6 +10,24 @@ class Repository:
     def latest_scores(self) -> list[tuple[object, ...]]:
         return [("AAA", 95, 80, 87.5, True)]
 
+    def latest_recheck_evaluations(self, trade_date) -> list[tuple[object, ...]]:
+        return [
+            (
+                "AAA",
+                "fixed_recheck",
+                datetime(2026, 5, 22, 22, 55, 0),
+                87.5,
+                -5.0,
+                82.5,
+                False,
+                False,
+                "OVERHEAT_LIMIT_EXCEEDED",
+                '["OVERHEAT_LIMIT_EXCEEDED"]',
+                "OVERHEAT_LIMIT_EXCEEDED",
+                "{}",
+            )
+        ]
+
     def latest_holdings(self) -> list[tuple[object, ...]]:
         return [("AAA", "Alpha", 2, 10.5, 11.1, 11.6, 23.2)]
 
@@ -188,6 +206,13 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
     state = SqlMonitorStateSource(Repository()).read()
 
     assert state["targets"][0][:7] == ["AAA", "Alpha", "-", "-", "180%", "+4.2%", "88"]
+    assert state["targets"][0][8:13] == [
+        "82.5",
+        "BLOCKED",
+        "OVERHEAT_LIMIT_EXCEEDED",
+        "fixed_recheck",
+        "2026-05-22 22:55:00",
+    ]
     assert state["holdings"] == [
         {
             "ticker": "AAA",
@@ -384,6 +409,69 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
         "profitUsd": "+$15.50",
         "strategyVersion": "-",
     }
+
+
+def test_sql_monitor_state_recheck_statuses_distinguish_buy_allowed_and_order_submitted() -> None:
+    class BuyAllowedRepository(Repository):
+        def latest_recheck_evaluations(self, trade_date) -> list[tuple[object, ...]]:
+            return [
+                (
+                    "AAA",
+                    "fixed_recheck",
+                    datetime(2026, 5, 22, 22, 56, 0),
+                    87.5,
+                    0.0,
+                    91.0,
+                    True,
+                    False,
+                    "BUY_ALLOWED",
+                    "[]",
+                    "BUY_ALLOWED",
+                    "{}",
+                )
+            ]
+
+    class OrderSubmittedRepository(Repository):
+        def latest_recheck_evaluations(self, trade_date) -> list[tuple[object, ...]]:
+            return [
+                (
+                    "AAA",
+                    "fixed_recheck",
+                    datetime(2026, 5, 22, 22, 57, 0),
+                    87.5,
+                    0.0,
+                    91.0,
+                    True,
+                    True,
+                    "BUY_ALLOWED",
+                    "[]",
+                    "BUY_ALLOWED",
+                    "{}",
+                )
+            ]
+
+    buy_allowed = SqlMonitorStateSource(BuyAllowedRepository()).read()["targets"][0]
+    submitted = SqlMonitorStateSource(OrderSubmittedRepository()).read()["targets"][0]
+
+    assert buy_allowed[8:11] == ["91", "BUY_ALLOWED", "BUY_ALLOWED"]
+    assert submitted[8:11] == ["91", "ORDER_SUBMITTED", "ORDER_SUBMITTED"]
+
+
+def test_sql_monitor_state_recheck_missing_falls_back_without_breaking_target_row() -> None:
+    class NoRecheckRepository(Repository):
+        def latest_recheck_evaluations(self, trade_date) -> list[tuple[object, ...]]:
+            return []
+
+    state = SqlMonitorStateSource(NoRecheckRepository()).read()
+
+    assert state["targets"][0][:7] == ["AAA", "Alpha", "-", "-", "180%", "+4.2%", "88"]
+    assert state["targets"][0][8:13] == [
+        "-",
+        "RECHECK_NOT_AVAILABLE",
+        "RECHECK_NOT_AVAILABLE",
+        "-",
+        "-",
+    ]
 
 
 def test_sql_monitor_state_translates_structured_log_messages() -> None:

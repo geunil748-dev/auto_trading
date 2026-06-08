@@ -23,6 +23,10 @@ class SqlMonitorStateSource:
 
     def read(self) -> dict[str, object]:
         scores = {row[0]: row for row in self.repository.latest_scores()}
+        recheck_evaluations = _latest_recheck_evaluations(
+            self.repository,
+            current_trade_date(),
+        )
         logs = self.repository.latest_logs()
         missing_score_decision = _missing_score_decision(logs)
         account = self.repository.latest_account(is_mock=True)
@@ -43,7 +47,12 @@ class SqlMonitorStateSource:
             ),
             "trading_stats": _trading_stats(self.repository.recent_trading_stats()),
             "targets": [
-                _target(row, scores.get(row[0]), missing_score_decision)
+                _target(
+                    row,
+                    scores.get(row[0]),
+                    missing_score_decision,
+                    recheck_evaluations.get(str(row[0])),
+                )
                 for row in self.repository.latest_targets()
             ],
             "positions": [],
@@ -71,6 +80,7 @@ class SqlMonitorStateSource:
 
     def read_history(self, trade_date: date) -> dict[str, object]:
         scores = {row[0]: row for row in self.repository.history_scores(trade_date)}
+        recheck_evaluations = _latest_recheck_evaluations(self.repository, trade_date)
         logs = self.repository.history_logs(trade_date)
         missing_score_decision = _missing_score_decision(logs)
         account = self.repository.history_account(trade_date)
@@ -85,7 +95,12 @@ class SqlMonitorStateSource:
             "date": trade_date.isoformat(),
             "account": _account(account, realized_profit, realized_profit_rate),
             "targets": [
-                _target(row, scores.get(row[0]), missing_score_decision)
+                _target(
+                    row,
+                    scores.get(row[0]),
+                    missing_score_decision,
+                    recheck_evaluations.get(str(row[0])),
+                )
                 for row in self.repository.history_targets(trade_date)
             ],
             "holdings": [_holding(row) for row in self.repository.history_holdings(trade_date)],
@@ -134,6 +149,7 @@ def _target(
     row: tuple[Any, ...],
     score: tuple[Any, ...] | None,
     missing_score_decision: str = "점수 계산 전",
+    recheck: tuple[Any, ...] | None = None,
 ) -> list[str]:
     if len(row) >= 6:
         ticker, ticker_name, price_usd, opening_volume, volume_ratio, price_change = row[:6]
@@ -166,7 +182,77 @@ def _target(
         f"{_number(price_change):+.1f}%",
         score_value,
         state,
+        *_recheck_target_fields(recheck),
     ]
+
+
+def _latest_recheck_evaluations(
+    repository: object,
+    trade_date: date,
+) -> dict[str, tuple[Any, ...]]:
+    if not hasattr(repository, "latest_recheck_evaluations"):
+        return {}
+    try:
+        rows = repository.latest_recheck_evaluations(trade_date)  # type: ignore[attr-defined]
+    except Exception:
+        return {}
+    return {str(row[0]): row for row in rows if row}
+
+
+def _recheck_target_fields(row: tuple[Any, ...] | None) -> list[str]:
+    if row is None:
+        return ["-", "RECHECK_NOT_AVAILABLE", "RECHECK_NOT_AVAILABLE", "-", "-"]
+    source = _row_text(row, 1)
+    final_score = _score_text(_row_value(row, 5))
+    buy_allowed = _truthy(_row_value(row, 6))
+    order_submitted = _truthy(_row_value(row, 7))
+    buy_block_reason = _row_text(row, 8)
+    final_decision = _row_text(row, 10)
+    if buy_allowed and order_submitted:
+        status = "ORDER_SUBMITTED"
+        reason = "ORDER_SUBMITTED"
+    elif buy_allowed:
+        status = "BUY_ALLOWED"
+        reason = "BUY_ALLOWED"
+    else:
+        status = "BLOCKED"
+        reason = buy_block_reason or final_decision or "UNKNOWN_BLOCK_REASON"
+    return [
+        final_score,
+        status,
+        reason,
+        source or "-",
+        _datetime_text(_row_value(row, 2)),
+    ]
+
+
+def _row_value(row: tuple[Any, ...], index: int) -> Any:
+    return row[index] if len(row) > index else None
+
+
+def _row_text(row: tuple[Any, ...], index: int) -> str:
+    value = _row_value(row, index)
+    return "" if value is None else str(value).strip()
+
+
+def _score_text(value: Any) -> str:
+    if value is None:
+        return "-"
+    raw = str(value).strip()
+    number = _number(value)
+    if number == 0 and raw not in {"0", "0.0", "0.00", "0.0000"}:
+        return "-"
+    if float(number).is_integer():
+        return str(int(number))
+    return f"{number:.1f}"
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y"}
 
 
 def _candidate_snapshot_status(row: tuple[Any, ...]) -> dict[str, object]:
