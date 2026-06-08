@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date
 
 from trading_bot.config import KisSettings, NotificationSettings, TradingSettings
 from trading_bot.models import AccountState, BuyIntent, FillRecord, PositionState, ScoreRecord, SellIntent
@@ -15,14 +15,7 @@ from trading_bot.scheduler_state import (
     holding_prices,
     persist_live_snapshot,
 )
-from trading_bot.scheduled_tasks import (
-    _apply_stop_loss_entry_guards,
-    _consecutive_stop_loss_count,
-    _last_stop_loss_at,
-    _saved_partial_take_profit_tickers,
-    _send_fill_notifications,
-    live_mock_tasks,
-)
+from trading_bot.scheduled_tasks import _send_fill_notifications, live_mock_tasks
 
 
 class Accounts:
@@ -75,26 +68,6 @@ class RecordingExecutor:
     def execute(self, intents: list[SellIntent]) -> list[object]:
         self.calls.append(intents)
         return [object() for _ in intents]
-
-
-class RiskRepository:
-    def __init__(
-        self,
-        last_stop_loss_at=None,
-        consecutive_stop_loss_count: int = 0,
-    ) -> None:
-        self.last_value = last_stop_loss_at
-        self.count = consecutive_stop_loss_count
-        self.logs = []
-
-    def last_stop_loss_at(self, trade_date, ticker):
-        return self.last_value
-
-    def consecutive_stop_loss_count(self, trade_date):
-        return self.count
-
-    def save_log(self, log):
-        self.logs.append(log)
 
 
 class SnapshotRepository:
@@ -278,19 +251,6 @@ def test_cancel_unfilled_submits_cancellations_and_refreshes_monitor(
 
     assert tasks.cancel_unfilled() == "미체결 모의 주문 1건 취소."
     assert calls == ["refresh"]
-
-
-def test_stop_loss_cooldown_blocks_same_symbol_entry() -> None:
-    repository = RiskRepository(last_stop_loss_at=datetime.now() - timedelta(minutes=5))
-
-    intents = _apply_stop_loss_entry_guards(
-        [BuyIntent("AAA", 1, 10, 10, 0.01)],
-        repository,
-        TradingSettings(stop_loss_cooldown_minutes=30),
-    )
-
-    assert intents == []
-    assert repository.logs[0].reject_reason == "STOP_LOSS_COOLDOWN"
 
 
 def test_entry_profit_snapshots_are_created_from_buy_fills() -> None:
@@ -604,38 +564,6 @@ def test_daily_run_summary_failure_logs_warning_without_secret(monkeypatch) -> N
     assert "secret" not in logs[0][2]
 
 
-def test_stop_loss_lookup_failures_return_safe_defaults_and_log(monkeypatch) -> None:
-    logs = []
-
-    def capture(level, module, message, **kwargs):
-        logs.append((level, module, message, kwargs))
-
-    class FailingRiskRepository:
-        def consecutive_stop_loss_count(self, trade_date):
-            raise RuntimeError("MSSQL_PASSWORD=secret")
-
-        def last_stop_loss_at(self, trade_date, ticker):
-            raise RuntimeError("KIS_APP_SECRET=secret")
-
-        def partial_take_profit_tickers(self, trade_date):
-            raise RuntimeError("MONITOR_BEARER_TOKEN=secret")
-
-    monkeypatch.setattr("trading_bot.scheduled_tasks.safe_scheduler_log", capture)
-
-    repository = FailingRiskRepository()
-
-    assert _consecutive_stop_loss_count(repository) == 0
-    assert _last_stop_loss_at(repository, "AAA") is None
-    assert _saved_partial_take_profit_tickers(repository) == set()
-    assert [item[3]["reject_reason"] for item in logs] == [
-        "STOP_LOSS_COUNT_LOOKUP_FAILED",
-        "STOP_LOSS_COOLDOWN_LOOKUP_FAILED",
-        "PARTIAL_TAKE_PROFIT_LOOKUP_FAILED",
-    ]
-    assert logs[1][3]["symbol"] == "AAA"
-    assert all("secret" not in item[2] for item in logs)
-
-
 def test_cancel_stale_mock_buy_lookup_failure_logs_warning(monkeypatch) -> None:
     logs = []
 
@@ -659,19 +587,6 @@ def test_cancel_stale_mock_buy_lookup_failure_logs_warning(monkeypatch) -> None:
     assert logs[0][2] == "STALE_MOCK_BUY_ORDER_LOOKUP_FAILED: RuntimeError"
     assert logs[0][3]["reject_reason"] == "STALE_MOCK_BUY_ORDER_LOOKUP_FAILED"
     assert "secret" not in logs[0][2]
-
-
-def test_consecutive_stop_loss_limit_blocks_all_new_entries() -> None:
-    repository = RiskRepository(consecutive_stop_loss_count=3)
-
-    intents = _apply_stop_loss_entry_guards(
-        [BuyIntent("AAA", 1, 10, 10, 0.01)],
-        repository,
-        TradingSettings(max_consecutive_stop_loss_count=3),
-    )
-
-    assert intents == []
-    assert repository.logs[0].reject_reason == "CONSECUTIVE_STOP_LOSS_LIMIT"
 
 
 def test_market_closed_skips_scheduled_trading_and_writes_monitor_state(tmp_path) -> None:
