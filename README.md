@@ -439,6 +439,18 @@ Expected startup behavior:
 - Scheduler trading cycles skip with `SKIP trading cycle: monitor degraded ...`
   when dependencies, DB connectivity, or monitor state freshness are not ready.
 
+Monitor-only restart:
+
+```powershell
+.\tools\stop_monitor_server.ps1
+.\tools\start_monitor_server.ps1
+```
+
+Use this when monitor static files or monitor server code changed and scheduler
+code did not. The stop script targets the monitor launcher and
+`trading_bot serve-monitor` process for port `4174`; it does not stop
+`run-scheduler`.
+
 ### PowerShell UTF-8 Encoding
 
 Windows PowerShell 5.1 can start with CP949/US-ASCII settings even though this

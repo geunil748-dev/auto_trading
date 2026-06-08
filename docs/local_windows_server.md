@@ -117,6 +117,18 @@ Use this shorter command only when you deliberately want to skip package refresh
 powershell.exe -ExecutionPolicy Bypass -File .\tools\windows_setup_scheduler\update_local_server.ps1 -SkipInstall -SkipPreflight
 ```
 
+For a monitor-only restart after static file or `monitor_server.py` changes,
+stop and start the monitor launcher directly:
+
+```powershell
+.\tools\stop_monitor_server.ps1
+.\tools\start_monitor_server.ps1
+```
+
+The stop script targets the monitor launcher and `trading_bot serve-monitor`
+processes for port `4174`. It does not stop the scheduler. If scheduler code or
+settings did not change, a scheduler restart is not required.
+
 ## 9. Verify Operation
 
 Open the monitor on the notebook:
