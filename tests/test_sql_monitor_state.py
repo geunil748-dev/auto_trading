@@ -553,6 +553,27 @@ def test_sql_monitor_state_global_entry_gate_allows_after_score_save() -> None:
     }
 
 
+def test_sql_monitor_state_global_entry_gate_shows_mock_bypass() -> None:
+    class GlobalEntryGateRepository(Repository):
+        def latest_global_entry_gate_status(self, trade_date) -> tuple[object, ...]:
+            return (
+                datetime(2026, 5, 22, 22, 45, 8),
+                "INFO",
+                "pipeline",
+                "Entry bypassed: MARKET_BELOW_MA20 for mock trading",
+                "MARKET_BELOW_MA20",
+            )
+
+    state = SqlMonitorStateSource(GlobalEntryGateRepository()).read()
+    gate = state["globalEntryGate"]
+
+    assert gate["status"] == "BYPASSED"
+    assert gate["reason"] == "MARKET_BELOW_MA20"
+    assert "모의투자 예외" in str(gate["label"])
+    assert gate["effect"] == "모의투자 예외로 신규 매수 평가 진행"
+    assert gate["message"] == "Entry bypassed: MARKET_BELOW_MA20 for mock trading"
+
+
 def test_sql_monitor_state_translates_structured_log_messages() -> None:
     class StructuredLogRepository(Repository):
         def latest_logs(self) -> list[tuple[object, ...]]:

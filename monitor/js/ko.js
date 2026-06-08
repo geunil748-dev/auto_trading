@@ -61,11 +61,13 @@ export const KO_LABELS = {
   },
   globalEntryGateStatus: {
     ALLOW: "진입 가능",
+    BYPASSED: "모의투자 예외",
     BLOCKED: "진입 차단",
     UNKNOWN: "확인 필요",
   },
   globalEntryGateEffects: {
     ALLOW: "신규 매수 가능",
+    BYPASSED: "모의투자 예외로 평가 진행",
     BLOCKED: "신규 매수 주문 차단",
     UNKNOWN: "최근 전역 진입 상태 확인 필요",
   },

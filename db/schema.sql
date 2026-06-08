@@ -392,6 +392,8 @@ BEGIN
         settings_snapshot_hash VARCHAR(64),
         settings_snapshot_json NVARCHAR(MAX),
         is_mock BIT DEFAULT 1,
+        fill_notification_sent BIT NOT NULL CONSTRAINT DF_fill_history_fill_notification_sent DEFAULT 0,
+        fill_notification_sent_at DATETIME2 NULL,
         created_at DATETIME DEFAULT GETDATE()
     );
 END;
@@ -501,6 +503,24 @@ END;
 IF COL_LENGTH('dbo.fill_history', 'settings_snapshot_json') IS NULL
 BEGIN
     ALTER TABLE dbo.fill_history ADD settings_snapshot_json NVARCHAR(MAX) NULL;
+END;
+
+IF COL_LENGTH('dbo.fill_history', 'fill_notification_sent_at') IS NULL
+BEGIN
+    ALTER TABLE dbo.fill_history ADD fill_notification_sent_at DATETIME2 NULL;
+END;
+
+IF COL_LENGTH('dbo.fill_history', 'fill_notification_sent') IS NULL
+BEGIN
+    ALTER TABLE dbo.fill_history
+        ADD fill_notification_sent BIT NOT NULL
+            CONSTRAINT DF_fill_history_fill_notification_sent DEFAULT 0;
+
+    EXEC(N'
+    UPDATE dbo.fill_history
+    SET fill_notification_sent = 1,
+        fill_notification_sent_at = COALESCE(fill_notification_sent_at, created_at)
+    ');
 END;
 
 IF OBJECT_ID(N'dbo.entry_profit_snapshot', N'U') IS NULL

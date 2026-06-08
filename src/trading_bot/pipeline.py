@@ -252,7 +252,8 @@ class ScreeningScoringPipeline:
             )
             return ScoringRun(trade_date, "STRICT_FILTER_NO_CANDIDATES", targets, ())
 
-        if not entry_gate.allowed:
+        mock_market_gate_bypass = _mock_market_below_ma20_bypass(entry_gate.reason, self.settings)
+        if not entry_gate.allowed and not mock_market_gate_bypass:
             self._log_pipeline_diagnostics(
                 started_at,
                 requested_gainer_limit=active_profile.gainer_limit,
@@ -332,6 +333,15 @@ class ScreeningScoringPipeline:
             )
         )
         self.repository.save_daily_scores(scores)
+        if mock_market_gate_bypass:
+            self.repository.save_log(
+                BotLog(
+                    "INFO",
+                    "pipeline",
+                    "Entry bypassed: MARKET_BELOW_MA20 for mock trading",
+                    reject_reason="MARKET_BELOW_MA20",
+                )
+            )
         self._log_pipeline_diagnostics(
             started_at,
             requested_gainer_limit=active_profile.gainer_limit,
@@ -743,6 +753,12 @@ def _relaxation_profiles(settings: TradingSettings) -> tuple[RelaxationProfile, 
         RelaxationProfile(6, 1000, 500, score_relaxed),
         RelaxationProfile(7, 1000, 500, min_price_relaxed),
     )
+
+
+def _mock_market_below_ma20_bypass(reason: str | None, settings: TradingSettings) -> bool:
+    if reason != "MARKET_BELOW_MA20":
+        return False
+    return bool(settings.mock_trading and not settings.real_trading_enabled)
 
 
 def _filter_log_message(

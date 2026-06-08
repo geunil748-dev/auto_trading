@@ -18,11 +18,10 @@ from trading_bot.repositories import SqlServerDailyRepository
 from trading_bot.scheduled_messages import log_row
 from trading_bot.scheduler_logging import safe_exception_summary
 from trading_bot.scheduler_market_close import save_daily_run_summary
-from trading_bot.trade_fill_notifications import fill_keys_from_history, new_fill_records
 from trading_bot.trading_date import current_trade_date
 
 
-FillNotificationCallback = Callable[[list[FillRecord], list[object]], None]
+FillNotificationCallback = Callable[[list[FillRecord], list[object]], int | None]
 
 
 def write_live_state(
@@ -74,16 +73,12 @@ def persist_live_snapshot(
             settings = load_settings()
             entry_prices = repository.sell_entry_prices(trade_date)
             entry_reasons = repository.entry_reasons(trade_date)
-            existing_fill_keys = fill_keys_from_history(
-                repository.history_fills(trade_date, limit=1000)
-            )
             records = fill_records_from_monitor_rows(
                 fills,
                 entry_prices,
                 entry_reasons,
                 settings=settings,
             )
-            new_records = new_fill_records(records, existing_fill_keys)
             if records:
                 repository.save_fills(records)
                 repository.save_entry_profit_snapshots(
@@ -91,11 +86,18 @@ def persist_live_snapshot(
                 )
                 if any(item.profit_usd is not None for item in records):
                     save_daily_run_summary(settings, None, None)
-            if new_records and send_fill_notifications_func is not None:
-                send_fill_notifications_func(
-                    new_records,
+            pending_notifications = repository.pending_fill_notifications(records)
+            if pending_notifications and send_fill_notifications_func is not None:
+                sent_count = send_fill_notifications_func(
+                    pending_notifications,
                     holdings if isinstance(holdings, list) else [],
                 )
+                if sent_count is None:
+                    sent_count = len(pending_notifications)
+                if sent_count > 0:
+                    repository.mark_fill_notifications_sent(
+                        pending_notifications[:sent_count]
+                    )
         if isinstance(holdings, list):
             repository.update_entry_profit_snapshots(
                 trade_date,

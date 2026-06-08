@@ -695,6 +695,55 @@ class SqlServerDailyRepository:
             except Exception:
                 return []
 
+    def pending_fill_notifications(self, fills: Iterable[FillRecord]) -> list[FillRecord]:
+        items = list(fills)
+        if not items:
+            return []
+        self._ensure_fill_history_table()
+        pending: list[FillRecord] = []
+        for item in items:
+            rows = self._query(
+                """
+                SELECT TOP (1) fill_notification_sent
+                FROM fill_history
+                WHERE trade_date = ?
+                  AND ISNULL(fill_time, '') = ?
+                  AND ticker = ?
+                  AND ISNULL(side, '') = ?
+                  AND quantity = ?
+                  AND fill_price = ?
+                  AND is_mock = ?
+                ORDER BY id DESC
+                """,
+                _fill_identity_params(item),
+            )
+            if rows and not _bit_value(rows[0][0]):
+                pending.append(item)
+        return pending
+
+    def mark_fill_notifications_sent(self, fills: Iterable[FillRecord]) -> None:
+        items = list(fills)
+        if not items:
+            return
+        self._ensure_fill_history_table()
+        for item in items:
+            self._execute(
+                """
+                UPDATE fill_history
+                SET fill_notification_sent = 1,
+                    fill_notification_sent_at = COALESCE(fill_notification_sent_at, GETDATE())
+                WHERE trade_date = ?
+                  AND ISNULL(fill_time, '') = ?
+                  AND ticker = ?
+                  AND ISNULL(side, '') = ?
+                  AND quantity = ?
+                  AND fill_price = ?
+                  AND is_mock = ?
+                  AND fill_notification_sent = 0
+                """,
+                _fill_identity_params(item),
+            )
+
     def save_entry_profit_snapshots(self, snapshots: Iterable[EntryProfitSnapshot]) -> None:
         rows = [
             (
@@ -1120,6 +1169,8 @@ class SqlServerDailyRepository:
                     entry_reason VARCHAR(80),
                     entry_reason_detail NVARCHAR(500),
                     is_mock BIT DEFAULT 1,
+                    fill_notification_sent BIT NOT NULL CONSTRAINT DF_fill_history_fill_notification_sent DEFAULT 0,
+                    fill_notification_sent_at DATETIME2 NULL,
                     created_at DATETIME DEFAULT GETDATE()
                 );
             END
@@ -1147,6 +1198,22 @@ class SqlServerDailyRepository:
 
             IF COL_LENGTH('dbo.fill_history', 'settings_snapshot_json') IS NULL
                 ALTER TABLE dbo.fill_history ADD settings_snapshot_json NVARCHAR(MAX) NULL
+
+            IF COL_LENGTH('dbo.fill_history', 'fill_notification_sent_at') IS NULL
+                ALTER TABLE dbo.fill_history ADD fill_notification_sent_at DATETIME2 NULL
+
+            IF COL_LENGTH('dbo.fill_history', 'fill_notification_sent') IS NULL
+            BEGIN
+                ALTER TABLE dbo.fill_history
+                    ADD fill_notification_sent BIT NOT NULL
+                        CONSTRAINT DF_fill_history_fill_notification_sent DEFAULT 0
+
+                EXEC(N'
+                UPDATE dbo.fill_history
+                SET fill_notification_sent = 1,
+                    fill_notification_sent_at = COALESCE(fill_notification_sent_at, created_at)
+                ')
+            END
 
             EXEC(N'
             UPDATE dbo.fill_history
@@ -2182,6 +2249,7 @@ class SqlServerMonitorRepository:
                   AND (
                     reject_reason IN (?, ?, ?, ?, ?, ?)
                     OR message LIKE 'Entry blocked:%'
+                    OR message LIKE 'Entry bypassed:%'
                     OR message LIKE '[SAVE_SCORES]%'
                     OR reject_reason = 'STRICT_FILTER_NO_CANDIDATES'
                     OR message LIKE 'STRICT_FILTER_NO_CANDIDATES:%'
@@ -2895,6 +2963,24 @@ def _bit(value: bool | None) -> int | None:
     if value is None:
         return None
     return 1 if value else 0
+
+
+def _bit_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true"}
+
+
+def _fill_identity_params(item: FillRecord) -> tuple[Any, ...]:
+    return (
+        item.trade_date,
+        item.fill_time,
+        item.ticker,
+        item.side,
+        item.quantity,
+        item.fill_price_usd,
+        item.is_mock,
+    )
 
 
 def _number(value: Any) -> float:

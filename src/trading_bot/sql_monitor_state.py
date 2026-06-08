@@ -259,6 +259,21 @@ def _global_entry_gate_status(row: tuple[Any, ...] | None) -> dict[str, str | No
             "updatedAt": "-",
             "message": "",
         }
+    if _global_entry_gate_bypassed(row):
+        reason = _global_entry_gate_reason(row)
+        return {
+            "status": "BYPASSED",
+            "reason": reason or None,
+            "label": (
+                f"{_reason_text(reason)} - 모의투자 예외"
+                if reason
+                else "모의투자 예외 진행"
+            ),
+            "effect": "모의투자 예외로 신규 매수 평가 진행",
+            "source": _row_text(row, 2) or "pipeline",
+            "updatedAt": _datetime_text(_row_value(row, 0)),
+            "message": _row_text(row, 3) or _row_text(row, 1),
+        }
     if _global_entry_gate_allowed(row):
         return {
             "status": "ALLOW",
@@ -296,6 +311,11 @@ def _global_entry_gate_allowed(row: tuple[Any, ...]) -> bool:
     return message.startswith("[SAVE_SCORES]")
 
 
+def _global_entry_gate_bypassed(row: tuple[Any, ...]) -> bool:
+    message = _row_text(row, 3) or _row_text(row, 1)
+    return message.startswith("Entry bypassed:")
+
+
 def _global_entry_gate_reason(row: tuple[Any, ...]) -> str:
     reject_reason = _row_text(row, 4)
     if reject_reason in _GLOBAL_ENTRY_GATE_REASONS:
@@ -303,6 +323,10 @@ def _global_entry_gate_reason(row: tuple[Any, ...]) -> str:
     message = _row_text(row, 3) or _row_text(row, 1)
     if message.startswith("Entry blocked:"):
         reason = message.removeprefix("Entry blocked:").strip()
+        if reason in _GLOBAL_ENTRY_GATE_REASONS:
+            return reason
+    if message.startswith("Entry bypassed:"):
+        reason = message.removeprefix("Entry bypassed:").strip().split()[0]
         if reason in _GLOBAL_ENTRY_GATE_REASONS:
             return reason
     return ""
@@ -1136,6 +1160,9 @@ def _message_text(message: Any) -> str:
         return "필터 제외 사유: " + ", ".join(_reason_count(part) for part in raw.split(", "))
     if text.startswith("Entry blocked: "):
         return "진입 차단: " + _reason_text(text.removeprefix("Entry blocked: ").strip())
+    if text.startswith("Entry bypassed: "):
+        reason = text.removeprefix("Entry bypassed: ").strip().split()[0]
+        return "모의투자 예외 진행: " + _reason_text(reason)
     return _replace_known_tokens(text)
 
 

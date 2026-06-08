@@ -319,7 +319,11 @@ def test_pipeline_logs_and_skips_market_calls_when_global_gate_blocks_entry() ->
         AccountReader(account()),
         repository,
         FixedClock(),
-        TradingSettings(),
+        TradingSettings(
+            app_mode="real",
+            mock_trading=False,
+            real_trading_enabled=True,
+        ),
     ).run()
 
     assert run.blocked_reason == "MARKET_BELOW_MA20"
@@ -335,6 +339,32 @@ def test_pipeline_logs_and_skips_market_calls_when_global_gate_blocks_entry() ->
         ),
         BotLog("INFO", "pipeline", "Screened 2 targets and selected 0."),
     ]
+
+
+def test_pipeline_bypasses_market_below_ma20_for_mock_trading() -> None:
+    market_data = MarketData(MarketContext(99, 100, 0.01))
+    repository = Repository()
+    scoring = Scoring()
+
+    run = ScreeningScoringPipeline(
+        market_data,
+        scoring,
+        AccountReader(account()),
+        repository,
+        FixedClock(),
+        TradingSettings(),
+    ).run()
+
+    assert run.blocked_reason is None
+    assert [item.candidate.ticker for item in repository.targets] == ["AAA", "BBB"]
+    assert [item.score.ticker for item in repository.scores] == ["AAA", "BBB"]
+    assert scoring.called == 2
+    assert BotLog(
+        "INFO",
+        "pipeline",
+        "Entry bypassed: MARKET_BELOW_MA20 for mock trading",
+        reject_reason="MARKET_BELOW_MA20",
+    ) in repository.logs
 
 
 def test_pipeline_handles_zero_listed_candidates_without_error() -> None:
