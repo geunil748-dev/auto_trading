@@ -1,5 +1,15 @@
 import { createApiClient } from "./js/apiClient.js";
 import { readStoredMonitorToken, removeStoredMonitorToken, storeMonitorToken } from "./js/auth.js";
+import {
+  conditionModeLabel,
+  conditionStatusLabel,
+  conditionTypeLabel,
+  exitReasonLabel,
+  reasonLabel,
+  strategyVersionLabel,
+  translateDailySummaryText,
+  translateStructuredLogMessage,
+} from "./js/ko.js";
 import { MONITOR_MENU_ITEMS } from "./js/menuConfig.js";
 import { shouldLoadHistoryForPage } from "./js/pages/index.js";
 import { createRouter } from "./js/router.js";
@@ -1099,117 +1109,23 @@ function renderLogRow([time, level, message]) {
 }
 
 function translateLogMessage(message) {
-  const text = String(message || "");
-  if (text.startsWith("candidate_evaluation_saved ")) {
-    const values = keyValuePairs(text.replace("candidate_evaluation_saved ", ""));
-    return [
-      "후보평가 저장:",
-      `종목=${values.symbol || "-"}`,
-      `최종점수=${values.final_score || "-"}`,
-      `매수허용=${yesNoText(values.buy_allowed)}`,
-      `주문제출=${yesNoText(values.order_submitted)}`,
-      `매수판정=${candidateReasonText(values.buy_block_reason)}`,
-      `하드필터탈락=${values.hard_filter_failed_count || "-"}`,
-      `소프트조건탈락=${values.soft_condition_failed_count || "-"}`,
-      `VWAP/MA20상태=${candidateStatusText(values.vwap_ma20_status)}`,
-    ].join(" ");
-  }
-  if (text.startsWith("vwap_ma20_skipped_no_data ")) {
-    const values = keyValuePairs(text.replace("vwap_ma20_skipped_no_data ", ""));
-    return [
-      "VWAP/MA20 데이터 부족:",
-      `종목=${values.symbol || "-"}`,
-      `현재가=${values.current_price || "-"}`,
-      `조건유형=${candidateConditionTypeText(values.condition_type)}`,
-      `조건모드=${candidateConditionModeText(values.condition_mode)}`,
-      `VWAP데이터=${yesNoText(values.has_vwap)}`,
-      `장중MA20데이터=${yesNoText(values.has_intraday_ma20)}`,
-      `사유=${candidateReasonText(values.reason)}`,
-    ].join(" ");
-  }
-  if (text.startsWith("vwap_ma20_evaluated ")) {
-    const values = keyValuePairs(text.replace("vwap_ma20_evaluated ", ""));
-    return [
-      "VWAP/MA20 평가:",
-      `종목=${values.symbol || "-"}`,
-      `현재가=${values.current_price || "-"}`,
-      `VWAP=${values.vwap_usd || "-"}`,
-      `장중MA20=${values.intraday_ma20_usd || "-"}`,
-      `조건유형=${candidateConditionTypeText(values.condition_type)}`,
-      `조건모드=${candidateConditionModeText(values.condition_mode)}`,
-      `VWAP통과=${yesNoText(values.vwap_pass)}`,
-      `MA20통과=${yesNoText(values.ma20_pass)}`,
-      `종합통과=${yesNoText(values.vwap_ma20_pass)}`,
-    ].join(" ");
-  }
-  return text;
-}
-
-function keyValuePairs(text) {
-  return String(text || "").split(/\s+/).reduce((pairs, part) => {
-    const index = part.indexOf("=");
-    if (index <= 0) return pairs;
-    pairs[part.slice(0, index)] = part.slice(index + 1);
-    return pairs;
-  }, {});
-}
-
-function yesNoText(value) {
-  const text = String(value || "").trim().toLowerCase();
-  if (text === "true") return "예";
-  if (text === "false") return "아니오";
-  if (!text || text === "none" || text === "null") return "-";
-  return String(value);
+  return translateStructuredLogMessage(message);
 }
 
 function candidateReasonText(reason) {
-  const labels = {
-    BUY_ALLOWED: "매수 허용",
-    BREAKOUT_NOT_TRIGGERED: "돌파 미발생",
-    BREAKOUT_CLOSE_FAILED: "5분봉 종가 돌파 미충족",
-    FINAL_SCORE_BELOW_THRESHOLD: "최종 점수 기준 미달",
-    ORDER_NOT_SUBMITTED: "주문 미제출",
-    OVERHEAT_LIMIT_EXCEEDED: "과열 제한 초과",
-    VOLUME_INCREASE_FAILED: "5분 거래량 증가 미충족",
-    VWAP_MA20_FAILED: "VWAP/MA20 조건 미충족",
-    VWAP_MA20_DATA_MISSING: "VWAP/MA20 데이터 없음",
-    PULLBACK_REBREAK_FAILED: "눌림 후 재돌파 미충족",
-  };
-  const text = String(reason || "").trim();
-  return text ? labels[text] || text : "-";
+  return reasonLabel(reason);
 }
 
 function candidateStatusText(status) {
-  const labels = {
-    DISABLED: "비활성화",
-    SKIPPED_NO_DATA: "데이터 없음으로 건너뜀",
-    PASS: "통과",
-    FAIL: "실패",
-  };
-  const text = String(status || "").trim();
-  return text ? labels[text] || text : "-";
+  return conditionStatusLabel(status);
 }
 
 function candidateConditionModeText(mode) {
-  const labels = {
-    HARD_FILTER: "하드필터",
-    SOFT_SCORE: "소프트점수",
-    OFF: "꺼짐",
-  };
-  const text = String(mode || "").trim();
-  return text ? labels[text] || text : "-";
+  return conditionModeLabel(mode);
 }
 
 function candidateConditionTypeText(type) {
-  const labels = {
-    AND: "VWAP와 MA20 모두",
-    OR: "VWAP 또는 MA20",
-    VWAP_ONLY: "VWAP만",
-    MA20_ONLY: "MA20만",
-    OFF: "꺼짐",
-  };
-  const text = String(type || "").trim();
-  return text ? labels[text] || text : "-";
+  return conditionTypeLabel(type);
 }
 
 function filterVisibleLogs(logs) {
@@ -1526,33 +1442,11 @@ function modeText(mode) {
 }
 
 function strategyVersionText(value) {
-  const code = String(value || "").trim();
-  if (!code) return "-";
-  const labels = {
-    LEGACY_RELAXED: "기존 완화 전략",
-    STRICT_FIXED_NO_PYRAMIDING: "엄격 고정 전략",
-    STRICT_FIXED: "엄격 고정 전략",
-    STRICT: "엄격 전략",
-    RELAXED: "완화 전략",
-  };
-  return labels[code] || code;
+  return strategyVersionLabel(value);
 }
 
 function exitReasonText(value) {
-  const code = String(value || "").trim();
-  if (!code) return "-";
-  const labels = {
-    STOP_LOSS: "손절",
-    TAKE_PROFIT: "익절",
-    TRAILING_STOP: "트레일링 스탑",
-    PARTIAL_TAKE_PROFIT: "분할 익절",
-    EOD: "종가 청산",
-    END_OF_DAY: "종가 청산",
-    MANUAL_SELL: "수동 매도",
-    MANUAL: "수동 처리",
-    UNKNOWN: "미확인",
-  };
-  return labels[code] || code;
+  return exitReasonLabel(value);
 }
 
 function compactHashText(value, visibleLength = 12) {
@@ -1563,30 +1457,7 @@ function compactHashText(value, visibleLength = 12) {
 }
 
 function dailySummaryTextForDisplay(value) {
-  let text = value || "저장된 요약 텍스트가 없습니다.";
-  for (const code of [
-    "STRICT_FIXED_NO_PYRAMIDING",
-    "LEGACY_RELAXED",
-    "STRICT_FIXED",
-    "STRICT",
-    "RELAXED",
-  ]) {
-    text = text.replaceAll(code, strategyVersionText(code));
-  }
-  for (const code of [
-    "PARTIAL_TAKE_PROFIT",
-    "TRAILING_STOP",
-    "TAKE_PROFIT",
-    "STOP_LOSS",
-    "END_OF_DAY",
-    "MANUAL_SELL",
-    "UNKNOWN",
-    "MANUAL",
-    "EOD",
-  ]) {
-    text = text.replaceAll(code, exitReasonText(code));
-  }
-  return text;
+  return translateDailySummaryText(value);
 }
 
 function moneyText(value) {
