@@ -327,7 +327,12 @@ def test_pipeline_logs_and_skips_market_calls_when_global_gate_blocks_entry() ->
     assert repository.scores == []
     assert market_data.snapshot_requests[0] == ("BBB", "AAA", "DDD", "OUT", "CCC")
     assert repository.logs[-2:] == [
-        BotLog("WARNING", "pipeline", "Entry blocked: MARKET_BELOW_MA20"),
+        BotLog(
+            "WARNING",
+            "pipeline",
+            "Entry blocked: MARKET_BELOW_MA20",
+            reject_reason="MARKET_BELOW_MA20",
+        ),
         BotLog("INFO", "pipeline", "Screened 2 targets and selected 0."),
     ]
 

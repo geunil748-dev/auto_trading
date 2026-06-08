@@ -81,6 +81,7 @@ class DashboardStateReader:
                 real["connected"] = True
                 real["error"] = ""
         state["date"] = sql_state.get("date")
+        state["globalEntryGate"] = sql_state.get("globalEntryGate")
         state["trading_stats"] = sql_state.get("trading_stats", {})
         state["sql"] = sql_state
         return state

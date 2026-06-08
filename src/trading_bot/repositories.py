@@ -36,6 +36,16 @@ class Connection(Protocol):
     def close(self) -> None: ...
 
 
+_GLOBAL_ENTRY_GATE_REASONS = (
+    "MARKET_BELOW_MA20",
+    "FX_VOLATILITY",
+    "DAILY_ACCOUNT_LOSS",
+    "OPEN_POSITION_LIMIT",
+    "INVALID_ACCOUNT_EQUITY",
+    "ACCOUNT_EXPOSURE_LIMIT",
+)
+
+
 # 일별 저장소: 수집/주문/체결/계좌 스냅샷을 거래일 기준으로 기록한다.
 class SqlServerDailyRepository:
     """자동매매 실행 결과를 거래일 기준으로 MSSQL에 저장하는 저장소."""
@@ -2135,6 +2145,54 @@ class SqlServerMonitorRepository:
             )
         except Exception:
             return []
+
+    def latest_entry_block_reason(
+        self,
+        trade_date: date | None = None,
+    ) -> tuple[Any, ...] | None:
+        target_date = trade_date or current_trade_date()
+        try:
+            rows = self._query(
+                """
+                SELECT TOP (1) created_at, message
+                FROM bot_log
+                WHERE trade_date = ?
+                  AND module = 'pipeline'
+                  AND message LIKE 'Entry blocked:%'
+                ORDER BY created_at DESC, id DESC
+                """,
+                (target_date,),
+            )
+        except Exception:
+            return None
+        return rows[0] if rows else None
+
+    def latest_global_entry_gate_status(
+        self,
+        trade_date: date | None = None,
+    ) -> tuple[Any, ...] | None:
+        target_date = trade_date or current_trade_date()
+        try:
+            rows = self._query(
+                """
+                SELECT TOP (1) created_at, log_level, module, message, reject_reason
+                FROM bot_log
+                WHERE trade_date = ?
+                  AND module = 'pipeline'
+                  AND (
+                    reject_reason IN (?, ?, ?, ?, ?, ?)
+                    OR message LIKE 'Entry blocked:%'
+                    OR message LIKE '[SAVE_SCORES]%'
+                    OR reject_reason = 'STRICT_FILTER_NO_CANDIDATES'
+                    OR message LIKE 'STRICT_FILTER_NO_CANDIDATES:%'
+                  )
+                ORDER BY created_at DESC, id DESC
+                """,
+                (target_date, *_GLOBAL_ENTRY_GATE_REASONS),
+            )
+        except Exception:
+            return None
+        return rows[0] if rows else None
 
     def _latest_screening_saved_no_targets(self) -> bool:
         target_date = current_trade_date()

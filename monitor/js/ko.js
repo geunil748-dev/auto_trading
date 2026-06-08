@@ -59,8 +59,19 @@ export const KO_LABELS = {
     MA20_ONLY: "MA20만",
     OFF: "꺼짐",
   },
+  globalEntryGateStatus: {
+    ALLOW: "진입 가능",
+    BLOCKED: "진입 차단",
+    UNKNOWN: "확인 필요",
+  },
+  globalEntryGateEffects: {
+    ALLOW: "신규 매수 가능",
+    BLOCKED: "신규 매수 주문 차단",
+    UNKNOWN: "최근 전역 진입 상태 확인 필요",
+  },
   recheckStatuses: {
     RECHECK_NOT_AVAILABLE: "재평가 없음",
+    GLOBAL_ENTRY_BLOCKED: "전역 진입 차단",
     BUY_ALLOWED: "매수 판단 통과",
     ORDER_SUBMITTED: "주문 제출",
     BLOCKED: "매수 차단",
@@ -125,6 +136,18 @@ export function conditionStatusLabel(code) {
 
 export function conditionTypeLabel(code) {
   return labelFromMap(KO_LABELS.conditionTypes, code);
+}
+
+export function globalEntryGateReasonLabel(code) {
+  return reasonLabel(code);
+}
+
+export function globalEntryGateStatusLabel(code) {
+  return labelFromMap(KO_LABELS.globalEntryGateStatus, code);
+}
+
+export function globalEntryGateEffectLabel(code) {
+  return labelFromMap(KO_LABELS.globalEntryGateEffects, code);
 }
 
 export function recheckStatusLabel(code) {

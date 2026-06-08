@@ -17,6 +17,16 @@ from trading_bot.repositories import SqlServerMonitorRepository
 from trading_bot.trading_date import current_trade_date
 
 
+_GLOBAL_ENTRY_GATE_REASONS = {
+    "MARKET_BELOW_MA20",
+    "FX_VOLATILITY",
+    "DAILY_ACCOUNT_LOSS",
+    "OPEN_POSITION_LIMIT",
+    "INVALID_ACCOUNT_EQUITY",
+    "ACCOUNT_EXPOSURE_LIMIT",
+}
+
+
 class SqlMonitorStateSource:
     def __init__(self, repository: SqlServerMonitorRepository) -> None:
         self.repository = repository
@@ -24,6 +34,14 @@ class SqlMonitorStateSource:
     def read(self) -> dict[str, object]:
         scores = {row[0]: row for row in self.repository.latest_scores()}
         recheck_evaluations = _latest_recheck_evaluations(
+            self.repository,
+            current_trade_date(),
+        )
+        entry_block_reason = _latest_entry_block_reason(
+            self.repository,
+            current_trade_date(),
+        )
+        global_entry_gate = _latest_global_entry_gate_status(
             self.repository,
             current_trade_date(),
         )
@@ -45,6 +63,7 @@ class SqlMonitorStateSource:
             "candidateSnapshot": _candidate_snapshot_status(
                 self.repository.candidate_snapshot_status()
             ),
+            "globalEntryGate": _global_entry_gate_status(global_entry_gate),
             "trading_stats": _trading_stats(self.repository.recent_trading_stats()),
             "targets": [
                 _target(
@@ -52,6 +71,7 @@ class SqlMonitorStateSource:
                     scores.get(row[0]),
                     missing_score_decision,
                     recheck_evaluations.get(str(row[0])),
+                    entry_block_reason,
                 )
                 for row in self.repository.latest_targets()
             ],
@@ -81,6 +101,8 @@ class SqlMonitorStateSource:
     def read_history(self, trade_date: date) -> dict[str, object]:
         scores = {row[0]: row for row in self.repository.history_scores(trade_date)}
         recheck_evaluations = _latest_recheck_evaluations(self.repository, trade_date)
+        entry_block_reason = _latest_entry_block_reason(self.repository, trade_date)
+        global_entry_gate = _latest_global_entry_gate_status(self.repository, trade_date)
         logs = self.repository.history_logs(trade_date)
         missing_score_decision = _missing_score_decision(logs)
         account = self.repository.history_account(trade_date)
@@ -94,12 +116,14 @@ class SqlMonitorStateSource:
         return {
             "date": trade_date.isoformat(),
             "account": _account(account, realized_profit, realized_profit_rate),
+            "globalEntryGate": _global_entry_gate_status(global_entry_gate),
             "targets": [
                 _target(
                     row,
                     scores.get(row[0]),
                     missing_score_decision,
                     recheck_evaluations.get(str(row[0])),
+                    entry_block_reason,
                 )
                 for row in self.repository.history_targets(trade_date)
             ],
@@ -150,6 +174,7 @@ def _target(
     score: tuple[Any, ...] | None,
     missing_score_decision: str = "점수 계산 전",
     recheck: tuple[Any, ...] | None = None,
+    entry_block_reason: tuple[Any, ...] | None = None,
 ) -> list[str]:
     if len(row) >= 6:
         ticker, ticker_name, price_usd, opening_volume, volume_ratio, price_change = row[:6]
@@ -182,7 +207,7 @@ def _target(
         f"{_number(price_change):+.1f}%",
         score_value,
         state,
-        *_recheck_target_fields(recheck),
+        *_recheck_target_fields(recheck, entry_block_reason),
     ]
 
 
@@ -199,8 +224,103 @@ def _latest_recheck_evaluations(
     return {str(row[0]): row for row in rows if row}
 
 
-def _recheck_target_fields(row: tuple[Any, ...] | None) -> list[str]:
+def _latest_entry_block_reason(
+    repository: object,
+    trade_date: date,
+) -> tuple[Any, ...] | None:
+    if not hasattr(repository, "latest_entry_block_reason"):
+        return None
+    try:
+        return repository.latest_entry_block_reason(trade_date)  # type: ignore[attr-defined]
+    except Exception:
+        return None
+
+
+def _latest_global_entry_gate_status(
+    repository: object,
+    trade_date: date,
+) -> tuple[Any, ...] | None:
+    if hasattr(repository, "latest_global_entry_gate_status"):
+        try:
+            return repository.latest_global_entry_gate_status(trade_date)  # type: ignore[attr-defined]
+        except Exception:
+            return None
+    return _latest_entry_block_reason(repository, trade_date)
+
+
+def _global_entry_gate_status(row: tuple[Any, ...] | None) -> dict[str, str | None]:
     if row is None:
+        return {
+            "status": "UNKNOWN",
+            "reason": None,
+            "label": "-",
+            "effect": "최근 전역 진입 상태 확인 필요",
+            "source": "-",
+            "updatedAt": "-",
+            "message": "",
+        }
+    if _global_entry_gate_allowed(row):
+        return {
+            "status": "ALLOW",
+            "reason": None,
+            "label": "진입 가능",
+            "effect": "신규 매수 가능",
+            "source": _row_text(row, 2) or "pipeline",
+            "updatedAt": _datetime_text(_row_value(row, 0)),
+            "message": _row_text(row, 3) or _row_text(row, 1),
+        }
+    reason = _global_entry_gate_reason(row)
+    if not reason:
+        return {
+            "status": "UNKNOWN",
+            "reason": None,
+            "label": "-",
+            "effect": "최근 전역 진입 상태 확인 필요",
+            "source": _row_text(row, 2) or "-",
+            "updatedAt": _datetime_text(_row_value(row, 0)),
+            "message": _row_text(row, 3) or _row_text(row, 1),
+        }
+    return {
+        "status": "BLOCKED",
+        "reason": reason,
+        "label": _reason_text(reason),
+        "effect": "신규 매수 주문 차단",
+        "source": _row_text(row, 2) or "pipeline",
+        "updatedAt": _datetime_text(_row_value(row, 0)),
+        "message": _row_text(row, 3) or _row_text(row, 1),
+    }
+
+
+def _global_entry_gate_allowed(row: tuple[Any, ...]) -> bool:
+    message = _row_text(row, 3) or _row_text(row, 1)
+    return message.startswith("[SAVE_SCORES]")
+
+
+def _global_entry_gate_reason(row: tuple[Any, ...]) -> str:
+    reject_reason = _row_text(row, 4)
+    if reject_reason in _GLOBAL_ENTRY_GATE_REASONS:
+        return reject_reason
+    message = _row_text(row, 3) or _row_text(row, 1)
+    if message.startswith("Entry blocked:"):
+        reason = message.removeprefix("Entry blocked:").strip()
+        if reason in _GLOBAL_ENTRY_GATE_REASONS:
+            return reason
+    return ""
+
+
+def _recheck_target_fields(
+    row: tuple[Any, ...] | None,
+    entry_block_reason: tuple[Any, ...] | None = None,
+) -> list[str]:
+    if row is None:
+        if entry_block_reason is not None:
+            return [
+                "-",
+                "GLOBAL_ENTRY_BLOCKED",
+                _entry_block_reason_text(entry_block_reason),
+                "pipeline",
+                _datetime_text(_row_value(entry_block_reason, 0)),
+            ]
         return ["-", "RECHECK_NOT_AVAILABLE", "RECHECK_NOT_AVAILABLE", "-", "-"]
     source = _row_text(row, 1)
     final_score = _score_text(_row_value(row, 5))
@@ -224,6 +344,14 @@ def _recheck_target_fields(row: tuple[Any, ...] | None) -> list[str]:
         source or "-",
         _datetime_text(_row_value(row, 2)),
     ]
+
+
+def _entry_block_reason_text(row: tuple[Any, ...]) -> str:
+    message = _row_text(row, 1)
+    if message.startswith("Entry blocked:"):
+        reason = message.removeprefix("Entry blocked:").strip()
+        return reason or "GLOBAL_ENTRY_BLOCKED"
+    return message or "GLOBAL_ENTRY_BLOCKED"
 
 
 def _row_value(row: tuple[Any, ...], index: int) -> Any:

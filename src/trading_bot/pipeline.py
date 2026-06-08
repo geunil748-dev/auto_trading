@@ -280,7 +280,12 @@ class ScreeningScoringPipeline:
                 settings=active_profile.settings,
             )
             self.repository.save_log(
-                BotLog("WARNING", "pipeline", f"Entry blocked: {entry_gate.reason}")
+                BotLog(
+                    "WARNING",
+                    "pipeline",
+                    f"Entry blocked: {entry_gate.reason}",
+                    reject_reason=entry_gate.reason or "",
+                )
             )
             self.repository.save_log(
                 BotLog(

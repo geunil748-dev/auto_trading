@@ -5,6 +5,9 @@ import {
   conditionStatusLabel,
   conditionTypeLabel,
   exitReasonLabel,
+  globalEntryGateEffectLabel,
+  globalEntryGateReasonLabel,
+  globalEntryGateStatusLabel,
   reasonLabel,
   recheckStatusLabel,
   strategyVersionLabel,
@@ -109,6 +112,7 @@ let historyDateTouched = false;
 let candidateHistoryMessage = "";
 
 const refreshButton = document.querySelector("#refreshState");
+const refreshTargetsButton = document.querySelector("#refreshTargets");
 const manualScreeningButton = document.querySelector("#manualScreening");
 const tabButtons = document.querySelectorAll(".tab-button");
 const sideNav = document.querySelector("#sideNav");
@@ -188,6 +192,7 @@ tokenInput?.addEventListener("keydown", (event) => {
   if (event.key === "Enter") saveTokenAndReload();
 });
 refreshButton?.addEventListener("click", loadState);
+refreshTargetsButton?.addEventListener("click", loadState);
 manualScreeningButton?.addEventListener("click", submitManualScreening);
 runBacktestButton?.addEventListener("click", loadBacktest);
 backtestTickerInput?.addEventListener("change", () => {
@@ -251,6 +256,7 @@ function saveTokenAndReload() {
 
 async function loadState() {
   setButtonLoading(refreshButton, true);
+  setButtonLoading(refreshTargetsButton, true);
   try {
     currentState = normalizeState(await fetchState());
     if (currentState.date && historyDateInput && !historyDateTouched) {
@@ -267,6 +273,7 @@ async function loadState() {
     setAuthStatus("모니터 토큰을 확인해 주세요.");
   } finally {
     setButtonLoading(refreshButton, false);
+    setButtonLoading(refreshTargetsButton, false);
   }
   render(currentState);
 }
@@ -929,6 +936,7 @@ function render(state) {
   const accountState = state.accounts?.[activeAccount] || emptyAccount;
   renderRuntime(state.runtime || fallbackState.runtime);
   renderSummary(accountState);
+  renderGlobalEntryGate(state.globalEntryGate || state.sql?.globalEntryGate || {});
   renderTradingStats(accountState.trading_stats || state.trading_stats || emptyTradingStats);
   renderTables(accountState);
   renderPage();
@@ -965,6 +973,15 @@ function renderSummary(accountState) {
   const error = document.querySelector("#accountError");
   error.hidden = !accountState.error;
   error.textContent = accountState.error || "";
+}
+
+function renderGlobalEntryGate(gate = {}) {
+  const status = gate.status || "UNKNOWN";
+  const reason = gate.reason || "";
+  setText("#globalEntryGateStatus", globalEntryGateStatusLabel(status));
+  setText("#globalEntryGateReason", gate.label || globalEntryGateReasonLabel(reason));
+  setText("#globalEntryGateEffect", gate.effect || globalEntryGateEffectLabel(status));
+  setText("#globalEntryGateCode", reason || "-");
 }
 
 function renderTradingStats(stats = emptyTradingStats) {

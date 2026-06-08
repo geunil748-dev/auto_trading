@@ -474,6 +474,85 @@ def test_sql_monitor_state_recheck_missing_falls_back_without_breaking_target_ro
     ]
 
 
+def test_sql_monitor_state_recheck_missing_shows_global_entry_block_reason() -> None:
+    class EntryBlockedRepository(Repository):
+        def latest_recheck_evaluations(self, trade_date) -> list[tuple[object, ...]]:
+            return []
+
+        def latest_entry_block_reason(self, trade_date) -> tuple[object, ...]:
+            return (
+                datetime(2026, 5, 22, 22, 40, 7),
+                "Entry blocked: MARKET_BELOW_MA20",
+            )
+
+    state = SqlMonitorStateSource(EntryBlockedRepository()).read()
+
+    assert state["globalEntryGate"] == {
+        "status": "BLOCKED",
+        "reason": "MARKET_BELOW_MA20",
+        "label": "나스닥 20일선 하회",
+        "effect": "신규 매수 주문 차단",
+        "source": "pipeline",
+        "updatedAt": "2026-05-22 22:40:07",
+        "message": "Entry blocked: MARKET_BELOW_MA20",
+    }
+    assert state["targets"][0][8:13] == [
+        "-",
+        "GLOBAL_ENTRY_BLOCKED",
+        "MARKET_BELOW_MA20",
+        "pipeline",
+        "2026-05-22 22:40:07",
+    ]
+
+
+def test_sql_monitor_state_global_entry_gate_uses_reject_reason() -> None:
+    class GlobalEntryGateRepository(Repository):
+        def latest_global_entry_gate_status(self, trade_date) -> tuple[object, ...]:
+            return (
+                datetime(2026, 5, 22, 22, 44, 7),
+                "WARNING",
+                "pipeline",
+                "Entry blocked: DAILY_ACCOUNT_LOSS",
+                "DAILY_ACCOUNT_LOSS",
+            )
+
+    state = SqlMonitorStateSource(GlobalEntryGateRepository()).read()
+
+    assert state["globalEntryGate"] == {
+        "status": "BLOCKED",
+        "reason": "DAILY_ACCOUNT_LOSS",
+        "label": "일일 손실 제한 도달",
+        "effect": "신규 매수 주문 차단",
+        "source": "pipeline",
+        "updatedAt": "2026-05-22 22:44:07",
+        "message": "Entry blocked: DAILY_ACCOUNT_LOSS",
+    }
+
+
+def test_sql_monitor_state_global_entry_gate_allows_after_score_save() -> None:
+    class GlobalEntryGateRepository(Repository):
+        def latest_global_entry_gate_status(self, trade_date) -> tuple[object, ...]:
+            return (
+                datetime(2026, 5, 22, 22, 45, 7),
+                "INFO",
+                "pipeline",
+                "[SAVE_SCORES] score_count=3 trade_date=2026-05-22",
+                "",
+            )
+
+    state = SqlMonitorStateSource(GlobalEntryGateRepository()).read()
+
+    assert state["globalEntryGate"] == {
+        "status": "ALLOW",
+        "reason": None,
+        "label": "진입 가능",
+        "effect": "신규 매수 가능",
+        "source": "pipeline",
+        "updatedAt": "2026-05-22 22:45:07",
+        "message": "[SAVE_SCORES] score_count=3 trade_date=2026-05-22",
+    }
+
+
 def test_sql_monitor_state_translates_structured_log_messages() -> None:
     class StructuredLogRepository(Repository):
         def latest_logs(self) -> list[tuple[object, ...]]:
