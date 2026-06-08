@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from contextlib import closing
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -39,9 +38,7 @@ from trading_bot.order_cancellation import (
     cancel_unfilled_orders,
     stale_unfilled_buy_cancel_requests,
 )
-from trading_bot.entry_planner import plan_buy_intents
 from trading_bot.repositories import SqlServerDailyRepository
-from trading_bot.runtime import DryRunResult
 from trading_bot.schedule import DailyTasks
 from trading_bot.scheduler_logging import safe_exception_summary, safe_scheduler_log
 from trading_bot.scheduler_market_close import (
@@ -49,6 +46,13 @@ from trading_bot.scheduler_market_close import (
     save_daily_trade_summary_report,
     send_market_close_notice,
     send_market_close_report,
+)
+from trading_bot.scheduler_recheck import (
+    append_entry_reason,
+    fixed_opening_result,
+    hybrid_recheck,
+    recheck_fixed_watchlist,
+    tag_mode_intents,
 )
 from trading_bot.scheduled_messages import log_row, recheck_message, watch_message
 from trading_bot.trade_fill_notifications import (
@@ -169,11 +173,11 @@ def live_mock_tasks(
             return guarded
         current_settings = _current_settings(settings)
         runtime, repository = build_live_dry_run(current_settings, kis_settings)
-        fixed_opening = _fixed_opening_result(latest, current_settings)
+        fixed_opening = fixed_opening_result(latest, current_settings)
         mode = _candidate_mode(current_settings)
         if mode == "fixed" and fixed_opening is not None:
             # 장초반 고정 모드에서는 기존 후보만 최신 가격 기준으로 재평가한다.
-            latest.result = _recheck_fixed_watchlist(
+            latest.result = recheck_fixed_watchlist(
                 runtime,
                 fixed_opening,
                 current_settings,
@@ -181,7 +185,7 @@ def live_mock_tasks(
             )
         elif mode == "hybrid" and fixed_opening is not None:
             # 하이브리드는 장초반 고정 후보와 15분 신규 후보 상위권을 합쳐 감시한다.
-            latest.result = _hybrid_recheck(runtime, fixed_opening, current_settings, repository)
+            latest.result = hybrid_recheck(runtime, fixed_opening, current_settings, repository)
         else:
             # 15분 재수집 모드에서는 매번 새 후보를 수집해 점수를 다시 계산한다.
             latest.result = runtime.run()
@@ -209,7 +213,7 @@ def live_mock_tasks(
             latest.intraday_entry_rounds,
             current_settings,
         )
-        intents = _tag_mode_intents(intents, mode)
+        intents = tag_mode_intents(intents, mode)
         intents = _apply_stop_loss_entry_guards(intents, repository, current_settings)
         trades = build_mock_buy_executor(kis_settings, repository, current_settings).execute(intents)
         if trades:
@@ -434,137 +438,6 @@ class _LatestRunState:
         self.opening_result = None
         self.opening_trade_date = None
         self.opening_fixed_mode = False
-
-
-def _fixed_opening_result(
-    latest: _LatestRunState,
-    settings: TradingSettings,
-) -> DryRunResult | None:
-    if _candidate_mode(settings) not in {"fixed", "hybrid"}:
-        return None
-    if not latest.opening_fixed_mode:
-        return None
-    if latest.opening_trade_date != current_trade_date():
-        return None
-    # 장초반 고정 모드는 22:35~22:40에 수집한 후보만 장중에 계속 감시한다.
-    return latest.opening_result
-
-
-def _recheck_fixed_watchlist(
-    runtime,
-    latest_result: DryRunResult,
-    settings: TradingSettings,
-    repository,
-) -> DryRunResult:
-    account = runtime.accounts.current_account()
-    selected = latest_result.scoring.selected[: settings.opening_fixed_candidate_limit]
-    breakout_inputs = {
-        item.ticker: runtime.breakout.breakout_input(item.ticker)
-        for item in selected
-    }
-    intents = _plan_buy_intents_with_evaluation(
-        selected,
-        breakout_inputs,
-        account,
-        settings,
-        repository=repository,
-        trade_date=_scoring_trade_date(latest_result.scoring),
-        source="fixed_recheck",
-    )
-    return DryRunResult(account, latest_result.scoring, tuple(intents))
-
-
-def _hybrid_recheck(
-    runtime,
-    opening_result: DryRunResult,
-    settings: TradingSettings,
-    repository,
-) -> DryRunResult:
-    refreshed = runtime.run()
-    account = runtime.accounts.current_account()
-    selected = _hybrid_selected_scores(opening_result, refreshed, settings)
-    breakout_inputs = {
-        item.ticker: runtime.breakout.breakout_input(item.ticker)
-        for item in selected
-    }
-    intents = _plan_buy_intents_with_evaluation(
-        selected,
-        breakout_inputs,
-        account,
-        settings,
-        repository=repository,
-        trade_date=_scoring_trade_date(refreshed.scoring),
-        source="hybrid_recheck",
-    )
-    return DryRunResult(account, refreshed.scoring, tuple(intents))
-
-
-def _hybrid_selected_scores(
-    opening_result: DryRunResult,
-    refreshed: DryRunResult,
-    settings: TradingSettings,
-) -> tuple:
-    combined = {}
-    for score in opening_result.scoring.selected[: settings.opening_fixed_candidate_limit]:
-        combined[score.ticker] = score
-    intraday_ranked = sorted(
-        refreshed.scoring.selected,
-        key=lambda item: (-item.total_score, item.ticker),
-    )
-    for score in intraday_ranked[: settings.intraday_refresh_candidate_limit]:
-        combined[score.ticker] = score
-    ranked = sorted(combined.values(), key=lambda item: (-item.total_score, item.ticker))
-    return tuple(ranked[: settings.hybrid_candidate_limit])
-
-
-def _plan_buy_intents_with_evaluation(
-    selected,
-    breakout_inputs,
-    account,
-    settings,
-    *,
-    repository,
-    trade_date,
-    source: str,
-) -> list[BuyIntent]:
-    try:
-        return plan_buy_intents(
-            selected,
-            breakout_inputs,
-            account,
-            settings,
-            repository=repository,
-            trade_date=trade_date,
-            source=source,
-        )
-    except TypeError as exc:
-        if "unexpected keyword" not in str(exc):
-            raise
-        return plan_buy_intents(selected, breakout_inputs, account, settings)
-
-
-def _scoring_trade_date(scoring) -> object:
-    return getattr(scoring, "trade_date", current_trade_date())
-
-
-def _tag_mode_intents(intents: list[BuyIntent], mode: str) -> list[BuyIntent]:
-    reason = {
-        "fixed": "OPENING_FIXED",
-        "hybrid": "HYBRID_CANDIDATE",
-    }.get(mode, "REFRESH_CANDIDATE")
-    detail = {
-        "fixed": "장초반 고정 후보 재평가",
-        "hybrid": "장초반 고정 후보와 15분 신규 후보 결합",
-    }.get(mode, "15분마다 신규 후보 재수집")
-    return [_append_entry_reason(intent, reason, detail) for intent in intents]
-
-
-def _append_entry_reason(intent: BuyIntent, reason: str, detail: str) -> BuyIntent:
-    reasons = [item for item in intent.entry_reason.split("+") if item]
-    if reason not in reasons:
-        reasons.append(reason)
-    detail_text = "; ".join(item for item in (intent.entry_reason_detail, detail) if item)
-    return replace(intent, entry_reason="+".join(reasons), entry_reason_detail=detail_text)
 
 
 def _write_live_state(
@@ -804,7 +677,7 @@ def _retry_stale_mock_buy_orders(
         settings,
     )
     intents = [
-        _append_entry_reason(
+        append_entry_reason(
             intent,
             "UNFILLED_REORDER",
             f"미체결 {settings.mock_unfilled_reorder_minutes}분 경과 후 1회 재주문",

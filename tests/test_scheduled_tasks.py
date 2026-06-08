@@ -823,7 +823,7 @@ def test_intraday_recheck_can_reuse_fixed_watchlist(monkeypatch, tmp_path) -> No
         lambda monitor_state, kis_settings, screening_state=None, **kwargs: None,
     )
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks.plan_buy_intents",
+        "trading_bot.scheduler_recheck.plan_buy_intents",
         lambda selected, breakout_inputs, account, settings: [
             BuyIntent(item.ticker, 1, 10, 10, 0.01) for item in selected
         ],
@@ -937,7 +937,7 @@ def test_intraday_recheck_hybrid_merges_opening_and_refresh_candidates(monkeypat
         lambda monitor_state, kis_settings, screening_state=None, **kwargs: None,
     )
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks.plan_buy_intents",
+        "trading_bot.scheduler_recheck.plan_buy_intents",
         lambda selected, breakout_inputs, account, settings: [
             BuyIntent(item.ticker, 1, 10, 10, 0.01) for item in selected
         ],
