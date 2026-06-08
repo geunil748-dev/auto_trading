@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import closing
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 from trading_bot.adapters.kis_http import KisJsonClient
@@ -25,7 +25,7 @@ from trading_bot.market_calendar import (
     is_current_us_regular_session,
     is_current_us_trading_day,
 )
-from trading_bot.models import BotLog, BuyIntent, FillRecord, PositionState
+from trading_bot.models import FillRecord, PositionState
 from trading_bot.monitor_state import state_from_dry_run
 from trading_bot.schedule import DailyTasks
 from trading_bot.scheduler_logging import safe_exception_summary, safe_scheduler_log
@@ -40,6 +40,10 @@ from trading_bot.scheduler_recheck import (
     hybrid_recheck,
     recheck_fixed_watchlist,
     tag_mode_intents,
+)
+from trading_bot.scheduler_risk import (
+    apply_stop_loss_entry_guards,
+    saved_partial_take_profit_tickers,
 )
 from trading_bot.scheduler_orders import (
     cancel_logs,
@@ -105,7 +109,7 @@ def live_mock_tasks(
         if latest.result is None or latest.repository is None:
             return "후보 점검이 실행되지 않아 모의 매수를 건너뜁니다."
         current_settings = _current_settings(settings)
-        intents = _apply_stop_loss_entry_guards(
+        intents = apply_stop_loss_entry_guards(
             list(latest.result.buy_intents),
             latest.repository,
             current_settings,
@@ -131,7 +135,7 @@ def live_mock_tasks(
         current_settings = _current_settings(settings)
         accounts, monitor, repository = build_live_exit_poll(current_settings, kis_settings)
         positions = _remembered_highs(accounts.positions(), latest.highs)
-        partial_done = latest.partial_take_profit_tickers | _saved_partial_take_profit_tickers(repository)
+        partial_done = latest.partial_take_profit_tickers | saved_partial_take_profit_tickers(repository)
         refreshed, exits = monitor.poll(
             positions,
             partial_take_profit_tickers=partial_done,
@@ -153,7 +157,7 @@ def live_mock_tasks(
             latest,
             build_live_dry_run_func=build_live_dry_run,
             build_mock_buy_executor_func=build_mock_buy_executor,
-            apply_stop_loss_entry_guards_func=_apply_stop_loss_entry_guards,
+            apply_stop_loss_entry_guards_func=apply_stop_loss_entry_guards,
         )
         _write_live_state(
             monitor_state,
@@ -217,7 +221,7 @@ def live_mock_tasks(
             current_settings,
         )
         intents = tag_mode_intents(intents, mode)
-        intents = _apply_stop_loss_entry_guards(intents, repository, current_settings)
+        intents = apply_stop_loss_entry_guards(intents, repository, current_settings)
         trades = build_mock_buy_executor(kis_settings, repository, current_settings).execute(intents)
         if trades:
             latest.intraday_entry_rounds += 1
@@ -321,103 +325,6 @@ def _send_fill_notifications(records: list[FillRecord], holdings: list[object]) 
         )
         # 체결 알림 실패는 주문/DB 저장 흐름과 분리한다.
         return
-
-
-def _apply_stop_loss_entry_guards(
-    intents: list[BuyIntent],
-    repository,
-    settings: TradingSettings,
-) -> list[BuyIntent]:
-    if not intents:
-        return []
-    if _consecutive_stop_loss_count(repository) >= settings.max_consecutive_stop_loss_count:
-        repository.save_log(
-            BotLog(
-                "WARNING",
-                "risk",
-                "연속 손절 제한에 도달해 신규 매수를 중단했습니다.",
-                reject_reason="CONSECUTIVE_STOP_LOSS_LIMIT",
-                actual_value=float(_consecutive_stop_loss_count(repository)),
-                threshold_value=float(settings.max_consecutive_stop_loss_count),
-            )
-        )
-        return []
-    allowed: list[BuyIntent] = []
-    for intent in intents:
-        last_stop_loss_at = _last_stop_loss_at(repository, intent.ticker)
-        if _cooldown_active(last_stop_loss_at, settings.stop_loss_cooldown_minutes):
-            repository.save_log(
-                BotLog(
-                    "WARNING",
-                    "risk",
-                    f"손절 후 쿨다운으로 신규 매수를 차단했습니다: {intent.ticker}",
-                    symbol=intent.ticker,
-                    reject_reason="STOP_LOSS_COOLDOWN",
-                    actual_value=float(settings.stop_loss_cooldown_minutes),
-                    threshold_value=float(settings.stop_loss_cooldown_minutes),
-                )
-            )
-            continue
-        allowed.append(intent)
-    return allowed
-
-
-def _consecutive_stop_loss_count(repository) -> int:
-    try:
-        if hasattr(repository, "consecutive_stop_loss_count"):
-            return int(repository.consecutive_stop_loss_count(current_trade_date()))
-    except Exception as exc:
-        safe_scheduler_log(
-            "WARNING",
-            "risk",
-            f"STOP_LOSS_COUNT_LOOKUP_FAILED: {safe_exception_summary(exc)}",
-            reject_reason="STOP_LOSS_COUNT_LOOKUP_FAILED",
-        )
-        return 0
-    return 0
-
-
-def _last_stop_loss_at(repository, ticker: str):
-    try:
-        if hasattr(repository, "last_stop_loss_at"):
-            return repository.last_stop_loss_at(current_trade_date(), ticker)
-    except Exception as exc:
-        safe_scheduler_log(
-            "WARNING",
-            "risk",
-            f"STOP_LOSS_COOLDOWN_LOOKUP_FAILED: {safe_exception_summary(exc)}",
-            symbol=ticker,
-            reject_reason="STOP_LOSS_COOLDOWN_LOOKUP_FAILED",
-        )
-        return None
-    return None
-
-
-def _cooldown_active(last_stop_loss_at, cooldown_minutes: int) -> bool:
-    if last_stop_loss_at is None or cooldown_minutes <= 0:
-        return False
-    if isinstance(last_stop_loss_at, str):
-        try:
-            last_stop_loss_at = datetime.fromisoformat(last_stop_loss_at)
-        except ValueError:
-            return False
-    now = datetime.now(last_stop_loss_at.tzinfo) if last_stop_loss_at.tzinfo else datetime.now()
-    return now - last_stop_loss_at < timedelta(minutes=cooldown_minutes)
-
-
-def _saved_partial_take_profit_tickers(repository) -> set[str]:
-    try:
-        if hasattr(repository, "partial_take_profit_tickers"):
-            return set(repository.partial_take_profit_tickers(current_trade_date()))
-    except Exception as exc:
-        safe_scheduler_log(
-            "WARNING",
-            "risk",
-            f"PARTIAL_TAKE_PROFIT_LOOKUP_FAILED: {safe_exception_summary(exc)}",
-            reject_reason="PARTIAL_TAKE_PROFIT_LOOKUP_FAILED",
-        )
-        return set()
-    return set()
 
 
 def _candidate_mode(settings: TradingSettings) -> str:
