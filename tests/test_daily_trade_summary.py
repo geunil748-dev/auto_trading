@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 
 from trading_bot.daily_trade_summary import generate_daily_trade_summary
 from trading_bot.models import DailyTradeSummaryReport
-from trading_bot.scheduled_tasks import _save_daily_trade_summary_report
+from trading_bot.scheduler_market_close import save_daily_trade_summary_report
 
 
 class FakeTradeSummarySource:
@@ -248,11 +248,11 @@ def test_summary_save_failure_is_logged_and_ignored(monkeypatch) -> None:
         def save_log(self, log) -> None:
             logs.append(log)
 
-    monkeypatch.setattr("trading_bot.scheduled_tasks.generate_daily_trade_summary", fail_summary)
-    monkeypatch.setattr("trading_bot.scheduled_tasks.SqlServerDailyRepository", LogRepository)
-    monkeypatch.setattr("trading_bot.scheduled_tasks.pyodbc_connect_factory", lambda: object)
+    monkeypatch.setattr("trading_bot.scheduler_market_close.generate_daily_trade_summary", fail_summary)
+    monkeypatch.setattr("trading_bot.scheduler_logging.SqlServerDailyRepository", LogRepository)
+    monkeypatch.setattr("trading_bot.scheduler_logging.pyodbc_connect_factory", lambda: object)
 
-    _save_daily_trade_summary_report()
+    save_daily_trade_summary_report()
 
     assert logs[0].reject_reason == "SUMMARY_REPORT_SAVE_FAILED"
     assert "password" not in logs[0].message
