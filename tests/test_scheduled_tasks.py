@@ -9,14 +9,16 @@ from trading_bot.scheduler_market_close import (
     send_market_close_notice,
     send_market_close_report,
 )
+from trading_bot.scheduler_state import (
+    entry_profit_snapshots_from_fills,
+    holding_prices,
+    persist_live_snapshot,
+)
 from trading_bot.scheduled_tasks import (
     _apply_stop_loss_entry_guards,
     _cancel_stale_mock_buy_orders,
     _consecutive_stop_loss_count,
-    _entry_profit_snapshots_from_fills,
-    _holding_prices,
     _last_stop_loss_at,
-    _persist_live_snapshot,
     _saved_partial_take_profit_tickers,
     _send_fill_notifications,
     live_mock_tasks,
@@ -292,7 +294,7 @@ def test_stop_loss_cooldown_blocks_same_symbol_entry() -> None:
 
 
 def test_entry_profit_snapshots_are_created_from_buy_fills() -> None:
-    snapshots = _entry_profit_snapshots_from_fills(
+    snapshots = entry_profit_snapshots_from_fills(
         [
             FillRecord(
                 trade_date=date(2026, 5, 29),
@@ -325,7 +327,7 @@ def test_entry_profit_snapshots_are_created_from_buy_fills() -> None:
 
 
 def test_holding_prices_parse_current_price_fields() -> None:
-    prices = _holding_prices(
+    prices = holding_prices(
         [
             {"ticker": " aaa ", "closePrice": "$12.34"},
             {"ticker": "BBB", "lastPrice": "9.87"},
@@ -340,18 +342,14 @@ def test_persist_live_snapshot_saves_fill_history_and_entry_snapshot(monkeypatch
     repository = SnapshotRepository()
     notifications = []
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks.SqlServerDailyRepository",
+        "trading_bot.scheduler_state.SqlServerDailyRepository",
         lambda connect: repository,
     )
-    monkeypatch.setattr("trading_bot.scheduled_tasks.pyodbc_connect_factory", lambda: object)
-    monkeypatch.setattr("trading_bot.scheduled_tasks.current_trade_date", lambda: date(2026, 6, 5))
-    monkeypatch.setattr("trading_bot.scheduled_tasks.load_settings", lambda: TradingSettings())
-    monkeypatch.setattr(
-        "trading_bot.scheduled_tasks._send_fill_notifications",
-        lambda records, holdings: notifications.append((records, holdings)),
-    )
+    monkeypatch.setattr("trading_bot.scheduler_state.pyodbc_connect_factory", lambda: object)
+    monkeypatch.setattr("trading_bot.scheduler_state.current_trade_date", lambda: date(2026, 6, 5))
+    monkeypatch.setattr("trading_bot.scheduler_state.load_settings", lambda: TradingSettings())
 
-    error = _persist_live_snapshot(
+    error = persist_live_snapshot(
         {
             "account": {"cashUsd": "$100.00"},
             "orders": [],
@@ -369,7 +367,8 @@ def test_persist_live_snapshot_saves_fill_history_and_entry_snapshot(monkeypatch
                     "orderNo": "123",
                 }
             ],
-        }
+        },
+        send_fill_notifications_func=lambda records, holdings: notifications.append((records, holdings)),
     )
 
     assert error == ""
@@ -387,10 +386,10 @@ def test_persist_live_snapshot_masks_db_failure_message(monkeypatch) -> None:
     def fail_repository(connect):
         raise RuntimeError("MSSQL_PASSWORD=secret")
 
-    monkeypatch.setattr("trading_bot.scheduled_tasks.SqlServerDailyRepository", fail_repository)
-    monkeypatch.setattr("trading_bot.scheduled_tasks.pyodbc_connect_factory", lambda: object)
+    monkeypatch.setattr("trading_bot.scheduler_state.SqlServerDailyRepository", fail_repository)
+    monkeypatch.setattr("trading_bot.scheduler_state.pyodbc_connect_factory", lambda: object)
 
-    error = _persist_live_snapshot(
+    error = persist_live_snapshot(
         {"account": {}, "orders": [], "holdings": [], "fills": []}
     )
 
