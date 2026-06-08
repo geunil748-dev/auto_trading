@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextlib import closing
-from datetime import datetime
 from pathlib import Path
 
 from trading_bot.adapters.kis_http import KisJsonClient
@@ -18,7 +16,6 @@ from trading_bot.config import (
     load_settings,
 )
 from trading_bot.daily_report import write_daily_report
-from trading_bot.database import mssql_dsn_from_env, pyodbc_connect_factory
 from trading_bot.intraday_entries import limited_intraday_buy_intents
 from trading_bot.market_calendar import (
     current_us_market_date,
@@ -29,6 +26,10 @@ from trading_bot.models import FillRecord, PositionState
 from trading_bot.monitor_state import state_from_dry_run
 from trading_bot.schedule import DailyTasks
 from trading_bot.scheduler_logging import safe_exception_summary, safe_scheduler_log
+from trading_bot.scheduler_guard import (
+    guarded_trading_skip,
+    trading_cycle_skip_reason,
+)
 from trading_bot.scheduler_market_close import (
     save_daily_run_summary,
     save_daily_trade_summary_report,
@@ -101,7 +102,7 @@ def live_mock_tasks(
         if not trading_day():
             _write_closed_state(monitor_state)
             return "미국 휴장일이라 모의 매수를 건너뜁니다."
-        guarded = _guarded_trading_skip(trading_guard)
+        guarded = guarded_trading_skip(trading_guard)
         if guarded is not None:
             return guarded
         if latest.result is None or latest.repository is None:
@@ -129,7 +130,7 @@ def live_mock_tasks(
     def intraday_watch() -> str:
         if not regular_session():
             return "미국 정규장 시간이 아니라 1분 감시를 건너뜁니다."
-        guarded = _guarded_trading_skip(trading_guard)
+        guarded = guarded_trading_skip(trading_guard)
         if guarded is not None:
             return guarded
         current_settings = _current_settings(settings)
@@ -175,7 +176,7 @@ def live_mock_tasks(
     def intraday_recheck() -> str:
         if not regular_session():
             return "미국 정규장 시간이 아니라 15분 재평가를 건너뜁니다."
-        guarded = _guarded_trading_skip(trading_guard)
+        guarded = guarded_trading_skip(trading_guard)
         if guarded is not None:
             return guarded
         current_settings = _current_settings(settings)
@@ -257,7 +258,7 @@ def live_mock_tasks(
         if not trading_day():
             _write_closed_state(monitor_state)
             return "미국 휴장일이라 미체결 주문 취소를 건너뜁니다."
-        guarded = _guarded_trading_skip(trading_guard)
+        guarded = guarded_trading_skip(trading_guard)
         if guarded is not None:
             return guarded
         cancelled = cancel_unfilled_orders_for_scheduler(kis_settings)
@@ -271,7 +272,7 @@ def live_mock_tasks(
             return "미국 휴장일이라 장마감 처리를 건너뜁니다."
         if not regular_session():
             return "미국 정규장 시간이 아니라 장마감 처리를 건너뜁니다."
-        guarded = _guarded_trading_skip(trading_guard)
+        guarded = guarded_trading_skip(trading_guard)
         if guarded is not None:
             return guarded
         cancelled = cancel_unfilled_orders_for_scheduler(kis_settings)
@@ -367,49 +368,6 @@ def _write_live_state(
 
 _write_closed_state = write_closed_state
 _write_state_file = write_state_file
-
-
-def trading_cycle_skip_reason(monitor_state: Path) -> str | None:
-    reasons: list[str] = []
-    try:
-        import clr  # noqa: F401
-    except Exception:
-        reasons.append("clr_import=fail")
-    if not mssql_dsn_from_env():
-        reasons.append("db_configured=false")
-    else:
-        try:
-            with closing(pyodbc_connect_factory()()) as connection:
-                cursor = connection.cursor()
-                cursor.execute("SELECT 1")
-                cursor.fetchall()
-        except Exception:
-            reasons.append("db_connected=false")
-    age_seconds = _state_age_seconds(monitor_state)
-    if age_seconds is None:
-        reasons.append("state=missing")
-    elif age_seconds > 600:
-        reasons.append(
-            f"state=stale age_seconds={age_seconds} "
-            "recovery=inspect_scheduler_state_write"
-        )
-    if not reasons:
-        return None
-    return "SKIP trading cycle: monitor degraded reason=" + ",".join(reasons)
-
-
-def _guarded_trading_skip(
-    trading_guard: Callable[[], str | None] | None,
-) -> str | None:
-    if trading_guard is None:
-        return None
-    return trading_guard()
-
-
-def _state_age_seconds(path: Path) -> int | None:
-    if not path.exists():
-        return None
-    return max(int(datetime.now().timestamp() - path.stat().st_mtime), 0)
 
 
 def _remembered_highs(
