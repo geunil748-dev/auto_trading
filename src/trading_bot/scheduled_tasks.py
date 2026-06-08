@@ -6,8 +6,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from trading_bot.adapters.kis_http import KisJsonClient
-from trading_bot.adapters.kis_orders import KisMockOrderCanceller
-from trading_bot.adapters.kis_overseas import KisOverseasClient
 from trading_bot.composition import (
     build_live_dry_run,
     build_live_exit_poll,
@@ -29,10 +27,6 @@ from trading_bot.market_calendar import (
 )
 from trading_bot.models import BotLog, BuyIntent, FillRecord, PositionState
 from trading_bot.monitor_state import state_from_dry_run
-from trading_bot.order_cancellation import (
-    cancel_unfilled_orders,
-    stale_unfilled_buy_cancel_requests,
-)
 from trading_bot.schedule import DailyTasks
 from trading_bot.scheduler_logging import safe_exception_summary, safe_scheduler_log
 from trading_bot.scheduler_market_close import (
@@ -42,11 +36,20 @@ from trading_bot.scheduler_market_close import (
     send_market_close_report,
 )
 from trading_bot.scheduler_recheck import (
-    append_entry_reason,
     fixed_opening_result,
     hybrid_recheck,
     recheck_fixed_watchlist,
     tag_mode_intents,
+)
+from trading_bot.scheduler_orders import (
+    cancel_logs,
+    cancel_stale_mock_buy_orders,
+    cancel_unfilled_orders_for_scheduler,
+    release_cancelled_buy_tickers,
+    retry_stale_mock_buy_orders,
+    ticker,
+    unfilled_cancel_seconds,
+    unfilled_order_tickers,
 )
 from trading_bot.scheduler_state import (
     write_closed_state,
@@ -144,10 +147,13 @@ def live_mock_tasks(
         latest.pending_exits.update(
             item.ticker for item in executable if item.exit_reason != "PARTIAL_TAKE_PROFIT"
         )
-        retry_state, retry_logs = _retry_stale_mock_buy_orders(
+        retry_state, retry_logs = retry_stale_mock_buy_orders(
             current_settings,
             kis_settings,
             latest,
+            build_live_dry_run_func=build_live_dry_run,
+            build_mock_buy_executor_func=build_mock_buy_executor,
+            apply_stop_loss_entry_guards_func=_apply_stop_loss_entry_guards,
         )
         _write_live_state(
             monitor_state,
@@ -188,17 +194,17 @@ def live_mock_tasks(
             latest.result = runtime.run()
         latest.repository = repository
         positions = runtime.accounts.positions()
-        cancelled = _cancel_stale_mock_buy_orders(
+        cancelled = cancel_stale_mock_buy_orders(
             kis_settings,
             current_settings.mock_unfilled_reorder_minutes,
             latest.retried_buy_tickers,
             current_settings.mock_unfilled_reorder_limit,
-            _unfilled_cancel_seconds(current_settings),
+            unfilled_cancel_seconds(current_settings),
         )
         latest.cancelled_orders.extend(cancelled)
-        _release_cancelled_buy_tickers(latest, cancelled)
-        unfilled = _unfilled_order_tickers(kis_settings) - {
-            _ticker(str(item.get("ticker", ""))) for item in cancelled
+        release_cancelled_buy_tickers(latest, cancelled)
+        unfilled = unfilled_order_tickers(kis_settings) - {
+            ticker(str(item.get("ticker", ""))) for item in cancelled
         }
         # 재평가 매수는 미체결/이미 진입한 종목/일일 라운드 제한을 한 번 더 통과해야 한다.
         intents = limited_intraday_buy_intents(
@@ -216,9 +222,9 @@ def live_mock_tasks(
         if trades:
             latest.intraday_entry_rounds += 1
             latest.buy_tickers.update(item.ticker for item in intents)
-            held = {_ticker(position.ticker) for position in positions}
+            held = {ticker(position.ticker) for position in positions}
             latest.add_on_tickers.update(
-                item.ticker for item in intents if _ticker(item.ticker) in held
+                item.ticker for item in intents if ticker(item.ticker) in held
             )
         _write_live_state(
             monitor_state,
@@ -236,7 +242,7 @@ def live_mock_tasks(
                         current_settings,
                     ),
                 )
-            ] + _cancel_logs(cancelled, current_settings.mock_unfilled_reorder_minutes),
+            ] + cancel_logs(cancelled, current_settings.mock_unfilled_reorder_minutes),
         )
         return (
             f"15분 재평가 완료: 선정 점수 {len(latest.result.scoring.selected)}건, "
@@ -250,7 +256,7 @@ def live_mock_tasks(
         guarded = _guarded_trading_skip(trading_guard)
         if guarded is not None:
             return guarded
-        cancelled = _cancel_unfilled_orders(kis_settings)
+        cancelled = cancel_unfilled_orders_for_scheduler(kis_settings)
         latest.cancelled_orders.extend(cancelled)
         _write_live_state(monitor_state, kis_settings)
         return f"미체결 모의 주문 {len(cancelled)}건 취소."
@@ -264,7 +270,7 @@ def live_mock_tasks(
         guarded = _guarded_trading_skip(trading_guard)
         if guarded is not None:
             return guarded
-        cancelled = _cancel_unfilled_orders(kis_settings)
+        cancelled = cancel_unfilled_orders_for_scheduler(kis_settings)
         latest.cancelled_orders.extend(cancelled)
         current_settings = _current_settings(settings)
         accounts, monitor, repository = build_live_exit_poll(current_settings, kis_settings)
@@ -499,160 +505,6 @@ def _state_age_seconds(path: Path) -> int | None:
     return max(int(datetime.now().timestamp() - path.stat().st_mtime), 0)
 
 
-def _retry_stale_mock_buy_orders(
-    settings: TradingSettings,
-    kis_settings: KisSettings,
-    latest: _LatestRunState,
-) -> tuple[dict[str, object] | None, list[list[str]]]:
-    cancelled = _cancel_stale_mock_buy_orders(
-        kis_settings,
-        settings.mock_unfilled_reorder_minutes,
-        latest.retried_buy_tickers,
-        settings.mock_unfilled_reorder_limit,
-        _unfilled_cancel_seconds(settings),
-    )
-    if not cancelled:
-        return None, []
-    latest.cancelled_orders.extend(cancelled)
-    _release_cancelled_buy_tickers(latest, cancelled)
-
-    runtime, repository = build_live_dry_run(settings, kis_settings)
-    latest.result = runtime.run()
-    latest.repository = repository
-    positions = runtime.accounts.positions()
-    cancelled_tickers = {_ticker(str(item.get("ticker", ""))) for item in cancelled}
-    unfilled = _unfilled_order_tickers(kis_settings) - cancelled_tickers
-    intents = limited_intraday_buy_intents(
-        latest.result.buy_intents,
-        positions,
-        latest.buy_tickers,
-        latest.add_on_tickers,
-        unfilled,
-        latest.intraday_entry_rounds,
-        settings,
-    )
-    intents = [
-        append_entry_reason(
-            intent,
-            "UNFILLED_REORDER",
-            f"미체결 {settings.mock_unfilled_reorder_minutes}분 경과 후 1회 재주문",
-        )
-        for intent in intents
-    ]
-    intents = _apply_stop_loss_entry_guards(intents, repository, settings)
-    trades = build_mock_buy_executor(kis_settings, repository, settings).execute(intents)
-    if trades:
-        latest.intraday_entry_rounds += 1
-        latest.buy_tickers.update(item.ticker for item in intents)
-    return (
-        state_from_dry_run(latest.result),
-        [
-            log_row(
-                "미체결 재주문",
-                f"{settings.mock_unfilled_reorder_minutes}분 지난 미체결 매수 "
-                f"{len(cancelled)}건 취소, 재주문 {len(trades)}건",
-            )
-        ],
-    )
-
-
-def _cancel_stale_mock_buy_orders(
-    kis_settings: KisSettings,
-    max_age_minutes: int,
-    retried_tickers: set[str],
-    retry_limit: int = 1,
-    max_age_seconds: int | None = None,
-) -> list[dict[str, object]]:
-    if retry_limit <= 0:
-        return []
-    try:
-        rows = _mock_order_rows(kis_settings)
-    except Exception as exc:
-        safe_scheduler_log(
-            "WARNING",
-            "orders",
-            f"STALE_MOCK_BUY_ORDER_LOOKUP_FAILED: {safe_exception_summary(exc)}",
-            reject_reason="STALE_MOCK_BUY_ORDER_LOOKUP_FAILED",
-        )
-        return []
-    requests = stale_unfilled_buy_cancel_requests(
-        rows,
-        max_age_minutes=max_age_minutes,
-        retried_tickers=retried_tickers,
-        max_age_seconds=max_age_seconds,
-    )
-    if not requests:
-        return []
-    canceller = KisMockOrderCanceller(
-        KisOverseasClient(KisJsonClient(kis_settings)),
-        kis_settings,
-    )
-    cancelled = []
-    for request in requests:
-        canceller.cancel(request)
-        cancelled.append(request)
-    retried_tickers.update(_ticker(str(item.get("ticker", ""))) for item in cancelled)
-    return cancelled
-
-
-def _release_cancelled_buy_tickers(
-    latest: _LatestRunState,
-    cancelled: list[dict[str, object]],
-) -> None:
-    for item in cancelled:
-        ticker = _ticker(str(item.get("ticker", "")))
-        latest.buy_tickers.discard(ticker)
-        latest.add_on_tickers.discard(ticker)
-
-
-def _cancel_logs(
-    cancelled: list[dict[str, object]],
-    minutes: int,
-) -> list[list[str]]:
-    if not cancelled:
-        return []
-    tickers = ", ".join(_ticker(str(item.get("ticker", ""))) for item in cancelled)
-    return [log_row("미체결 취소", f"{minutes}분 지난 미체결 매수 취소: {tickers}")]
-
-
-def _unfilled_cancel_seconds(settings: TradingSettings) -> int | None:
-    if settings.partial_fill_policy != "CANCEL_REMAINING":
-        return None
-    return max(0, settings.unfilled_cancel_after_seconds)
-
-
-def _unfilled_order_tickers(kis_settings: KisSettings) -> set[str]:
-    return _unfilled_order_tickers_from_rows(_mock_order_rows(kis_settings))
-
-
-def _mock_order_rows(kis_settings: KisSettings) -> list[dict[str, object]]:
-    kis = KisOverseasClient(KisJsonClient(kis_settings))
-    return kis.mock_order_history(
-        kis_settings.account_no,
-        kis_settings.account_product,
-        current_us_market_date().strftime("%Y%m%d"),
-    )
-
-
-def _unfilled_order_tickers_from_rows(rows: list[dict[str, object]]) -> set[str]:
-    return {
-        ticker
-        for row in rows
-        if _int(row, "nccs_qty") > 0
-        if (ticker := _ticker(str(row.get("pdno", ""))))
-    }
-
-
-def _cancel_unfilled_orders(kis_settings: KisSettings) -> list[dict[str, object]]:
-    kis = KisOverseasClient(KisJsonClient(kis_settings))
-    rows = kis.mock_order_history(
-        kis_settings.account_no,
-        kis_settings.account_product,
-        current_us_market_date().strftime("%Y%m%d"),
-    )
-    return cancel_unfilled_orders(rows, KisMockOrderCanceller(kis, kis_settings).cancel)
-
-
 def _remembered_highs(
     positions: list[PositionState],
     highs: dict[str, float],
@@ -667,14 +519,6 @@ def _remembered_highs(
         )
         for item in positions
     ]
-
-
-def _ticker(value: str) -> str:
-    return value.strip().upper()
-
-
-def _int(row: dict[str, object], field: str) -> int:
-    return int(float(str(row.get(field, 0)).replace(",", "") or 0))
 
 
 def _current_settings(

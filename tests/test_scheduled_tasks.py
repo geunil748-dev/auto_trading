@@ -9,6 +9,7 @@ from trading_bot.scheduler_market_close import (
     send_market_close_notice,
     send_market_close_report,
 )
+from trading_bot.scheduler_orders import cancel_stale_mock_buy_orders
 from trading_bot.scheduler_state import (
     entry_profit_snapshots_from_fills,
     holding_prices,
@@ -16,7 +17,6 @@ from trading_bot.scheduler_state import (
 )
 from trading_bot.scheduled_tasks import (
     _apply_stop_loss_entry_guards,
-    _cancel_stale_mock_buy_orders,
     _consecutive_stop_loss_count,
     _last_stop_loss_at,
     _saved_partial_take_profit_tickers,
@@ -200,7 +200,7 @@ def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> N
         lambda monitor_state, kis_settings: {"orders": [], "fills": [], "holdings": []},
     )
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks._cancel_unfilled_orders",
+        "trading_bot.scheduled_tasks.cancel_unfilled_orders_for_scheduler",
         lambda kis_settings: [{"ticker": "OLD", "order_no": "1", "quantity": 1}],
     )
     monkeypatch.setattr(
@@ -240,7 +240,7 @@ def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> N
 def test_close_session_skips_after_regular_session(monkeypatch, tmp_path) -> None:
     calls: list[str] = []
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks._cancel_unfilled_orders",
+        "trading_bot.scheduled_tasks.cancel_unfilled_orders_for_scheduler",
         lambda kis_settings: calls.append("cancel") or [],
     )
 
@@ -262,7 +262,7 @@ def test_cancel_unfilled_submits_cancellations_and_refreshes_monitor(
 ) -> None:
     calls: list[str] = []
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks._cancel_unfilled_orders",
+        "trading_bot.scheduled_tasks.cancel_unfilled_orders_for_scheduler",
         lambda kis_settings: [{"ticker": "AAA", "order_no": "111", "quantity": 2}],
     )
     monkeypatch.setattr(
@@ -645,10 +645,10 @@ def test_cancel_stale_mock_buy_lookup_failure_logs_warning(monkeypatch) -> None:
     def fail_mock_orders(kis_settings):
         raise RuntimeError("Authorization Bearer secret")
 
-    monkeypatch.setattr("trading_bot.scheduled_tasks._mock_order_rows", fail_mock_orders)
-    monkeypatch.setattr("trading_bot.scheduled_tasks.safe_scheduler_log", capture)
+    monkeypatch.setattr("trading_bot.scheduler_orders.mock_order_rows", fail_mock_orders)
+    monkeypatch.setattr("trading_bot.scheduler_orders.safe_scheduler_log", capture)
 
-    result = _cancel_stale_mock_buy_orders(
+    result = cancel_stale_mock_buy_orders(
         KisSettings("key", "secret", "account", "01", "https://kis.example"),
         2,
         set(),
@@ -750,7 +750,7 @@ def test_intraday_recheck_screens_and_limits_additional_buys(monkeypatch, tmp_pa
         lambda kis_settings, repository, settings=None: executor,
     )
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks._unfilled_order_tickers",
+        "trading_bot.scheduled_tasks.unfilled_order_tickers",
         lambda kis_settings: set(),
     )
     monkeypatch.setattr(
@@ -810,7 +810,7 @@ def test_intraday_recheck_can_reuse_fixed_watchlist(monkeypatch, tmp_path) -> No
         lambda kis_settings, repository, settings=None: executor,
     )
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks._unfilled_order_tickers",
+        "trading_bot.scheduled_tasks.unfilled_order_tickers",
         lambda kis_settings: set(),
     )
     monkeypatch.setattr(
@@ -865,7 +865,7 @@ def test_fixed_watchlist_waits_for_next_opening_collection(monkeypatch, tmp_path
         lambda kis_settings, repository, settings=None: RecordingExecutor(),
     )
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks._unfilled_order_tickers",
+        "trading_bot.scheduled_tasks.unfilled_order_tickers",
         lambda kis_settings: set(),
     )
     monkeypatch.setattr(
@@ -924,7 +924,7 @@ def test_intraday_recheck_hybrid_merges_opening_and_refresh_candidates(monkeypat
         lambda kis_settings, repository, settings=None: executor,
     )
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks._unfilled_order_tickers",
+        "trading_bot.scheduled_tasks.unfilled_order_tickers",
         lambda kis_settings: set(),
     )
     monkeypatch.setattr(
@@ -984,7 +984,7 @@ def test_intraday_recheck_blocks_add_on_when_order_is_unfilled(
         lambda monitor_state, kis_settings, screening_state=None, **kwargs: None,
     )
     monkeypatch.setattr(
-        "trading_bot.scheduled_tasks._unfilled_order_tickers",
+        "trading_bot.scheduled_tasks.unfilled_order_tickers",
         lambda kis_settings: {"AAA", "BBB"},
     )
     tasks = live_mock_tasks(
