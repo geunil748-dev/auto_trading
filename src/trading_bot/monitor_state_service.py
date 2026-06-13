@@ -56,6 +56,7 @@ class DashboardStateReader:
             if isinstance(sql_account, dict) and sql_account.get("cashUsd") != "-":
                 mock["account"] = sql_account
             mock["targets"] = sql_state.get("targets", [])
+            mock["targetRunnerProfiles"] = sql_state.get("targetRunnerProfiles", {})
             mock["holdings"] = sql_state.get("holdings", [])
             mock["orders"] = sql_state.get("orders", [])
             mock["fills"] = sql_state.get("fills", [])
@@ -110,6 +111,7 @@ def accounts_from_cached_state(raw_state: dict[str, object]) -> dict[str, object
                 "error": "",
                 "account": raw_state.get("account", empty_account()),
                 "targets": raw_state.get("targets", []),
+                "targetRunnerProfiles": raw_state.get("targetRunnerProfiles", {}),
                 "holdings": raw_state.get("holdings", []),
                 "orders": raw_state.get("orders", []),
                 "fills": raw_state.get("fills", []),
@@ -123,6 +125,7 @@ def accounts_from_cached_state(raw_state: dict[str, object]) -> dict[str, object
                 "error": "\uc2e4\ud22c\uc790 \ud654\uba74\uc740 \ub9c8\uc9c0\ub9c9 \uc5f0\uacb0 \uc0c1\ud0dc\ub9cc \ud45c\uc2dc\ud569\ub2c8\ub2e4.",
                 "account": empty_account(),
                 "targets": [],
+                "targetRunnerProfiles": {},
                 "holdings": [],
                 "orders": [],
                 "fills": [],
