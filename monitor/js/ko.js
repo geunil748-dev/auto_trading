@@ -115,6 +115,27 @@ export const KO_LABELS = {
     MANUAL: "수동 처리",
     UNKNOWN: "미확인",
   },
+  runnerGrades: {
+    A: "A\ub4f1\uae09",
+    B: "B\ub4f1\uae09",
+    C: "C\ub4f1\uae09",
+    D: "D\ub4f1\uae09",
+  },
+  runnerDataQuality: {
+    FULL: "\uc644\uc804",
+    PARTIAL: "\ubd80\ubd84",
+    MISSING: "\ubd80\uc871",
+  },
+  runnerNoiseFlags: {
+    ETF_OR_ETN: "ETF/ETN",
+    LEVERAGED_ETF: "\ub808\ubc84\ub9ac\uc9c0 ETF",
+    INVERSE_ETF: "\uc778\ubc84\uc2a4 ETF",
+    BOND_ETF: "\ucc44\uad8c ETF",
+    FUND_OR_TRUST: "\ud380\ub4dc/\ud2b8\ub7ec\uc2a4\ud2b8",
+    WARRANT_OR_RIGHT: "\uc6cc\ub7f0\ud2b8/\uad8c\ub9ac",
+    UNIT: "\uc720\ub2db",
+    EXTREME_PRICE_CHANGE: "\uadf9\ub2e8 \ub4f1\ub77d\ub960",
+  },
 };
 
 export function labelFromMap(map, code, fallback = "-") {
@@ -166,6 +187,18 @@ export function strategyVersionLabel(code) {
 
 export function exitReasonLabel(code) {
   return labelFromMap(KO_LABELS.exitReasons, code);
+}
+
+export function runnerGradeLabel(code) {
+  return labelFromMap(KO_LABELS.runnerGrades, code);
+}
+
+export function runnerDataQualityLabel(code) {
+  return labelFromMap(KO_LABELS.runnerDataQuality, code);
+}
+
+export function noiseFlagLabel(code) {
+  return labelFromMap(KO_LABELS.runnerNoiseFlags, code);
 }
 
 export function yesNoLabel(value) {

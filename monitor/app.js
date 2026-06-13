@@ -8,7 +8,10 @@ import {
   globalEntryGateEffectLabel,
   globalEntryGateReasonLabel,
   globalEntryGateStatusLabel,
+  noiseFlagLabel,
   reasonLabel,
+  runnerDataQualityLabel,
+  runnerGradeLabel,
   recheckStatusLabel,
   strategyVersionLabel,
   translateDailySummaryText,
@@ -47,6 +50,7 @@ const emptyAccount = {
     realizedProfitUsd: "-",
   },
   targets: [],
+  targetRunnerProfiles: {},
   holdings: [],
   orders: [],
   fills: [],
@@ -83,6 +87,7 @@ const fallbackState = {
 let currentState = fallbackState;
 let historyState = {
   targets: [],
+  targetRunnerProfiles: {},
   orders: [],
   fills: [],
   logs: [],
@@ -908,7 +913,13 @@ function normalizeState(state) {
   if (state.accounts) return state;
   return {
     accounts: {
-      mock: { ...emptyAccount, ...state, label: "모의투자", connected: true },
+      mock: {
+        ...emptyAccount,
+        ...state,
+        label: "모의투자",
+        connected: true,
+        targetRunnerProfiles: state.targetRunnerProfiles || {},
+      },
       real: { ...emptyAccount, label: "실투자" },
     },
   };
@@ -918,6 +929,7 @@ function normalizeHistoryState(state) {
   return {
     date: state.date || selectedHistoryDate(),
     targets: state.targets || [],
+    targetRunnerProfiles: state.targetRunnerProfiles || {},
     orders: state.orders || [],
     fills: state.fills || [],
     logs: state.logs || [],
@@ -1021,18 +1033,24 @@ function numericStat(value) {
 
 function renderTables(accountState) {
   const names = tickerNames(accountState);
+  const targetRunnerProfiles = accountState.targetRunnerProfiles || currentState.sql?.targetRunnerProfiles || {};
   renderRows(
     "#targetRows",
     accountState.targets,
-    (row) => renderTargetRow(row, names, { showRecheck: true }),
-    11,
+    (row) => renderTargetRow(row, names, {
+      showRecheck: true,
+      runnerProfiles: targetRunnerProfiles,
+    }),
+    13,
     "오늘 조건에 맞는 종목 없음",
   );
   renderRows(
     "#candidateHistoryRows",
     historyState.targets,
-    (row) => renderTargetRow(row, names),
-    8,
+    (row) => renderTargetRow(row, names, {
+      runnerProfiles: historyState.targetRunnerProfiles || {},
+    }),
+    10,
     candidateHistoryMessage || "저장된 후보 리스트가 없습니다",
   );
   renderRows("#holdingRows", accountState.holdings, renderHoldingRow, 8, "보유 종목이 없습니다");
@@ -1107,6 +1125,9 @@ function renderTargetRow(row, names = {}, options = {}) {
       : row.length >= 7
         ? [row[0], row[1], row[2], "-", ...row.slice(3)]
         : [row[0], names[row[0]] || "-", row[1], "-", ...row.slice(2)];
+  const runnerProfile = runnerProfileForTicker(options.runnerProfiles, ticker);
+  const runnerCells = `<td class="score">${escapeHtml(runnerScoreText(runnerProfile))}</td>
+    <td>${escapeHtml(noiseFlagsText(runnerProfile))}</td>`;
   const recheckCells = options.showRecheck
     ? `<td class="score">${escapeHtml(recheckScore || "-")}</td>
     <td><span class="trade-state">${escapeHtml(recheckStatusLabel(recheckStatus))}</span></td>
@@ -1116,9 +1137,32 @@ function renderTargetRow(row, names = {}, options = {}) {
     <td><strong>${escapeHtml(name && name !== "-" ? name : names[ticker] || "-")}</strong></td>
     <td>${escapeHtml(ticker)}</td><td>${escapeHtml(price)}</td><td>${escapeHtml(volume)}</td>
     <td>${escapeHtml(volumeRatio)}</td><td>${escapeHtml(gap)}</td><td class="score">${escapeHtml(score)}</td>
+    ${runnerCells}
     <td><span class="trade-state">${escapeHtml(state)}</span></td>
     ${recheckCells}
   </tr>`;
+}
+
+function runnerProfileForTicker(profiles = {}, ticker = "") {
+  const key = String(ticker || "").trim().toUpperCase();
+  return profiles?.[key] || profiles?.[ticker] || null;
+}
+
+function runnerScoreText(profile) {
+  if (!profile) return "-";
+  const score = Number(profile.runnerScore);
+  const scoreText = Number.isFinite(score) ? score.toFixed(1) : "-";
+  const gradeText = profile.runnerGrade ? runnerGradeLabel(profile.runnerGrade) : "-";
+  const qualityText = profile.dataQuality && profile.dataQuality !== "FULL"
+    ? ` (${runnerDataQualityLabel(profile.dataQuality)})`
+    : "";
+  return `${scoreText} ${gradeText}${qualityText}`.trim();
+}
+
+function noiseFlagsText(profile) {
+  const flags = Array.isArray(profile?.noiseFlags) ? profile.noiseFlags : [];
+  if (flags.length === 0) return "-";
+  return flags.map((flag) => noiseFlagLabel(flag)).join(", ");
 }
 
 function renderHoldingRow(holding) {

@@ -206,6 +206,9 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
     state = SqlMonitorStateSource(Repository()).read()
 
     assert state["targets"][0][:7] == ["AAA", "Alpha", "-", "-", "180%", "+4.2%", "88"]
+    assert state["targetRunnerProfiles"]["AAA"]["ticker"] == "AAA"
+    assert "runnerScore" in state["targetRunnerProfiles"]["AAA"]
+    assert "noiseFlags" in state["targetRunnerProfiles"]["AAA"]
     assert state["targets"][0][8:13] == [
         "82.5",
         "BLOCKED",
@@ -465,6 +468,7 @@ def test_sql_monitor_state_recheck_missing_falls_back_without_breaking_target_ro
     state = SqlMonitorStateSource(NoRecheckRepository()).read()
 
     assert state["targets"][0][:7] == ["AAA", "Alpha", "-", "-", "180%", "+4.2%", "88"]
+    assert state["targetRunnerProfiles"]["AAA"]["dataQuality"] == "PARTIAL"
     assert state["targets"][0][8:13] == [
         "-",
         "RECHECK_NOT_AVAILABLE",
@@ -472,6 +476,13 @@ def test_sql_monitor_state_recheck_missing_falls_back_without_breaking_target_ro
         "-",
         "-",
     ]
+
+
+def test_sql_monitor_history_state_includes_optional_runner_profiles() -> None:
+    state = SqlMonitorStateSource(Repository()).read_history(date(2026, 5, 22))
+
+    assert state["targets"][0][:7] == ["AAA", "Alpha", "-", "-", "180%", "+4.2%", "88"]
+    assert state["targetRunnerProfiles"]["AAA"]["ticker"] == "AAA"
 
 
 def test_sql_monitor_state_recheck_missing_shows_global_entry_block_reason() -> None:

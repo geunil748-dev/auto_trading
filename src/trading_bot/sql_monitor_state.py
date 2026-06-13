@@ -13,6 +13,7 @@ from trading_bot.performance_analysis import (
     strategy_label,
     tag_label,
 )
+from trading_bot.monitor_runner_profile import target_runner_profiles
 from trading_bot.repositories import SqlServerMonitorRepository
 from trading_bot.trading_date import current_trade_date
 
@@ -47,6 +48,7 @@ class SqlMonitorStateSource:
         )
         logs = self.repository.latest_logs()
         missing_score_decision = _missing_score_decision(logs)
+        target_rows = self.repository.latest_targets()
         account = self.repository.latest_account(is_mock=True)
         real_account = self.repository.latest_account(is_mock=False)
         realized_profit = self.repository.today_realized_profit()
@@ -65,6 +67,11 @@ class SqlMonitorStateSource:
             ),
             "globalEntryGate": _global_entry_gate_status(global_entry_gate),
             "trading_stats": _trading_stats(self.repository.recent_trading_stats()),
+            "targetRunnerProfiles": target_runner_profiles(
+                target_rows,
+                scores,
+                recheck_evaluations,
+            ),
             "targets": [
                 _target(
                     row,
@@ -73,7 +80,7 @@ class SqlMonitorStateSource:
                     recheck_evaluations.get(str(row[0])),
                     entry_block_reason,
                 )
-                for row in self.repository.latest_targets()
+                for row in target_rows
             ],
             "positions": [],
             "holdings": [_holding(row) for row in self.repository.latest_holdings()],
@@ -105,6 +112,7 @@ class SqlMonitorStateSource:
         global_entry_gate = _latest_global_entry_gate_status(self.repository, trade_date)
         logs = self.repository.history_logs(trade_date)
         missing_score_decision = _missing_score_decision(logs)
+        target_rows = self.repository.history_targets(trade_date)
         account = self.repository.history_account(trade_date)
         realized_profit = self.repository.history_realized_profit(trade_date)
         realized_profit_rate = self.repository.history_realized_profit_rate(trade_date)
@@ -117,6 +125,11 @@ class SqlMonitorStateSource:
             "date": trade_date.isoformat(),
             "account": _account(account, realized_profit, realized_profit_rate),
             "globalEntryGate": _global_entry_gate_status(global_entry_gate),
+            "targetRunnerProfiles": target_runner_profiles(
+                target_rows,
+                scores,
+                recheck_evaluations,
+            ),
             "targets": [
                 _target(
                     row,
@@ -125,7 +138,7 @@ class SqlMonitorStateSource:
                     recheck_evaluations.get(str(row[0])),
                     entry_block_reason,
                 )
-                for row in self.repository.history_targets(trade_date)
+                for row in target_rows
             ],
             "holdings": [_holding(row) for row in self.repository.history_holdings(trade_date)],
             "orders": [_order(row) for row in self.repository.history_orders(trade_date)],
