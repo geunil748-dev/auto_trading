@@ -2103,6 +2103,42 @@ class SqlServerMonitorRepository:
             return []
         return rows
 
+    def latest_candidate_evaluations(self, limit: int = 200) -> list[tuple[Any, ...]]:
+        return self.history_candidate_evaluations(current_trade_date(), limit)
+
+    def history_candidate_evaluations(
+        self,
+        trade_date: date,
+        limit: int = 200,
+    ) -> list[tuple[Any, ...]]:
+        try:
+            return self._query(
+                """
+                SELECT TOP (?) symbol, source, evaluation_time, buy_allowed,
+                       order_submitted, final_score, hard_filter_failed_count,
+                       soft_condition_failed_count, buy_block_reason,
+                       buy_block_reasons, final_decision, current_price,
+                       price_change_percent, volume, dollar_volume
+                FROM (
+                    SELECT symbol, source, evaluation_time, buy_allowed,
+                           order_submitted, final_score, hard_filter_failed_count,
+                           soft_condition_failed_count, buy_block_reason,
+                           buy_block_reasons, final_decision, current_price,
+                           price_change_percent, volume, dollar_volume,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY symbol ORDER BY evaluation_time DESC, id DESC
+                           ) AS rn
+                    FROM candidate_evaluations
+                    WHERE trading_date = ?
+                ) latest
+                WHERE rn = 1
+                ORDER BY evaluation_time DESC, symbol ASC
+                """,
+                (limit, trade_date),
+            )
+        except Exception:
+            return []
+
     def _latest_screening_saved_no_targets(self) -> bool:
         target_date = current_trade_date()
         try:
