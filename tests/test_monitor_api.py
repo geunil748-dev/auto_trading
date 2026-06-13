@@ -103,6 +103,25 @@ def test_dashboard_reader_falls_back_to_cached_state_when_sql_fails(tmp_path) ->
     assert payload["sql"] == {"connected": False, "error": "No module named 'clr'"}
 
 
+def test_dashboard_reader_copies_runner_profiles_from_sql_state(tmp_path) -> None:
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"accounts": {"mock": {}, "real": {}}}), encoding="utf-8")
+
+    class SqlReader:
+        def read(self) -> dict[str, object]:
+            return {
+                "account": {"cashUsd": "-"},
+                "targets": [["AAA"]],
+                "targetRunnerProfiles": {"AAA": {"runnerScore": 82.5}},
+            }
+
+    payload = DashboardStateReader(SqlReader(), MonitorStateReader(state)).read()
+
+    assert payload["accounts"]["mock"]["targetRunnerProfiles"] == {
+        "AAA": {"runnerScore": 82.5}
+    }
+
+
 def test_health_state_is_read_only_and_reports_components(tmp_path, monkeypatch) -> None:
     state = tmp_path / "state.json"
     state.write_text("{}", encoding="utf-8")

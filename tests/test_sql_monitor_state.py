@@ -188,6 +188,9 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
     state = SqlMonitorStateSource(Repository()).read()
 
     assert state["targets"][0][:7] == ["AAA", "Alpha", "-", "-", "180%", "+4.2%", "88"]
+    assert state["targetRunnerProfiles"]["AAA"]["ticker"] == "AAA"
+    assert "runnerScore" in state["targetRunnerProfiles"]["AAA"]
+    assert "noiseFlags" in state["targetRunnerProfiles"]["AAA"]
     assert state["holdings"] == [
         {
             "ticker": "AAA",
@@ -384,6 +387,13 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
         "profitUsd": "+$15.50",
         "strategyVersion": "-",
     }
+
+
+def test_sql_monitor_history_state_includes_optional_runner_profiles() -> None:
+    state = SqlMonitorStateSource(Repository()).read_history(date(2026, 5, 22))
+
+    assert state["targets"][0][:7] == ["AAA", "Alpha", "-", "-", "180%", "+4.2%", "88"]
+    assert state["targetRunnerProfiles"]["AAA"]["ticker"] == "AAA"
 
 
 def test_sql_monitor_state_translates_structured_log_messages() -> None:
