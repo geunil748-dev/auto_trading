@@ -10,6 +10,23 @@ class Repository:
     def latest_scores(self) -> list[tuple[object, ...]]:
         return [("AAA", 95, 80, 87.5, True)]
 
+    def latest_candidate_evaluations(self) -> list[tuple[object, ...]]:
+        return [
+            (
+                "AAA",
+                "intraday_recheck",
+                "2026-05-22 22:45:00",
+                1,
+                1,
+                82.0,
+                0,
+                0,
+                "BUY_ALLOWED",
+                "[]",
+                "ORDER_SUBMITTED",
+            )
+        ]
+
     def latest_holdings(self) -> list[tuple[object, ...]]:
         return [("AAA", "Alpha", 2, 10.5, 11.1, 11.6, 23.2)]
 
@@ -69,6 +86,9 @@ class Repository:
 
     def history_scores(self, trade_date) -> list[tuple[object, ...]]:
         return self.latest_scores()
+
+    def history_candidate_evaluations(self, trade_date) -> list[tuple[object, ...]]:
+        return self.latest_candidate_evaluations()
 
     def history_holdings(self, trade_date) -> list[tuple[object, ...]]:
         return self.latest_holdings()
@@ -191,6 +211,19 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
     assert state["targetRunnerProfiles"]["AAA"]["ticker"] == "AAA"
     assert "runnerScore" in state["targetRunnerProfiles"]["AAA"]
     assert "noiseFlags" in state["targetRunnerProfiles"]["AAA"]
+    assert state["targetRunnerProfiles"]["AAA"]["dataQuality"] == "FULL"
+    assert state["targetRunnerProfiles"]["AAA"]["lifecycle"] == {
+        "stage": "ORDER_SUBMITTED",
+        "source": "intraday_recheck",
+        "evaluatedAt": "2026-05-22 22:45:00",
+        "buyAllowed": True,
+        "orderSubmitted": True,
+        "finalScore": 82.0,
+        "hardFilterFailedCount": 0,
+        "softConditionFailedCount": 0,
+        "buyBlockReason": "BUY_ALLOWED",
+        "finalDecision": "ORDER_SUBMITTED",
+    }
     assert state["holdings"] == [
         {
             "ticker": "AAA",

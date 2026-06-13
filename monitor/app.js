@@ -1121,7 +1121,35 @@ function runnerScoreText(profile) {
   const qualityText = profile.dataQuality && profile.dataQuality !== "FULL"
     ? ` (${runnerDataQualityLabel(profile.dataQuality)})`
     : "";
-  return `${scoreText} ${gradeText}${qualityText}`.trim();
+  const lifecycleText = runnerLifecycleText(profile);
+  return [`${scoreText} ${gradeText}${qualityText}`.trim(), lifecycleText]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function runnerLifecycleText(profile) {
+  const lifecycle = profile?.lifecycle;
+  if (!lifecycle) return "";
+  const stageLabel = runnerLifecycleStageLabel(lifecycle.stage);
+  const finalScore = Number(lifecycle.finalScore);
+  const scoreText = Number.isFinite(finalScore)
+    ? `\uc7ac\ud3c9\uac00 ${finalScore.toFixed(1)}`
+    : "";
+  const reasonText = lifecycle.buyBlockReason && !lifecycle.buyAllowed
+    ? reasonLabel(lifecycle.buyBlockReason)
+    : "";
+  return [stageLabel, scoreText, reasonText].filter(Boolean).join(" / ");
+}
+
+function runnerLifecycleStageLabel(stage) {
+  const labels = {
+    NO_RECHECK: "\uc7ac\ud3c9\uac00 \uc5c6\uc74c",
+    EVALUATED: "\uc7ac\ud3c9\uac00 \uc644\ub8cc",
+    BLOCKED: "\ub9e4\uc218 \ucc28\ub2e8",
+    BUY_ALLOWED: "\ub9e4\uc218 \ud5c8\uc6a9",
+    ORDER_SUBMITTED: "\uc8fc\ubb38 \uc81c\ucd9c",
+  };
+  return labels[stage] || reasonLabel(stage);
 }
 
 function noiseFlagsText(profile) {

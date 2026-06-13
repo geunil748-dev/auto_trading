@@ -65,6 +65,7 @@ def runner_profile(
         "noiseFlags": noise_flags,
         "dataQuality": data_quality,
         "notes": notes,
+        "lifecycle": runner_lifecycle(evaluation_row),
         "components": {
             "momentum": round(momentum, 1),
             "volumeExpansion": round(volume_expansion, 1),
@@ -116,6 +117,28 @@ def evaluation_final_score(row: tuple[Any, ...] | None) -> float | None:
     if row is None or len(row) <= 5 or row[5] is None:
         return None
     return clamp_score(_number(row[5]))
+
+
+def runner_lifecycle(row: tuple[Any, ...] | None) -> dict[str, object]:
+    if row is None:
+        return {"stage": "NO_RECHECK"}
+    final_score = evaluation_final_score(row)
+    buy_allowed = _bool_value(row[3] if len(row) > 3 else None)
+    order_submitted = _bool_value(row[4] if len(row) > 4 else None)
+    buy_block_reason = _text(row[8] if len(row) > 8 else None)
+    final_decision = _text(row[10] if len(row) > 10 else None)
+    return {
+        "stage": _lifecycle_stage(buy_allowed, order_submitted, buy_block_reason, final_decision),
+        "source": _text(row[1] if len(row) > 1 else None),
+        "evaluatedAt": _text(row[2] if len(row) > 2 else None),
+        "buyAllowed": buy_allowed,
+        "orderSubmitted": order_submitted,
+        "finalScore": None if final_score is None else round(final_score, 1),
+        "hardFilterFailedCount": _int_or_none(row[6] if len(row) > 6 else None),
+        "softConditionFailedCount": _int_or_none(row[7] if len(row) > 7 else None),
+        "buyBlockReason": buy_block_reason,
+        "finalDecision": final_decision,
+    }
 
 
 def runner_noise_flags(ticker: str, name: str, price_change: float | None = None) -> list[str]:
@@ -170,6 +193,42 @@ def _number(value: Any) -> float:
         return float(str(value).replace("$", "").replace(",", "").replace("%", "").strip())
     except (TypeError, ValueError):
         return 0.0
+
+
+def _bool_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(float(str(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _text(value: Any) -> str:
+    return "" if value is None else str(value).strip()
+
+
+def _lifecycle_stage(
+    buy_allowed: bool,
+    order_submitted: bool,
+    buy_block_reason: str,
+    final_decision: str,
+) -> str:
+    if order_submitted:
+        return "ORDER_SUBMITTED"
+    if buy_allowed:
+        return "BUY_ALLOWED"
+    if buy_block_reason or final_decision:
+        return "BLOCKED"
+    return "EVALUATED"
 
 
 def _data_quality(

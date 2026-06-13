@@ -36,6 +36,11 @@ class SqlMonitorStateSource:
 
     def read(self) -> dict[str, object]:
         scores = {row[0]: row for row in self.repository.latest_scores()}
+        evaluations = _evaluations_by_ticker(
+            self.repository.latest_candidate_evaluations()
+            if hasattr(self.repository, "latest_candidate_evaluations")
+            else []
+        )
         logs = self.repository.latest_logs()
         missing_score_decision = _missing_score_decision(logs)
         target_rows = self.repository.latest_targets()
@@ -56,7 +61,7 @@ class SqlMonitorStateSource:
                 self.repository.candidate_snapshot_status()
             ),
             "trading_stats": _trading_stats(self.repository.recent_trading_stats()),
-            "targetRunnerProfiles": target_runner_profiles(target_rows, scores),
+            "targetRunnerProfiles": target_runner_profiles(target_rows, scores, evaluations),
             "targets": [
                 _target(row, scores.get(row[0]), missing_score_decision)
                 for row in target_rows
@@ -86,6 +91,11 @@ class SqlMonitorStateSource:
 
     def read_history(self, trade_date: date) -> dict[str, object]:
         scores = {row[0]: row for row in self.repository.history_scores(trade_date)}
+        evaluations = _evaluations_by_ticker(
+            self.repository.history_candidate_evaluations(trade_date)
+            if hasattr(self.repository, "history_candidate_evaluations")
+            else []
+        )
         logs = self.repository.history_logs(trade_date)
         missing_score_decision = _missing_score_decision(logs)
         target_rows = self.repository.history_targets(trade_date)
@@ -100,7 +110,7 @@ class SqlMonitorStateSource:
         return {
             "date": trade_date.isoformat(),
             "account": _account(account, realized_profit, realized_profit_rate),
-            "targetRunnerProfiles": target_runner_profiles(target_rows, scores),
+            "targetRunnerProfiles": target_runner_profiles(target_rows, scores, evaluations),
             "targets": [
                 _target(row, scores.get(row[0]), missing_score_decision)
                 for row in target_rows
@@ -145,3 +155,7 @@ class SqlMonitorStateSource:
     ) -> dict[str, object]:
         row = self.repository.daily_trade_summary_report_detail(trade_date, mode)
         return {"summary": None if row is None else _daily_summary_report_detail(row)}
+
+
+def _evaluations_by_ticker(rows: list[tuple[object, ...]]) -> dict[str, tuple[object, ...]]:
+    return {str(row[0]).strip().upper(): row for row in rows if row and row[0]}

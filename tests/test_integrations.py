@@ -534,6 +534,50 @@ def test_sql_monitor_repository_falls_back_to_daily_targets_when_snapshot_is_emp
     assert "FROM daily_target" in cursor.calls[2][0]
 
 
+def test_sql_monitor_repository_reads_latest_candidate_evaluations() -> None:
+    class EvaluationCursor(Cursor):
+        def fetchall(self) -> list[tuple[object, ...]]:
+            return [
+                (
+                    "AAA",
+                    "intraday_recheck",
+                    "2026-05-22 22:45:00",
+                    1,
+                    1,
+                    82.0,
+                    0,
+                    0,
+                    "BUY_ALLOWED",
+                    "[]",
+                    "ORDER_SUBMITTED",
+                    12.5,
+                    151.2,
+                    12345,
+                    100000.0,
+                )
+            ]
+
+    cursor = EvaluationCursor()
+    connection = Connection(cursor)
+    rows = SqlServerMonitorRepository(lambda: connection).history_candidate_evaluations(
+        date(2026, 5, 22),
+        50,
+    )
+
+    assert rows[0][:6] == (
+        "AAA",
+        "intraday_recheck",
+        "2026-05-22 22:45:00",
+        1,
+        1,
+        82.0,
+    )
+    assert "FROM candidate_evaluations" in cursor.calls[0][0]
+    assert "ROW_NUMBER()" in cursor.calls[0][0]
+    assert cursor.calls[0][1] == (50, date(2026, 5, 22))
+    assert connection.closed
+
+
 def test_sql_monitor_repository_sums_all_realized_profit() -> None:
     class ProfitCursor(Cursor):
         def fetchall(self) -> list[tuple[object, ...]]:
