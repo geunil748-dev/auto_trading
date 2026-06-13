@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date
 from time import perf_counter
@@ -28,6 +29,12 @@ CANDIDATE_EVAL_TARGET_REACHED = "target_reached"
 CANDIDATE_EVAL_MAX_REACHED = "max_evaluation_candidates_reached"
 CANDIDATE_EVAL_TIMEOUT = "timeout_budget_exceeded"
 CANDIDATE_EVAL_NO_MORE = "no_more_candidates"
+
+CandidateNotificationSender = Callable[
+    [date, tuple[DailyTarget, ...], tuple[DailyScore, ...]],
+    bool,
+]
+EntryGateBlockedNotificationSender = Callable[[date, str], bool]
 
 
 @dataclass(frozen=True)
@@ -71,6 +78,8 @@ class ScreeningScoringPipeline:
         repository: DailyRepository,
         clock: TradingClock,
         settings: TradingSettings,
+        candidate_notification_sender: CandidateNotificationSender | None = None,
+        entry_gate_blocked_notification_sender: EntryGateBlockedNotificationSender | None = None,
     ) -> None:
         self.market_data = market_data
         self.scoring = scoring
@@ -78,6 +87,8 @@ class ScreeningScoringPipeline:
         self.repository = repository
         self.clock = clock
         self.settings = settings
+        self.candidate_notification_sender = candidate_notification_sender
+        self.entry_gate_blocked_notification_sender = entry_gate_blocked_notification_sender
 
     def run(self) -> ScoringRun:
         started_at = perf_counter()
@@ -250,6 +261,7 @@ class ScreeningScoringPipeline:
                     f"Screened {len(targets)} targets and selected 0.",
                 )
             )
+            self._send_candidate_notification(trade_date, targets, ())
             return ScoringRun(trade_date, "STRICT_FILTER_NO_CANDIDATES", targets, ())
 
         mock_market_gate_bypass = _mock_market_below_ma20_bypass(entry_gate.reason, self.settings)
@@ -295,6 +307,7 @@ class ScreeningScoringPipeline:
                     f"Screened {len(targets)} targets and selected 0.",
                 )
             )
+            self._send_entry_gate_blocked_notification(trade_date, entry_gate.reason or "")
             return ScoringRun(trade_date, entry_gate.reason, targets, ())
 
         scored = [self.scoring.score(item) for item in candidates]
@@ -342,6 +355,7 @@ class ScreeningScoringPipeline:
                     reject_reason="MARKET_BELOW_MA20",
                 )
             )
+        self._send_candidate_notification(trade_date, targets, scores)
         self._log_pipeline_diagnostics(
             started_at,
             requested_gainer_limit=active_profile.gainer_limit,
@@ -638,6 +652,79 @@ class ScreeningScoringPipeline:
             self.repository.save_log(log)
         except Exception:
             pass
+
+    def _send_candidate_notification(
+        self,
+        trade_date: date,
+        targets: tuple[DailyTarget, ...],
+        scores: tuple[DailyScore, ...],
+    ) -> None:
+        if self.candidate_notification_sender is None:
+            return
+        try:
+            sent = self.candidate_notification_sender(trade_date, targets, scores)
+        except Exception as exc:
+            self._safe_log(
+                BotLog(
+                    "WARNING",
+                    "notification",
+                    f"CANDIDATE_LIST_TELEGRAM_FAILED: {type(exc).__name__}",
+                    reject_reason="CANDIDATE_LIST_TELEGRAM_FAILED",
+                )
+            )
+            return
+        if sent:
+            self._safe_log(
+                BotLog(
+                    "INFO",
+                    "notification",
+                    "CANDIDATE_LIST_TELEGRAM_SENT: 후보 리스트 텔레그램 발송 완료",
+                    reject_reason="CANDIDATE_LIST_TELEGRAM_SENT",
+                )
+            )
+            return
+        self._safe_log(
+            BotLog(
+                "WARNING",
+                "notification",
+                "CANDIDATE_LIST_TELEGRAM_SKIPPED: 텔레그램 설정이 없거나 발송 실패로 후보 리스트 발송을 건너뜀",
+                reject_reason="CANDIDATE_LIST_TELEGRAM_SKIPPED",
+            )
+        )
+
+    def _send_entry_gate_blocked_notification(self, trade_date: date, reason: str) -> None:
+        if self.entry_gate_blocked_notification_sender is None:
+            return
+        try:
+            sent = self.entry_gate_blocked_notification_sender(trade_date, reason)
+        except Exception as exc:
+            self._safe_log(
+                BotLog(
+                    "WARNING",
+                    "notification",
+                    f"ENTRY_GATE_TELEGRAM_FAILED: {type(exc).__name__}",
+                    reject_reason="ENTRY_GATE_TELEGRAM_FAILED",
+                )
+            )
+            return
+        if sent:
+            self._safe_log(
+                BotLog(
+                    "INFO",
+                    "notification",
+                    "ENTRY_GATE_TELEGRAM_SENT: 진입 게이트 차단 알림 발송 완료",
+                    reject_reason="ENTRY_GATE_TELEGRAM_SENT",
+                )
+            )
+            return
+        self._safe_log(
+            BotLog(
+                "WARNING",
+                "notification",
+                "ENTRY_GATE_TELEGRAM_SKIPPED: 텔레그램 설정이 없거나 발송 실패로 진입 게이트 차단 알림을 건너뜀",
+                reject_reason="ENTRY_GATE_TELEGRAM_SKIPPED",
+            )
+        )
 
 
 def _expanded_tickers(gainers, turnover, rank_limit: int) -> set[str]:

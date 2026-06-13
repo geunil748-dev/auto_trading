@@ -288,6 +288,123 @@ def test_pipeline_screens_scores_and_persists_selected_candidates() -> None:
     assert any(message.startswith("[PIPELINE_SUMMARY]") for message in messages)
 
 
+def test_pipeline_sends_candidate_notification_after_scores_are_saved() -> None:
+    market_data = MarketData(MarketContext(101, 100, 0.01))
+    repository = Repository()
+    notifications = []
+
+    run = ScreeningScoringPipeline(
+        market_data,
+        Scoring(),
+        AccountReader(account()),
+        repository,
+        FixedClock(),
+        TradingSettings(min_selected_candidates=2),
+        candidate_notification_sender=lambda trade_date, targets, scores: notifications.append(
+            (trade_date, targets, scores)
+        )
+        or True,
+    ).run()
+
+    assert run.blocked_reason is None
+    assert len(notifications) == 1
+    trade_date, targets, scores = notifications[0]
+    assert trade_date == date(2026, 5, 22)
+    assert [item.candidate.ticker for item in targets] == ["AAA", "BBB"]
+    assert [item.score.ticker for item in scores] == ["AAA", "BBB"]
+    assert any(
+        log.message == "CANDIDATE_LIST_TELEGRAM_SENT: 후보 리스트 텔레그램 발송 완료"
+        and log.reject_reason == "CANDIDATE_LIST_TELEGRAM_SENT"
+        for log in repository.logs
+    )
+
+
+def test_pipeline_keeps_running_when_candidate_notification_fails() -> None:
+    market_data = MarketData(MarketContext(101, 100, 0.01))
+    repository = Repository()
+
+    def fail_notification(*_args) -> bool:
+        raise RuntimeError("telegram token secret")
+
+    run = ScreeningScoringPipeline(
+        market_data,
+        Scoring(),
+        AccountReader(account()),
+        repository,
+        FixedClock(),
+        TradingSettings(min_selected_candidates=2),
+        candidate_notification_sender=fail_notification,
+    ).run()
+
+    assert run.blocked_reason is None
+    assert [item.candidate.ticker for item in repository.targets] == ["AAA", "BBB"]
+    failure_log = next(
+        log for log in repository.logs if log.reject_reason == "CANDIDATE_LIST_TELEGRAM_FAILED"
+    )
+    assert failure_log.message == "CANDIDATE_LIST_TELEGRAM_FAILED: RuntimeError"
+    assert "secret" not in failure_log.message
+
+
+def test_pipeline_sends_entry_gate_block_notification_when_blocked() -> None:
+    market_data = MarketData(MarketContext(99, 100, 0.01))
+    repository = Repository()
+    notifications = []
+
+    run = ScreeningScoringPipeline(
+        market_data,
+        Scoring(),
+        AccountReader(account()),
+        repository,
+        FixedClock(),
+        TradingSettings(
+            app_mode="real",
+            mock_trading=False,
+            real_trading_enabled=True,
+        ),
+        entry_gate_blocked_notification_sender=lambda trade_date, reason: notifications.append(
+            (trade_date, reason)
+        )
+        or True,
+    ).run()
+
+    assert run.blocked_reason == "MARKET_BELOW_MA20"
+    assert notifications == [(date(2026, 5, 22), "MARKET_BELOW_MA20")]
+    assert any(
+        log.message == "ENTRY_GATE_TELEGRAM_SENT: 진입 게이트 차단 알림 발송 완료"
+        and log.reject_reason == "ENTRY_GATE_TELEGRAM_SENT"
+        for log in repository.logs
+    )
+
+
+def test_pipeline_hides_entry_gate_notification_exception_message() -> None:
+    market_data = MarketData(MarketContext(99, 100, 0.01))
+    repository = Repository()
+
+    def fail_notification(*_args) -> bool:
+        raise RuntimeError("telegram token secret")
+
+    run = ScreeningScoringPipeline(
+        market_data,
+        Scoring(),
+        AccountReader(account()),
+        repository,
+        FixedClock(),
+        TradingSettings(
+            app_mode="real",
+            mock_trading=False,
+            real_trading_enabled=True,
+        ),
+        entry_gate_blocked_notification_sender=fail_notification,
+    ).run()
+
+    assert run.blocked_reason == "MARKET_BELOW_MA20"
+    failure_log = next(
+        log for log in repository.logs if log.reject_reason == "ENTRY_GATE_TELEGRAM_FAILED"
+    )
+    assert failure_log.message == "ENTRY_GATE_TELEGRAM_FAILED: RuntimeError"
+    assert "secret" not in failure_log.message
+
+
 def test_pipeline_passes_custom_ranking_limits_to_market_data() -> None:
     market_data = MarketData(MarketContext(101, 100, 0.01))
 
@@ -409,6 +526,37 @@ def test_pipeline_handles_zero_listed_candidates_without_error() -> None:
         ),
         BotLog("INFO", "pipeline", "Screened 0 targets and selected 0."),
     ]
+
+
+def test_pipeline_sends_no_candidate_notification_before_strict_shortfall_return() -> None:
+    market_data = EmptyMarketData()
+    repository = Repository()
+    notifications = []
+
+    run = ScreeningScoringPipeline(
+        market_data,
+        Scoring(),
+        AccountReader(account()),
+        repository,
+        FixedClock(),
+        TradingSettings(allow_relaxed_candidate_filter=False),
+        candidate_notification_sender=lambda trade_date, targets, scores: notifications.append(
+            (trade_date, targets, scores)
+        )
+        or True,
+    ).run()
+
+    assert run.blocked_reason == "STRICT_FILTER_NO_CANDIDATES"
+    assert len(notifications) == 1
+    trade_date, targets, scores = notifications[0]
+    assert trade_date == date(2026, 5, 22)
+    assert targets == ()
+    assert scores == ()
+    assert any(
+        log.message == "CANDIDATE_LIST_TELEGRAM_SENT: 후보 리스트 텔레그램 발송 완료"
+        and log.reject_reason == "CANDIDATE_LIST_TELEGRAM_SENT"
+        for log in repository.logs
+    )
 
 
 def test_ranked_union_limits_initial_expensive_evaluation_to_configured_size() -> None:

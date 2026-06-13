@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from contextlib import closing
 from datetime import datetime
@@ -11,6 +12,10 @@ from trading_bot.composition import (
     build_live_exit_poll,
     build_mock_buy_executor,
     build_mock_sell_executor,
+)
+from trading_bot.candidate_notifications import (
+    send_candidate_list_notification,
+    send_entry_gate_blocked_notification,
 )
 from trading_bot.config import (
     KisSettings,
@@ -25,7 +30,7 @@ from trading_bot.market_calendar import (
     is_current_us_regular_session,
     is_current_us_trading_day,
 )
-from trading_bot.models import FillRecord, PositionState
+from trading_bot.models import FillRecord, PositionState, TradeRecord
 from trading_bot.monitor_state import state_from_dry_run
 from trading_bot.schedule import DailyTasks
 from trading_bot.scheduler_logging import safe_exception_summary, safe_scheduler_log
@@ -66,6 +71,11 @@ from trading_bot.trade_fill_notifications import (
 )
 from trading_bot.trading_date import current_trade_date
 
+MARKET_CLOSE_FILL_WAIT_ATTEMPTS = 5
+MARKET_CLOSE_FILL_WAIT_SECONDS = 3.0
+
+_sleep = time.sleep
+
 
 def live_mock_tasks(
     settings: TradingSettings | Callable[[], TradingSettings],
@@ -88,7 +98,12 @@ def live_mock_tasks(
             _write_closed_state(monitor_state)
             return "미국 휴장일이라 후보 점검을 건너뜁니다."
         current_settings = _current_settings(settings)
-        runtime, repository = build_live_dry_run(current_settings, kis_settings)
+        runtime, repository = build_live_dry_run(
+            current_settings,
+            kis_settings,
+            candidate_notification_sender=_daily_candidate_notification_sender(latest),
+            entry_gate_blocked_notification_sender=_daily_entry_gate_notification_sender(latest),
+        )
         latest.result = runtime.run()
         latest.repository = repository
         latest.opening_result = latest.result
@@ -280,7 +295,7 @@ def live_mock_tasks(
         accounts, monitor, repository = build_live_exit_poll(current_settings, kis_settings)
         _, exits = monitor.poll(accounts.positions(), end_of_day=True)
         trades = build_mock_sell_executor(kis_settings, repository, current_settings).execute(exits)
-        state = _write_live_state(monitor_state, kis_settings)
+        state = _write_live_state_after_eod_sells(monitor_state, kis_settings, trades)
         save_daily_run_summary(
             current_settings,
             len(trades),
@@ -348,6 +363,28 @@ class _LatestRunState:
         self.opening_result = None
         self.opening_trade_date = None
         self.opening_fixed_mode = False
+        self.candidate_notification_dates: set[object] = set()
+        self.entry_gate_notification_dates: set[object] = set()
+
+
+def _daily_candidate_notification_sender(latest: _LatestRunState):
+    def send_once(trade_date, targets, scores) -> bool:
+        if trade_date in latest.candidate_notification_dates:
+            return False
+        latest.candidate_notification_dates.add(trade_date)
+        return send_candidate_list_notification(trade_date, targets, scores)
+
+    return send_once
+
+
+def _daily_entry_gate_notification_sender(latest: _LatestRunState):
+    def send_once(trade_date, reason: str) -> bool:
+        if trade_date in latest.entry_gate_notification_dates:
+            return False
+        latest.entry_gate_notification_dates.add(trade_date)
+        return send_entry_gate_blocked_notification(trade_date, reason)
+
+    return send_once
 
 
 def _write_live_state(
@@ -363,6 +400,104 @@ def _write_live_state(
         extra_logs=extra_logs,
         send_fill_notifications_func=_send_fill_notifications,
     )
+
+
+def _write_live_state_after_eod_sells(
+    monitor_state: Path,
+    kis_settings: KisSettings,
+    trades: list[TradeRecord],
+) -> dict[str, object]:
+    expected = _expected_sell_quantities(trades)
+    state = _write_live_state(monitor_state, kis_settings)
+    if not expected:
+        return state
+
+    attempts = max(1, MARKET_CLOSE_FILL_WAIT_ATTEMPTS)
+    for _ in range(1, attempts):
+        if _state_has_expected_sell_fills(state, expected):
+            return state
+        _sleep(MARKET_CLOSE_FILL_WAIT_SECONDS)
+        state = _write_live_state(monitor_state, kis_settings)
+
+    if not _state_has_expected_sell_fills(state, expected):
+        safe_scheduler_log(
+            "WARNING",
+            "summary",
+            "MARKET_CLOSE_FILL_WAIT_TIMEOUT: 장마감 매도 체결 반영 대기 시간이 초과되었습니다.",
+            reject_reason="MARKET_CLOSE_FILL_WAIT_TIMEOUT",
+            actual_value=float(_matched_sell_quantity(state, expected)),
+            threshold_value=float(sum(expected.values())),
+        )
+    return state
+
+
+def _expected_sell_quantities(trades: list[TradeRecord]) -> dict[str, int]:
+    expected: dict[str, int] = {}
+    for item in trades:
+        order_type = str(getattr(item, "order_type", "")).upper()
+        order_status = str(getattr(item, "order_status", "")).upper()
+        if order_type != "SELL" or order_status != "SUCCESS":
+            continue
+        ticker_value = str(getattr(item, "ticker", "")).strip().upper()
+        quantity = int(getattr(item, "quantity", 0) or 0)
+        if not ticker_value or quantity <= 0:
+            continue
+        expected[ticker_value] = expected.get(ticker_value, 0) + quantity
+    return expected
+
+
+def _state_has_expected_sell_fills(
+    state: dict[str, object],
+    expected: dict[str, int],
+) -> bool:
+    if not expected:
+        return True
+    quantities = _sell_fill_quantities(state)
+    return all(
+        quantities.get(ticker_value, 0) >= quantity
+        for ticker_value, quantity in expected.items()
+    )
+
+
+def _matched_sell_quantity(
+    state: dict[str, object],
+    expected: dict[str, int],
+) -> int:
+    quantities = _sell_fill_quantities(state)
+    return sum(
+        min(quantities.get(ticker_value, 0), quantity)
+        for ticker_value, quantity in expected.items()
+    )
+
+
+def _sell_fill_quantities(state: dict[str, object]) -> dict[str, int]:
+    fills = state.get("fills", [])
+    quantities: dict[str, int] = {}
+    if not isinstance(fills, list):
+        return quantities
+    for item in fills:
+        if not isinstance(item, dict):
+            continue
+        if not _is_sell_side(str(item.get("side", ""))):
+            continue
+        ticker_value = str(item.get("ticker", "")).strip().upper()
+        quantity = _int_text(item.get("quantity"))
+        if ticker_value and quantity > 0:
+            quantities[ticker_value] = quantities.get(ticker_value, 0) + quantity
+    return quantities
+
+
+def _is_sell_side(side: str) -> bool:
+    normalized = side.strip().upper()
+    return "\ub9e4\ub3c4" in side or normalized in {"SELL", "S"}
+
+
+def _int_text(value: object) -> int:
+    try:
+        normalized = str(value or "0").replace(",", "").replace("\uc8fc", "").strip()
+        return int(float(normalized or 0))
+    except ValueError:
+        return 0
 
 
 _write_closed_state = write_closed_state
