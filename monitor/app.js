@@ -1135,9 +1135,12 @@ function runnerLifecycleText(profile) {
   const scoreText = Number.isFinite(finalScore)
     ? `\uc7ac\ud3c9\uac00 ${finalScore.toFixed(1)}`
     : "";
+  const noOrderText = lifecycle.noOrderReason
+    ? reasonLabel(lifecycle.noOrderReason)
+    : "";
   const reasonText = lifecycle.buyBlockReason && !lifecycle.buyAllowed
     ? reasonLabel(lifecycle.buyBlockReason)
-    : "";
+    : noOrderText;
   return [stageLabel, scoreText, reasonText].filter(Boolean).join(" / ");
 }
 
@@ -1147,6 +1150,7 @@ function runnerLifecycleStageLabel(stage) {
     EVALUATED: "\uc7ac\ud3c9\uac00 \uc644\ub8cc",
     BLOCKED: "\ub9e4\uc218 \ucc28\ub2e8",
     BUY_ALLOWED: "\ub9e4\uc218 \ud5c8\uc6a9",
+    NO_ORDER: "\ubbf8\uc8fc\ubb38",
     ORDER_SUBMITTED: "\uc8fc\ubb38 \uc81c\ucd9c",
   };
   return labels[stage] || reasonLabel(stage);

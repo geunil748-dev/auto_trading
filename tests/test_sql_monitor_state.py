@@ -218,6 +218,7 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
         "evaluatedAt": "2026-05-22 22:45:00",
         "buyAllowed": True,
         "orderSubmitted": True,
+        "noOrderReason": "",
         "finalScore": 82.0,
         "hardFilterFailedCount": 0,
         "softConditionFailedCount": 0,

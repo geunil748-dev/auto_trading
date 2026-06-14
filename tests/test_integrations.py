@@ -319,6 +319,32 @@ def test_sql_repository_writes_candidate_evaluation_and_update() -> None:
     assert cursors[3].calls[0][1] == ("1001", "AAA", date(2026, 5, 22))
 
 
+def test_sql_repository_marks_candidate_evaluation_order_not_submitted() -> None:
+    cursors: list[Cursor] = []
+
+    def connect() -> Connection:
+        cursor = Cursor()
+        cursors.append(cursor)
+        return Connection(cursor)
+
+    repository = SqlServerDailyRepository(connect)
+    repository.mark_candidate_evaluation_order_not_submitted(
+        "AAA",
+        date(2026, 5, 22),
+        "NO_ORDER_UNFILLED_ORDER",
+    )
+
+    assert "CREATE TABLE dbo.candidate_evaluations" in cursors[0].calls[0][0]
+    assert "UPDATE candidate_evaluations" in cursors[1].calls[0][0]
+    assert "final_decision = ?" in cursors[1].calls[0][0]
+    assert "order_submitted = 0" in cursors[1].calls[0][0]
+    assert cursors[1].calls[0][1] == (
+        "NO_ORDER_UNFILLED_ORDER",
+        "AAA",
+        date(2026, 5, 22),
+    )
+
+
 def test_sql_monitor_run_summaries_ignore_history_date() -> None:
     cursor = Cursor()
     repository = SqlServerMonitorRepository(lambda: Connection(cursor))

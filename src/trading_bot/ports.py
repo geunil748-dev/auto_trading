@@ -66,6 +66,13 @@ class DailyRepository(Protocol):
         order_id: str | None = None,
     ) -> None: ...
 
+    def mark_candidate_evaluation_order_not_submitted(
+        self,
+        ticker: str,
+        trade_date: date,
+        reason: str,
+    ) -> None: ...
+
     def save_log(self, log: BotLog) -> None: ...
 
     def save_trades(self, trades: Iterable[TradeRecord]) -> None: ...

@@ -57,6 +57,7 @@ def test_runner_profile_includes_latest_recheck_lifecycle() -> None:
         "evaluatedAt": "2026-06-10 22:45:00",
         "buyAllowed": True,
         "orderSubmitted": True,
+        "noOrderReason": "",
         "finalScore": 82.0,
         "hardFilterFailedCount": 0,
         "softConditionFailedCount": 0,
@@ -85,6 +86,29 @@ def test_runner_lifecycle_marks_blocked_recheck_reason() -> None:
     assert lifecycle["stage"] == "BLOCKED"
     assert lifecycle["buyBlockReason"] == "OVERHEAT_LIMIT_EXCEEDED"
     assert lifecycle["finalScore"] == 61.5
+
+
+def test_runner_lifecycle_marks_buy_allowed_without_order_reason() -> None:
+    lifecycle = runner_lifecycle(
+        (
+            "MSAI",
+            "intraday_recheck",
+            "2026-06-10 22:45:00",
+            1,
+            0,
+            78.0,
+            0,
+            0,
+            "BUY_ALLOWED",
+            "[]",
+            "NO_ORDER_UNFILLED_ORDER",
+        )
+    )
+
+    assert lifecycle["stage"] == "NO_ORDER"
+    assert lifecycle["buyAllowed"] is True
+    assert lifecycle["orderSubmitted"] is False
+    assert lifecycle["noOrderReason"] == "NO_ORDER_UNFILLED_ORDER"
 
 
 def test_runner_noise_flags_classify_structured_products() -> None:

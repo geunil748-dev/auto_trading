@@ -357,6 +357,31 @@ class SqlServerDailyRepository:
             (order_id, ticker, trade_date),
         )
 
+    def mark_candidate_evaluation_order_not_submitted(
+        self,
+        ticker: str,
+        trade_date: date,
+        reason: str,
+    ) -> None:
+        self._ensure_candidate_evaluations_table()
+        self._execute(
+            """
+            UPDATE candidate_evaluations
+            SET final_decision = ?,
+                updated_at = SYSUTCDATETIME()
+            WHERE id = (
+                SELECT TOP (1) id
+                FROM candidate_evaluations
+                WHERE symbol = ?
+                  AND trading_date = ?
+                  AND buy_allowed = 1
+                  AND order_submitted = 0
+                ORDER BY evaluation_time DESC, id DESC
+            )
+            """,
+            (reason, ticker, trade_date),
+        )
+
     def save_daily_run_summary(
         self,
         trade_date: date,

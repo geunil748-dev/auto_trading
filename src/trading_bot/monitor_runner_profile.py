@@ -133,6 +133,7 @@ def runner_lifecycle(row: tuple[Any, ...] | None) -> dict[str, object]:
         "evaluatedAt": _text(row[2] if len(row) > 2 else None),
         "buyAllowed": buy_allowed,
         "orderSubmitted": order_submitted,
+        "noOrderReason": _no_order_reason(buy_allowed, order_submitted, final_decision),
         "finalScore": None if final_score is None else round(final_score, 1),
         "hardFilterFailedCount": _int_or_none(row[6] if len(row) > 6 else None),
         "softConditionFailedCount": _int_or_none(row[7] if len(row) > 7 else None),
@@ -224,11 +225,23 @@ def _lifecycle_stage(
 ) -> str:
     if order_submitted:
         return "ORDER_SUBMITTED"
+    if buy_allowed and final_decision.startswith("NO_ORDER_"):
+        return "NO_ORDER"
     if buy_allowed:
         return "BUY_ALLOWED"
     if buy_block_reason or final_decision:
         return "BLOCKED"
     return "EVALUATED"
+
+
+def _no_order_reason(
+    buy_allowed: bool,
+    order_submitted: bool,
+    final_decision: str,
+) -> str:
+    if buy_allowed and not order_submitted and final_decision.startswith("NO_ORDER_"):
+        return final_decision
+    return ""
 
 
 def _data_quality(

@@ -911,3 +911,54 @@ def test_intraday_recheck_blocks_add_on_when_order_is_unfilled(
 
     assert "모의 매수 주문 0건 제출" in tasks.intraday_recheck()
     assert executor.calls == [[]]
+
+
+def test_intraday_recheck_records_buy_allowed_no_order_reason(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class RecheckRepository:
+        def __init__(self) -> None:
+            self.no_orders = []
+            self.logs = []
+
+        def mark_candidate_evaluation_order_not_submitted(self, ticker, trade_date, reason):
+            self.no_orders.append((ticker, reason))
+
+        def save_log(self, log):
+            self.logs.append(log)
+
+    repository = RecheckRepository()
+    executor = RecordingExecutor()
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_dry_run",
+        lambda settings, kis_settings: (RecheckRuntime(), repository),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_mock_buy_executor",
+        lambda kis_settings, repository, settings=None: executor,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.state_from_dry_run",
+        lambda result: {"targets": [["AAA"]], "gates": [], "logs": []},
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._write_live_state",
+        lambda monitor_state, kis_settings, screening_state=None, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.unfilled_order_tickers",
+        lambda kis_settings: {"AAA"},
+    )
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        regular_session=lambda: True,
+    )
+
+    tasks.intraday_recheck()
+
+    assert repository.no_orders == [("AAA", "NO_ORDER_UNFILLED_ORDER")]
+    assert repository.logs[0].reject_reason == "NO_ORDER_UNFILLED_ORDER"
+    assert [item.ticker for item in executor.calls[0]] == ["BBB"]

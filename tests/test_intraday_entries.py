@@ -1,5 +1,13 @@
 from trading_bot.config import TradingSettings
-from trading_bot.intraday_entries import limited_intraday_buy_intents
+from trading_bot.intraday_entries import (
+    NO_ORDER_ALREADY_SUBMITTED,
+    NO_ORDER_INTRADAY_ROUND_LIMIT,
+    NO_ORDER_PYRAMIDING_BLOCKED,
+    NO_ORDER_ROUND_CAP_REACHED,
+    NO_ORDER_UNFILLED_ORDER,
+    limited_intraday_buy_intents,
+    limited_intraday_buy_intents_with_diagnostics,
+)
 from trading_bot.models import BuyIntent, PositionState
 
 
@@ -84,3 +92,47 @@ def test_intraday_entries_block_unfilled_or_repeated_pyramiding() -> None:
         completed_rounds=0,
         settings=settings,
     ) == []
+
+
+def test_intraday_entries_explain_order_not_submitted_reasons() -> None:
+    accepted, diagnostics = limited_intraday_buy_intents_with_diagnostics(
+        [intent("AAA"), intent("BBB"), intent("CCC"), intent("DDD"), intent("EEE")],
+        positions=[PositionState("DDD", 10, 1, 10.1, 10.1)],
+        submitted_tickers=["BBB"],
+        add_on_tickers=[],
+        unfilled_tickers=["AAA"],
+        completed_rounds=0,
+        settings=TradingSettings(max_intraday_buy_intents_per_round=1),
+    )
+
+    assert [item.ticker for item in accepted] == ["CCC"]
+    assert [(item.ticker, item.reason) for item in diagnostics] == [
+        ("AAA", NO_ORDER_UNFILLED_ORDER),
+        ("BBB", NO_ORDER_ALREADY_SUBMITTED),
+        ("DDD", NO_ORDER_ROUND_CAP_REACHED),
+        ("EEE", NO_ORDER_ROUND_CAP_REACHED),
+    ]
+
+
+def test_intraday_entries_explain_round_limit_and_pyramiding() -> None:
+    _, round_diagnostics = limited_intraday_buy_intents_with_diagnostics(
+        [intent("AAA")],
+        positions=[],
+        submitted_tickers=[],
+        add_on_tickers=[],
+        unfilled_tickers=[],
+        completed_rounds=2,
+        settings=TradingSettings(max_intraday_entry_rounds=2),
+    )
+    _, pyramiding_diagnostics = limited_intraday_buy_intents_with_diagnostics(
+        [intent("BBB")],
+        positions=[PositionState("BBB", 10, 1, 10.1, 10.1)],
+        submitted_tickers=[],
+        add_on_tickers=[],
+        unfilled_tickers=[],
+        completed_rounds=0,
+        settings=TradingSettings(enable_pyramiding=False),
+    )
+
+    assert round_diagnostics[0].reason == NO_ORDER_INTRADAY_ROUND_LIMIT
+    assert pyramiding_diagnostics[0].reason == NO_ORDER_PYRAMIDING_BLOCKED
