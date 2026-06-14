@@ -43,6 +43,28 @@ class InMemoryDailyRepository:
                 )
                 return
 
+    def mark_candidate_evaluation_order_not_submitted(
+        self,
+        ticker: str,
+        trade_date: date,
+        reason: str,
+    ) -> None:
+        for index in range(len(self.candidate_evaluations) - 1, -1, -1):
+            item = self.candidate_evaluations[index]
+            if (
+                item.symbol == ticker
+                and item.trading_date == trade_date
+                and item.buy_allowed
+                and not item.order_submitted
+            ):
+                self.candidate_evaluations[index] = CandidateEvaluation(
+                    **{
+                        **item.__dict__,
+                        "final_decision": reason,
+                    }
+                )
+                return
+
     def save_trades(self, trades: Iterable[TradeRecord]) -> None:
         self.trades.extend(trades)
 

@@ -19,13 +19,16 @@ from trading_bot.config import (
 )
 from trading_bot.daily_report import write_daily_report
 from trading_bot.database import mssql_dsn_from_env, pyodbc_connect_factory
-from trading_bot.intraday_entries import limited_intraday_buy_intents
+from trading_bot.intraday_entries import (
+    NoOrderDiagnostic,
+    limited_intraday_buy_intents_with_diagnostics,
+)
 from trading_bot.market_calendar import (
     current_us_market_date,
     is_current_us_regular_session,
     is_current_us_trading_day,
 )
-from trading_bot.models import FillRecord, PositionState
+from trading_bot.models import BotLog, FillRecord, PositionState
 from trading_bot.monitor_state import state_from_dry_run
 from trading_bot.schedule import DailyTasks
 from trading_bot.scheduler_logging import safe_exception_summary, safe_scheduler_log
@@ -65,6 +68,9 @@ from trading_bot.trade_fill_notifications import (
     send_fill_notifications,
 )
 from trading_bot.trading_date import current_trade_date
+
+
+NO_ORDER_RISK_GUARD = "NO_ORDER_RISK_GUARD"
 
 
 def live_mock_tasks(
@@ -211,7 +217,7 @@ def live_mock_tasks(
             ticker(str(item.get("ticker", ""))) for item in cancelled
         }
         # 재평가 매수는 미체결/이미 진입한 종목/일일 라운드 제한을 한 번 더 통과해야 한다.
-        intents = limited_intraday_buy_intents(
+        intents, no_order_diagnostics = limited_intraday_buy_intents_with_diagnostics(
             latest.result.buy_intents,
             positions,
             latest.buy_tickers,
@@ -220,8 +226,14 @@ def live_mock_tasks(
             latest.intraday_entry_rounds,
             current_settings,
         )
+        _mark_candidate_no_order_diagnostics(repository, no_order_diagnostics)
         intents = tag_mode_intents(intents, mode)
+        pre_risk_intents = intents
         intents = apply_stop_loss_entry_guards(intents, repository, current_settings)
+        _mark_candidate_no_order_diagnostics(
+            repository,
+            _risk_guard_no_order_diagnostics(pre_risk_intents, intents),
+        )
         trades = build_mock_buy_executor(kis_settings, repository, current_settings).execute(intents)
         if trades:
             latest.intraday_entry_rounds += 1
@@ -311,6 +323,58 @@ def live_mock_tasks(
         cancel_unfilled,
         close_session,
     )
+
+
+def _mark_candidate_no_order_diagnostics(
+    repository,
+    diagnostics: list[NoOrderDiagnostic],
+) -> None:
+    if not diagnostics:
+        return
+    trade_date = current_trade_date()
+    for diagnostic in diagnostics:
+        if hasattr(repository, "mark_candidate_evaluation_order_not_submitted"):
+            try:
+                repository.mark_candidate_evaluation_order_not_submitted(
+                    diagnostic.ticker,
+                    trade_date,
+                    diagnostic.reason,
+                )
+            except Exception as exc:
+                safe_scheduler_log(
+                    "WARNING",
+                    "candidate_evaluation",
+                    "CANDIDATE_NO_ORDER_REASON_SAVE_FAILED: "
+                    f"{safe_exception_summary(exc)}",
+                    symbol=diagnostic.ticker,
+                    reject_reason="CANDIDATE_NO_ORDER_REASON_SAVE_FAILED",
+                )
+        if hasattr(repository, "save_log"):
+            try:
+                repository.save_log(
+                    BotLog(
+                        "INFO",
+                        "candidate_evaluation",
+                        "candidate_order_not_submitted "
+                        f"symbol={diagnostic.ticker} reason={diagnostic.reason}",
+                        symbol=diagnostic.ticker,
+                        reject_reason=diagnostic.reason,
+                    )
+                )
+            except Exception:
+                pass
+
+
+def _risk_guard_no_order_diagnostics(
+    before: list,
+    after: list,
+) -> list[NoOrderDiagnostic]:
+    allowed = {ticker(intent.ticker) for intent in after}
+    return [
+        NoOrderDiagnostic(ticker(intent.ticker), NO_ORDER_RISK_GUARD, "risk guard filtered")
+        for intent in before
+        if ticker(intent.ticker) not in allowed
+    ]
 
 
 def _send_fill_notifications(records: list[FillRecord], holdings: list[object]) -> None:
