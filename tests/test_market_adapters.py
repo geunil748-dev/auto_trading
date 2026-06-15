@@ -1,9 +1,12 @@
+from datetime import datetime
+
 from trading_bot.adapters.chart_history import YahooChartScorer
 from trading_bot.adapters.breakout_history import KisBreakoutHistory
 from trading_bot.adapters.context import YahooMarketContextSource
 from trading_bot.adapters.market_data import KisDailyVolumeHistory, KisScreeningMarketData
 from trading_bot.chart_models import PriceBar
 from trading_bot.chart_scoring import chart_pattern_score
+from trading_bot.intraday_backtest import IntradayBar
 from trading_bot.models import RankedStock
 
 
@@ -290,3 +293,55 @@ def test_kis_breakout_history_uses_daily_open_when_quote_has_no_open() -> None:
         result.previous_high_usd,
         result.previous_low_usd,
     ) == (12.5, 11, 12, 8)
+
+
+def test_kis_breakout_history_adds_intraday_vwap_and_ma20() -> None:
+    class Kis:
+        def quote(self, _: str) -> dict[str, str]:
+            return {"last": "12.50", "open": "11.00"}
+
+        def daily_prices(self, _: str) -> list[dict[str, str]]:
+            return [{"high": "13.00", "low": "10.00"}]
+
+    class Intraday:
+        def history(self, ticker: str, interval: str = "5m", period_days: int = 60):
+            assert ticker == "AAA"
+            assert interval == "5m"
+            assert period_days == 1
+            return [
+                IntradayBar("AAA", datetime(2026, 6, 8, 14, 30), 11, 12, 10, 11.5, 100),
+                IntradayBar(
+                    "AAA",
+                    datetime(2026, 6, 8, 14, 35),
+                    12,
+                    13,
+                    11,
+                    12.5,
+                    200,
+                    vwap=12.1,
+                    ma20=11.9,
+                ),
+            ]
+
+    result = KisBreakoutHistory(Kis(), Intraday()).breakout_input("AAA")
+
+    assert result.vwap_usd == 12.1
+    assert result.intraday_ma20_usd == 11.9
+
+
+def test_kis_breakout_history_keeps_existing_behavior_when_intraday_fails() -> None:
+    class Kis:
+        def quote(self, _: str) -> dict[str, str]:
+            return {"last": "12.50", "open": "11.00"}
+
+        def daily_prices(self, _: str) -> list[dict[str, str]]:
+            return [{"high": "13.00", "low": "10.00"}]
+
+    class BrokenIntraday:
+        def history(self, *_args, **_kwargs):
+            raise RuntimeError("network unavailable")
+
+    result = KisBreakoutHistory(Kis(), BrokenIntraday()).breakout_input("AAA")
+
+    assert result.vwap_usd is None
+    assert result.intraday_ma20_usd is None

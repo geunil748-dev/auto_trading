@@ -1,7 +1,15 @@
 from datetime import date
 
 from trading_bot.config import KisSettings, NotificationSettings, TradingSettings
-from trading_bot.models import AccountState, BuyIntent, FillRecord, PositionState, ScoreRecord, SellIntent
+from trading_bot.models import (
+    AccountState,
+    BuyIntent,
+    FillRecord,
+    PositionState,
+    ScoreRecord,
+    SellIntent,
+    TradeRecord,
+)
 from trading_bot.scheduler_logging import safe_scheduler_log
 from trading_bot.scheduler_market_close import (
     save_daily_run_summary,
@@ -73,6 +81,7 @@ class RecordingExecutor:
 class SnapshotRepository:
     def __init__(self) -> None:
         self.fills: list[FillRecord] = []
+        self.notification_sent: list[FillRecord] = []
         self.entry_snapshots = []
         self.updated_prices: dict[str, float] = {}
         self.final_updates: list[date] = []
@@ -97,6 +106,12 @@ class SnapshotRepository:
 
     def save_fills(self, fills):
         self.fills.extend(fills)
+
+    def pending_fill_notifications(self, fills):
+        return list(fills)
+
+    def mark_fill_notifications_sent(self, fills):
+        self.notification_sent.extend(fills)
 
     def save_entry_profit_snapshots(self, snapshots):
         self.entry_snapshots.extend(snapshots)
@@ -208,6 +223,155 @@ def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> N
     assert summary_calls == ["saved"]
     assert notice_calls == ["sent"]
     assert report_calls == [{"orders": [], "fills": [], "holdings": []}]
+
+
+def test_close_session_waits_for_eod_sell_fill_before_report(monkeypatch, tmp_path) -> None:
+    monitor = Monitor()
+    notice_calls = []
+    report_calls = []
+    summary_calls = []
+    run_summary_calls = []
+    sleeps = []
+
+    class EodExecutor:
+        def execute(self, intents: list[SellIntent]) -> list[TradeRecord]:
+            return [
+                TradeRecord(
+                    date(2026, 6, 11),
+                    "AAA",
+                    "SELL",
+                    10.5,
+                    None,
+                    2,
+                    exit_reason="EOD",
+                    order_status="SUCCESS",
+                )
+            ]
+
+    states = [
+        {"orders": [], "fills": [], "holdings": []},
+        {
+            "orders": [],
+            "fills": [{"ticker": "AAA", "side": "매도", "quantity": "2"}],
+            "holdings": [],
+        },
+    ]
+
+    def write_state(*_args):
+        return states.pop(0) if states else {
+            "orders": [],
+            "fills": [{"ticker": "AAA", "side": "매도", "quantity": "2"}],
+            "holdings": [],
+        }
+
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_exit_poll",
+        lambda settings, kis_settings: (Accounts(), monitor, "repository"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_mock_sell_executor",
+        lambda kis_settings, repository, settings=None: EodExecutor(),
+    )
+    monkeypatch.setattr("trading_bot.scheduled_tasks._write_live_state", write_state)
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._sleep",
+        lambda seconds: sleeps.append(seconds),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.cancel_unfilled_orders_for_scheduler",
+        lambda kis_settings: [],
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.save_daily_run_summary",
+        lambda *args: run_summary_calls.append(args),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.write_daily_report",
+        lambda report_dir, trade_day, state, cancelled_orders, eod_sell_count: tmp_path
+        / "report.json",
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_market_close_notice",
+        lambda: notice_calls.append("sent"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_market_close_report",
+        lambda state: report_calls.append(state),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.save_daily_trade_summary_report",
+        lambda: summary_calls.append("saved"),
+    )
+
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+        regular_session=lambda: True,
+    )
+
+    tasks.close_session()
+
+    assert sleeps == [3.0]
+    assert run_summary_calls
+    assert summary_calls == ["saved"]
+    assert notice_calls == ["sent"]
+    assert report_calls == [
+        {
+            "orders": [],
+            "fills": [{"ticker": "AAA", "side": "매도", "quantity": "2"}],
+            "holdings": [],
+        }
+    ]
+
+
+def test_dry_run_wires_daily_once_candidate_and_gate_notifications(monkeypatch, tmp_path) -> None:
+    captured_kwargs = []
+    candidate_calls = []
+    gate_calls = []
+
+    class Result:
+        scoring = type("Scoring", (), {"selected": ()})()
+
+    class Runtime:
+        def run(self):
+            return Result()
+
+    def fake_build_live_dry_run(settings, kis_settings, **kwargs):
+        captured_kwargs.append(kwargs)
+        return Runtime(), "repository"
+
+    monkeypatch.setattr("trading_bot.scheduled_tasks.build_live_dry_run", fake_build_live_dry_run)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.state_from_dry_run", lambda result: {})
+    monkeypatch.setattr("trading_bot.scheduled_tasks._write_state_file", lambda *_args: None)
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_candidate_list_notification",
+        lambda trade_date, targets, scores: candidate_calls.append((trade_date, targets, scores)) or True,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_entry_gate_blocked_notification",
+        lambda trade_date, reason: gate_calls.append((trade_date, reason)) or True,
+    )
+
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+    )
+
+    tasks.dry_run()
+
+    candidate_sender = captured_kwargs[0]["candidate_notification_sender"]
+    gate_sender = captured_kwargs[0]["entry_gate_blocked_notification_sender"]
+    trade_date = date(2026, 6, 8)
+    assert candidate_sender(trade_date, (), ()) is True
+    assert candidate_sender(trade_date, (), ()) is False
+    assert gate_sender(trade_date, "MARKET_BELOW_MA20") is True
+    assert gate_sender(trade_date, "MARKET_BELOW_MA20") is False
+    assert candidate_calls == [(trade_date, (), ())]
+    assert gate_calls == [(trade_date, "MARKET_BELOW_MA20")]
 
 
 def test_close_session_skips_after_regular_session(monkeypatch, tmp_path) -> None:
@@ -340,6 +504,7 @@ def test_persist_live_snapshot_saves_fill_history_and_entry_snapshot(monkeypatch
     assert repository.updated_prices == {"AAA": 11.0}
     assert repository.final_updates == [date(2026, 6, 5)]
     assert notifications
+    assert repository.notification_sent == repository.fills
 
 
 def test_persist_live_snapshot_masks_db_failure_message(monkeypatch) -> None:
@@ -658,7 +823,7 @@ def test_intraday_recheck_screens_and_limits_additional_buys(monkeypatch, tmp_pa
     executor = RecordingExecutor()
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_live_dry_run",
-        lambda settings, kis_settings: (RecheckRuntime(), "repository"),
+        lambda settings, kis_settings, **_kwargs: (RecheckRuntime(), "repository"),
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_mock_buy_executor",
@@ -718,7 +883,7 @@ def test_intraday_recheck_can_reuse_fixed_watchlist(monkeypatch, tmp_path) -> No
     runtime.run = run_once
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_live_dry_run",
-        lambda settings, kis_settings: (runtime, "repository"),
+        lambda settings, kis_settings, **_kwargs: (runtime, "repository"),
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_mock_buy_executor",
@@ -773,7 +938,7 @@ def test_fixed_watchlist_waits_for_next_opening_collection(monkeypatch, tmp_path
     runtime.run = run_once
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_live_dry_run",
-        lambda settings, kis_settings: (runtime, "repository"),
+        lambda settings, kis_settings, **_kwargs: (runtime, "repository"),
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_mock_buy_executor",
@@ -832,7 +997,7 @@ def test_intraday_recheck_hybrid_merges_opening_and_refresh_candidates(monkeypat
     executor = RecordingExecutor()
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_live_dry_run",
-        lambda settings, kis_settings: (runtime, "repository"),
+        lambda settings, kis_settings, **_kwargs: (runtime, "repository"),
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_mock_buy_executor",
@@ -884,7 +1049,7 @@ def test_intraday_recheck_blocks_add_on_when_order_is_unfilled(
     executor = RecordingExecutor()
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_live_dry_run",
-        lambda settings, kis_settings: (RecheckRuntime(), "repository"),
+        lambda settings, kis_settings, **_kwargs: (RecheckRuntime(), "repository"),
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_mock_buy_executor",
