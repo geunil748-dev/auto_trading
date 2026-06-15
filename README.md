@@ -268,6 +268,54 @@ currently verified API response beyond 100 rows. `TURNOVER_RANKING_LIMIT` is
 used for the KIS `trade-vol` trade-volume ranking limit, not the `trade-pbmn`
 trade-value ranking.
 
+`RANKING_SELECTION_MODE` controls how the evaluated ranking universe becomes
+screening candidates. The default `intersection` mode keeps the existing
+ranking-intersection path for operational safety. The experimental `composite`
+mode scores price-fluctuation, trade-volume, and trade-value ranks together,
+adds a bonus when a ticker appears in multiple rankings, and still applies the
+same opening price, gap, volume-ratio, and defensive candidate filters. Before
+using `composite` in live operations, compare it with `backtest-compare` and
+`intraday-backtest-compare`.
+
+Compare the current `intersection` and experimental `composite` modes without
+submitting orders:
+
+```powershell
+$env:PYTHONPATH='src'
+python -m trading_bot compare-ranking-modes --output monitor/ranking_mode_compare.json
+```
+
+The command runs both modes through the dry-run path and reports target,
+selected, and buy-intent ticker differences as JSON. It does not overwrite
+`monitor/state.json` and does not submit orders. The two modes are run
+sequentially, so live prices can move between runs; treat the result as a
+near-same-time comparison rather than a perfectly identical market snapshot.
+`trade_value_rank` in this report is enriched from the CLI's in-memory rank map;
+it is not a persisted DB field. When reviewing `composite` candidates, check
+`ranking_presence_count` and `ranking_sources` together with the score and
+block reason.
+Keep `intersection` as the operational default until `composite` has been
+reviewed for several dry-run sessions.
+
+To accumulate comparison runs for a few days, add an archive directory:
+
+```powershell
+python -m trading_bot compare-ranking-modes --output monitor/ranking_mode_compare.json --archive-dir monitor/reports/ranking_mode_compare
+```
+
+Archive files are written as
+`ranking_mode_compare_YYYYMMDD_HHMMSS.json`. Summarize the recent archive before
+considering `composite` as a default:
+
+```powershell
+python -m trading_bot summarize-ranking-mode-archive --archive-dir monitor/reports/ranking_mode_compare --days 5
+python -m trading_bot summarize-ranking-mode-archive --archive-dir monitor/reports/ranking_mode_compare --days 5 --format text
+```
+
+The archive summary is a candidate-selection comparison, not a real-trading
+performance report. Review it over multiple dry-run sessions before changing
+the operational default.
+
 The screening universe is the union of price-fluctuation, trade-volume, and
 trade-value rankings. After rank fallback sorting, expensive quote and daily
 price evaluation runs in batches: `INITIAL_RANKED_EVALUATION_LIMIT` candidates

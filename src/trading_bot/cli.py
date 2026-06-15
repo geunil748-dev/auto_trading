@@ -53,6 +53,13 @@ from trading_bot.monitor_state import state_from_dry_run
 from trading_bot.live_monitor_state import live_kis_monitor_state
 from trading_bot.monitor_server import serve_monitor
 from trading_bot.readiness import mock_trading_readiness
+from trading_bot.ranking_mode_compare import (
+    archive_compare_payload,
+    compare_ranking_modes,
+    format_ranking_mode_archive_summary,
+    summarize_ranking_mode_archive,
+    write_compare_payload,
+)
 from trading_bot.trade_summary_export import export_trade_summary
 
 
@@ -110,6 +117,13 @@ def main() -> None:
     daily_summary = subparsers.add_parser("generate-daily-summary")
     daily_summary.add_argument("--date", dest="trade_date", type=date.fromisoformat)
     daily_summary.add_argument("--mode", choices=("mock", "real"), default="mock")
+    ranking_compare = subparsers.add_parser("compare-ranking-modes")
+    ranking_compare.add_argument("--output", type=Path)
+    ranking_compare.add_argument("--archive-dir", type=Path)
+    ranking_summary = subparsers.add_parser("summarize-ranking-mode-archive")
+    ranking_summary.add_argument("--archive-dir", type=Path, required=True)
+    ranking_summary.add_argument("--days", type=int)
+    ranking_summary.add_argument("--format", choices=("json", "text"), default="json")
 
     args = parser.parse_args()
     if args.command == "show-settings":
@@ -193,6 +207,21 @@ def main() -> None:
                 ensure_ascii=False,
             )
         )
+        return
+
+    if args.command == "compare-ranking-modes":
+        payload = compare_ranking_modes(load_settings(), load_kis_settings())
+        archive_compare_payload(payload, args.archive_dir)
+        write_compare_payload(payload, args.output)
+        print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+        return
+
+    if args.command == "summarize-ranking-mode-archive":
+        payload = summarize_ranking_mode_archive(args.archive_dir, days=args.days)
+        if args.format == "text":
+            print(format_ranking_mode_archive_summary(payload))
+        else:
+            print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
         return
 
     if args.command == "init-db":

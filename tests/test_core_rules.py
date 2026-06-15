@@ -28,6 +28,7 @@ from trading_bot.scoring import (
 )
 from trading_bot.screening import (
     adaptive_ranking_intersection,
+    composite_ranking_selection,
     ranking_intersection,
     screening_priority_score,
 )
@@ -104,6 +105,79 @@ def test_screening_keeps_rank_intersection_with_opening_filters() -> None:
         [RankedStock("AAA", 2), RankedStock("BBB", 1)],
         snapshots,
         TradingSettings(min_volume_ratio=1.5),
+    )
+
+    assert [item.ticker for item in selected] == ["AAA"]
+
+
+def test_composite_ranking_selection_uses_trade_value_and_presence() -> None:
+    snapshots = {
+        "AAA": candidate("AAA", turnover_rank=5, gain_rank=5),
+        "BBB": candidate("BBB", turnover_rank=1, gain_rank=1),
+        "CCC": candidate("CCC", turnover_rank=80, gain_rank=80),
+    }
+
+    selected = composite_ranking_selection(
+        [RankedStock("BBB", 1), RankedStock("AAA", 5)],
+        [RankedStock("BBB", 1), RankedStock("AAA", 5)],
+        [RankedStock("CCC", 1), RankedStock("AAA", 5)],
+        snapshots,
+        SETTINGS,
+        limit=3,
+    )
+
+    assert [item.ticker for item in selected] == ["AAA", "BBB", "CCC"]
+
+
+def test_composite_ranking_selection_prioritizes_two_rankings_over_one() -> None:
+    snapshots = {
+        "ONE": candidate("ONE", turnover_rank=80, gain_rank=1),
+        "TWO": candidate("TWO", turnover_rank=30, gain_rank=30),
+    }
+
+    selected = composite_ranking_selection(
+        [RankedStock("ONE", 1), RankedStock("TWO", 30)],
+        [RankedStock("TWO", 30)],
+        [],
+        snapshots,
+        SETTINGS,
+        limit=2,
+    )
+
+    assert [item.ticker for item in selected] == ["TWO", "ONE"]
+
+
+def test_composite_ranking_selection_keeps_opening_filters_strict() -> None:
+    snapshots = {
+        "BAD": candidate("BAD", price=4.0, turnover_rank=1, gain_rank=1),
+        "OK": candidate("OK", turnover_rank=10, gain_rank=10),
+    }
+
+    selected = composite_ranking_selection(
+        [RankedStock("BAD", 1), RankedStock("OK", 10)],
+        [RankedStock("BAD", 1), RankedStock("OK", 10)],
+        [RankedStock("BAD", 1), RankedStock("OK", 10)],
+        snapshots,
+        SETTINGS,
+        limit=2,
+    )
+
+    assert [item.ticker for item in selected] == ["OK"]
+
+
+def test_composite_ranking_selection_limits_and_tie_breaks_by_ticker() -> None:
+    snapshots = {
+        "BBB": candidate("BBB", turnover_rank=1, gain_rank=1),
+        "AAA": candidate("AAA", turnover_rank=1, gain_rank=1),
+    }
+
+    selected = composite_ranking_selection(
+        [RankedStock("BBB", 1), RankedStock("AAA", 1)],
+        [RankedStock("BBB", 1), RankedStock("AAA", 1)],
+        [RankedStock("BBB", 1), RankedStock("AAA", 1)],
+        snapshots,
+        SETTINGS,
+        limit=1,
     )
 
     assert [item.ticker for item in selected] == ["AAA"]

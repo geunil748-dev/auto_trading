@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 from datetime import date
 from time import perf_counter
 
-from trading_bot.config import TradingSettings
+from trading_bot.config import RANKING_SELECTION_COMPOSITE, TradingSettings
 from trading_bot.models import (
     BotLog,
     CandidateSnapshot,
@@ -22,7 +22,11 @@ from trading_bot.ports import (
 )
 from trading_bot.risk import global_entry_gate
 from trading_bot.scoring import select_candidates
-from trading_bot.screening import ranking_intersection, screening_rejection_counts
+from trading_bot.screening import (
+    composite_ranking_selection,
+    ranking_intersection,
+    screening_rejection_counts,
+)
 
 CANDIDATE_EVAL_TARGET_REACHED = "target_reached"
 CANDIDATE_EVAL_MAX_REACHED = "max_evaluation_candidates_reached"
@@ -138,6 +142,9 @@ class ScreeningScoringPipeline:
                 ),
                 ranked_gainers=ranked_gainers,
                 ranked_turnover=ranked_turnover,
+                raw_gainers=gainers,
+                raw_turnover=turnover,
+                raw_trade_value=trade_value,
                 snapshots=snapshots,
                 evaluated_tickers=evaluated_tickers,
                 settings=profile.settings,
@@ -368,6 +375,9 @@ class ScreeningScoringPipeline:
         ranked_tickers: tuple[str, ...],
         ranked_gainers: tuple[RankedStock, ...],
         ranked_turnover: tuple[RankedStock, ...],
+        raw_gainers: tuple[RankedStock, ...],
+        raw_turnover: tuple[RankedStock, ...],
+        raw_trade_value: tuple[RankedStock, ...],
         snapshots,
         evaluated_tickers: set[str],
         settings: TradingSettings,
@@ -389,11 +399,14 @@ class ScreeningScoringPipeline:
         stopped_reason = CANDIDATE_EVAL_NO_MORE
 
         while True:
-            candidates = ranking_intersection(
-                ranked_gainers,
-                ranked_turnover,
-                candidate_snapshots,
-                settings,
+            candidates = self._select_ranked_candidates(
+                ranked_gainers=ranked_gainers,
+                ranked_turnover=ranked_turnover,
+                raw_gainers=raw_gainers,
+                raw_turnover=raw_turnover,
+                raw_trade_value=raw_trade_value,
+                snapshots=candidate_snapshots,
+                settings=settings,
                 limit=candidate_limit,
             )
             if len(candidates) >= target_filtered_count:
@@ -454,6 +467,35 @@ class ScreeningScoringPipeline:
             daily_requested_count=daily_requested_count,
             stopped_reason=stopped_reason,
             elapsed_ms=int((perf_counter() - eval_started_at) * 1000),
+        )
+
+    def _select_ranked_candidates(
+        self,
+        *,
+        ranked_gainers: tuple[RankedStock, ...],
+        ranked_turnover: tuple[RankedStock, ...],
+        raw_gainers: tuple[RankedStock, ...],
+        raw_turnover: tuple[RankedStock, ...],
+        raw_trade_value: tuple[RankedStock, ...],
+        snapshots,
+        settings: TradingSettings,
+        limit: int,
+    ) -> list[CandidateSnapshot]:
+        if settings.ranking_selection_mode == RANKING_SELECTION_COMPOSITE:
+            return composite_ranking_selection(
+                raw_gainers,
+                raw_turnover,
+                raw_trade_value,
+                snapshots,
+                settings,
+                limit=limit,
+            )
+        return ranking_intersection(
+            ranked_gainers,
+            ranked_turnover,
+            snapshots,
+            settings,
+            limit=limit,
         )
 
     def _save_screening_diagnostics(
@@ -546,6 +588,7 @@ class ScreeningScoringPipeline:
                 "INFO",
                 "pipeline",
                 "[PIPELINE] "
+                f"ranking_selection_mode={applied_settings.ranking_selection_mode} "
                 f"requested_gainer_limit={requested_gainer_limit} "
                 f"received_gainer_count={gainers_count} "
                 f"requested_turnover_limit={requested_turnover_limit} "
@@ -590,6 +633,7 @@ class ScreeningScoringPipeline:
                 "INFO",
                 "pipeline",
                 "[PIPELINE_SUMMARY] "
+                f"ranking_selection_mode={applied_settings.ranking_selection_mode} "
                 f"requested_gainer_limit={requested_gainer_limit} "
                 f"received_gainer_count={gainers_count} "
                 f"requested_turnover_limit={requested_turnover_limit} "

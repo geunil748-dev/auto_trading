@@ -33,6 +33,7 @@ RUNTIME_SETTING_KEYS = {
     "max_price_usd",
     "gainer_ranking_limit",
     "turnover_ranking_limit",
+    "ranking_selection_mode",
     "initial_ranked_evaluation_limit",
     "ranked_evaluation_batch_size",
     "max_ranked_evaluation_candidates",
@@ -73,6 +74,12 @@ CANDIDATE_SELECTION_MODES = {
     CANDIDATE_MODE_REFRESH,
     CANDIDATE_MODE_FIXED,
     CANDIDATE_MODE_HYBRID,
+}
+RANKING_SELECTION_INTERSECTION = "intersection"
+RANKING_SELECTION_COMPOSITE = "composite"
+RANKING_SELECTION_MODES = {
+    RANKING_SELECTION_INTERSECTION,
+    RANKING_SELECTION_COMPOSITE,
 }
 STRATEGY_PRESET_CURRENT = "current"
 STRATEGY_PRESET_CONSERVATIVE_INTRADAY = "conservative_intraday"
@@ -117,6 +124,7 @@ class TradingSettings:
     max_price_usd: float = 300.0
     gainer_ranking_limit: int = 100
     turnover_ranking_limit: int = 100
+    ranking_selection_mode: str = RANKING_SELECTION_INTERSECTION
     initial_ranked_evaluation_limit: int = 50
     ranked_evaluation_batch_size: int = 25
     max_ranked_evaluation_candidates: int = 125
@@ -225,6 +233,7 @@ def load_settings() -> TradingSettings:
         max_price_usd=_float_env("MAX_PRICE_USD", 300.0),
         gainer_ranking_limit=_ranking_limit_env("GAINER_RANKING_LIMIT", 100),
         turnover_ranking_limit=_ranking_limit_env("TURNOVER_RANKING_LIMIT", 100),
+        ranking_selection_mode=_ranking_selection_mode_env(),
         initial_ranked_evaluation_limit=_candidate_eval_count_env(
             "INITIAL_RANKED_EVALUATION_LIMIT",
             50,
@@ -346,6 +355,7 @@ def runtime_risk_settings_payload(
         "maxPriceUsd": current.max_price_usd,
         "gainerRankingLimit": current.gainer_ranking_limit,
         "turnoverRankingLimit": current.turnover_ranking_limit,
+        "rankingSelectionMode": current.ranking_selection_mode,
         "initialRankedEvaluationLimit": current.initial_ranked_evaluation_limit,
         "rankedEvaluationBatchSize": current.ranked_evaluation_batch_size,
         "maxRankedEvaluationCandidates": current.max_ranked_evaluation_candidates,
@@ -420,6 +430,7 @@ def save_runtime_risk_settings(
     allow_relaxed_candidate_filter: bool | None = None,
     relax_opening_change_only: bool | None = None,
     enable_pyramiding: bool | None = None,
+    ranking_selection_mode: str | None = None,
     path: Path = RUNTIME_SETTINGS_PATH,
 ) -> dict[str, float]:
     stop = _validate_percent(stop_loss_percent, "손절 비율")
@@ -458,6 +469,10 @@ def save_runtime_risk_settings(
             turnover_ranking_limit,
             "거래량 랭킹 수",
             1000,
+        )
+    if ranking_selection_mode is not None:
+        payload["ranking_selection_mode"] = _ranking_selection_mode_to_float(
+            ranking_selection_mode
         )
     if min_opening_price_change_percent is not None:
         payload["min_opening_price_change"] = (
@@ -603,6 +618,12 @@ def save_runtime_risk_settings(
         ),
         turnover_ranking_limit=int(
             payload.get("turnover_ranking_limit", current.turnover_ranking_limit)
+        ),
+        ranking_selection_mode=_ranking_selection_mode_from_float(
+            payload.get(
+                "ranking_selection_mode",
+                _ranking_selection_mode_to_float(current.ranking_selection_mode),
+            )
         ),
         initial_ranked_evaluation_limit=int(
             payload.get(
@@ -911,6 +932,12 @@ def _candidate_mode_env() -> str:
     return CANDIDATE_MODE_REFRESH if _bool_env("REFRESH_INTRADAY_CANDIDATES", False) else CANDIDATE_MODE_FIXED
 
 
+def _ranking_selection_mode_env() -> str:
+    return _validate_ranking_selection_mode(
+        os.getenv("RANKING_SELECTION_MODE", RANKING_SELECTION_INTERSECTION)
+    )
+
+
 def _condition_mode_env(name: str, default: str) -> str:
     return _validate_condition_mode(os.getenv(name, default))
 
@@ -961,6 +988,10 @@ def _apply_runtime_settings(settings: TradingSettings) -> TradingSettings:
         overrides["candidate_selection_mode"] = _candidate_mode_from_float(
             overrides["candidate_selection_mode"]
         )
+    if "ranking_selection_mode" in overrides:
+        overrides["ranking_selection_mode"] = _ranking_selection_mode_from_float(
+            overrides["ranking_selection_mode"]
+        )
     if "strategy_preset" in overrides:
         overrides["strategy_preset"] = _strategy_preset_from_float(overrides["strategy_preset"])
     if "partial_fill_policy" in overrides:
@@ -1007,6 +1038,7 @@ def _normalize_candidate_mode(settings: TradingSettings) -> TradingSettings:
 
 
 def _validate_candidate_evaluation_settings(settings: TradingSettings) -> TradingSettings:
+    _validate_ranking_selection_mode(settings.ranking_selection_mode)
     for field, label in (
         ("max_selected_candidates", "MAX_SELECTED_CANDIDATES"),
         ("initial_ranked_evaluation_limit", "INITIAL_RANKED_EVALUATION_LIMIT"),
@@ -1042,6 +1074,9 @@ def _runtime_settings_from_settings(settings: TradingSettings) -> dict[str, floa
         "max_price_usd": settings.max_price_usd,
         "gainer_ranking_limit": float(settings.gainer_ranking_limit),
         "turnover_ranking_limit": float(settings.turnover_ranking_limit),
+        "ranking_selection_mode": _ranking_selection_mode_to_float(
+            settings.ranking_selection_mode
+        ),
         "initial_ranked_evaluation_limit": float(settings.initial_ranked_evaluation_limit),
         "ranked_evaluation_batch_size": float(settings.ranked_evaluation_batch_size),
         "max_ranked_evaluation_candidates": float(settings.max_ranked_evaluation_candidates),
@@ -1125,7 +1160,10 @@ def _read_runtime_settings_file(path: Path = RUNTIME_SETTINGS_PATH) -> dict[str,
     values: dict[str, float] = {}
     for key in RUNTIME_SETTING_KEYS:
         if key in payload:
-            values[key] = float(payload[key])
+            if key == "ranking_selection_mode" and isinstance(payload[key], str):
+                values[key] = _ranking_selection_mode_to_float(payload[key])
+            else:
+                values[key] = float(payload[key])
     return values
 
 
@@ -1200,12 +1238,34 @@ def _validate_candidate_mode(value: str) -> str:
     return mode
 
 
+def _validate_ranking_selection_mode(value: str) -> str:
+    mode = str(value).strip().lower()
+    if mode not in RANKING_SELECTION_MODES:
+        raise ValueError(
+            "RANKING_SELECTION_MODE must be either 'intersection' or 'composite'"
+        )
+    return mode
+
+
 def _candidate_mode_to_float(mode: str) -> float:
     return {
         CANDIDATE_MODE_REFRESH: 1.0,
         CANDIDATE_MODE_FIXED: 2.0,
         CANDIDATE_MODE_HYBRID: 3.0,
     }[_validate_candidate_mode(mode)]
+
+
+def _ranking_selection_mode_to_float(mode: str) -> float:
+    return {
+        RANKING_SELECTION_INTERSECTION: 1.0,
+        RANKING_SELECTION_COMPOSITE: 2.0,
+    }[_validate_ranking_selection_mode(mode)]
+
+
+def _ranking_selection_mode_from_float(value: float) -> str:
+    if int(float(value)) == 2:
+        return RANKING_SELECTION_COMPOSITE
+    return RANKING_SELECTION_INTERSECTION
 
 
 def _candidate_mode_from_float(value: float) -> str:

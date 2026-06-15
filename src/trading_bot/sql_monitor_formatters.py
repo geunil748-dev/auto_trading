@@ -1062,6 +1062,7 @@ _CANDIDATE_CONDITION_TYPE_TEXT = {
 }
 
 _PIPELINE_LOG_LABELS = {
+    "ranking_selection_mode": "랭킹 선정 모드",
     "requested_gainer_limit": "상승률 요청",
     "received_gainer_count": "상승률 수신",
     "requested_turnover_limit": "거래량 요청",
@@ -1098,6 +1099,7 @@ _FILTER_LOG_LABELS = {
 }
 
 _PIPELINE_SUMMARY_LOG_LABELS = {
+    "ranking_selection_mode": "랭킹 선정 모드",
     "requested_gainer_limit": "상승률 요청",
     "received_gainer_count": "상승률 수신",
     "requested_turnover_limit": "거래량 요청",

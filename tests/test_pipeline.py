@@ -75,6 +75,37 @@ class MarketData:
         }
 
 
+class CompositeRankingMarketData:
+    def __init__(self) -> None:
+        self.snapshot_requests: list[tuple[str, ...]] = []
+
+    def market_context(self) -> MarketContext:
+        return MarketContext(101, 100, 0.01)
+
+    def ranked_gainers(self, limit: int | None = None) -> tuple[RankedStock, ...]:
+        return (
+            RankedStock("GAIN_ONLY", 1),
+            RankedStock("ALL", 5),
+            RankedStock("VALUE_PAIR", 40),
+        )
+
+    def ranked_turnover(self, limit: int | None = None) -> tuple[RankedStock, ...]:
+        return (RankedStock("ALL", 5), RankedStock("TURNOVER_ONLY", 1))
+
+    def ranked_trade_value(self, limit: int | None = None) -> tuple[RankedStock, ...]:
+        return (RankedStock("VALUE_PAIR", 1), RankedStock("ALL", 5))
+
+    def candidate_snapshots(self, tickers) -> dict[str, CandidateSnapshot]:
+        batch = tuple(tickers)
+        self.snapshot_requests.append(batch)
+        return {
+            "ALL": snapshot("ALL", gain_rank=5, turnover_rank=5),
+            "VALUE_PAIR": snapshot("VALUE_PAIR", gain_rank=40, turnover_rank=70),
+            "GAIN_ONLY": snapshot("GAIN_ONLY", gain_rank=1, turnover_rank=70),
+            "TURNOVER_ONLY": snapshot("TURNOVER_ONLY", gain_rank=70, turnover_rank=1),
+        }
+
+
 class LargeUnionMarketData:
     def __init__(
         self,
@@ -273,6 +304,7 @@ def test_pipeline_screens_scores_and_persists_selected_candidates() -> None:
     assert "requested_gainer_limit=100 received_gainer_count=3" in pipeline_message
     assert "requested_turnover_limit=100 received_turnover_count=3" in pipeline_message
     assert "requested_trade_value_limit=100 received_trade_value_count=2" in pipeline_message
+    assert "ranking_selection_mode=intersection" in pipeline_message
     assert "gainers_count=3 volume_count=3 trade_value_count=2 intersection_count=2" in pipeline_message
     assert "ranking_union_count=5 ranked_evaluation_limit=5" in pipeline_message
     assert "evaluated_candidate_count=5 quote_requested_count=5 daily_requested_count=5" in pipeline_message
@@ -286,6 +318,28 @@ def test_pipeline_screens_scores_and_persists_selected_candidates() -> None:
         in messages
     )
     assert any(message.startswith("[PIPELINE_SUMMARY]") for message in messages)
+
+
+def test_pipeline_composite_mode_uses_trade_value_ranking() -> None:
+    market_data = CompositeRankingMarketData()
+
+    _, repository, _ = run_pipeline(
+        market_data,
+        TradingSettings(
+            ranking_selection_mode="composite",
+            min_selected_candidates=1,
+            max_selected_candidates=2,
+            target_filtered_candidates=2,
+        ),
+    )
+
+    assert [item.candidate.ticker for item in repository.targets] == [
+        "ALL",
+        "VALUE_PAIR",
+    ]
+    message = pipeline_log(repository)
+    assert "ranking_selection_mode=composite" in message
+    assert "final_selected_count=2" in message
 
 
 def test_pipeline_passes_custom_ranking_limits_to_market_data() -> None:

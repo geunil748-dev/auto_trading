@@ -115,16 +115,38 @@ def test_load_settings_reads_ranking_limits(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("MAX_RANKED_EVALUATION_CANDIDATES", "95")
     monkeypatch.setenv("TARGET_FILTERED_CANDIDATES", "21")
     monkeypatch.setenv("CANDIDATE_EVAL_TIMEOUT_SECONDS", "90")
+    monkeypatch.setenv("RANKING_SELECTION_MODE", "composite")
 
     settings = load_settings()
 
     assert settings.gainer_ranking_limit == 240
     assert settings.turnover_ranking_limit == 260
+    assert settings.ranking_selection_mode == "composite"
     assert settings.initial_ranked_evaluation_limit == 45
     assert settings.ranked_evaluation_batch_size == 15
     assert settings.max_ranked_evaluation_candidates == 95
     assert settings.target_filtered_candidates == 21
     assert settings.candidate_eval_timeout_seconds == 90
+    assert runtime_risk_settings_payload(settings)["rankingSelectionMode"] == "composite"
+
+
+def test_load_settings_rejects_invalid_ranking_selection_mode(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in (
+        "MSSQL_DSN",
+        "MSSQL_HOST",
+        "MSSQL_DATABASE",
+        "MSSQL_USERNAME",
+        "MSSQL_PASSWORD",
+    ):
+        monkeypatch.setenv(name, "")
+    monkeypatch.setenv("RANKING_SELECTION_MODE", "unknown")
+
+    with pytest.raises(ValueError, match="RANKING_SELECTION_MODE"):
+        load_settings()
 
 
 def test_load_settings_defaults_to_fixed_candidate_watch(tmp_path, monkeypatch) -> None:
@@ -144,8 +166,10 @@ def test_load_settings_defaults_to_fixed_candidate_watch(tmp_path, monkeypatch) 
 
     assert settings.refresh_intraday_candidates is False
     assert settings.candidate_selection_mode == "fixed"
+    assert settings.ranking_selection_mode == "intersection"
     assert runtime_risk_settings_payload(settings)["refreshIntradayCandidates"] is False
     assert runtime_risk_settings_payload(settings)["candidateSelectionMode"] == "fixed"
+    assert runtime_risk_settings_payload(settings)["rankingSelectionMode"] == "intersection"
 
 
 def test_load_settings_defaults_vwap_ma20_condition_off(tmp_path, monkeypatch) -> None:

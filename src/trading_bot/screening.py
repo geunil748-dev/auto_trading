@@ -28,6 +28,39 @@ def ranking_intersection(
     return screened[: limit or settings.max_selected_candidates]
 
 
+def composite_ranking_selection(
+    gainers: Iterable[RankedStock],
+    turnover: Iterable[RankedStock],
+    trade_value: Iterable[RankedStock],
+    snapshots: Mapping[str, CandidateSnapshot],
+    settings: TradingSettings,
+    limit: int | None = None,
+) -> list[CandidateSnapshot]:
+    gain_ranks = {item.ticker: item.rank for item in gainers}
+    turnover_ranks = {item.ticker: item.rank for item in turnover}
+    trade_value_ranks = {item.ticker: item.rank for item in trade_value}
+    ranked_tickers = gain_ranks.keys() | turnover_ranks.keys() | trade_value_ranks.keys()
+    candidate_tickers = ranked_tickers & snapshots.keys()
+
+    screened = [
+        snapshots[ticker]
+        for ticker in candidate_tickers
+        if opening_screen_reason(snapshots[ticker], settings) is None
+    ]
+    screened.sort(
+        key=lambda item: (
+            -composite_ranking_score(
+                item,
+                gain_ranks,
+                turnover_ranks,
+                trade_value_ranks,
+            ),
+            item.ticker,
+        )
+    )
+    return screened[: limit or settings.max_selected_candidates]
+
+
 def adaptive_ranking_intersection(
     gainers: Iterable[RankedStock],
     turnover: Iterable[RankedStock],
@@ -114,6 +147,29 @@ def screening_priority_score(candidate: CandidateSnapshot) -> float:
     )
 
 
+def composite_ranking_score(
+    candidate: CandidateSnapshot,
+    gain_ranks: Mapping[str, int],
+    turnover_ranks: Mapping[str, int],
+    trade_value_ranks: Mapping[str, int],
+) -> float:
+    ticker = candidate.ticker
+    gain_rank = gain_ranks.get(ticker, _fallback_rank(gain_ranks))
+    turnover_rank = turnover_ranks.get(ticker, _fallback_rank(turnover_ranks))
+    trade_value_rank = trade_value_ranks.get(ticker, _fallback_rank(trade_value_ranks))
+    presence_count = sum(
+        ticker in ranks for ranks in (gain_ranks, turnover_ranks, trade_value_ranks)
+    )
+    weighted_rank = gain_rank * 0.4 + turnover_rank * 0.3 + trade_value_rank * 0.3
+    return (
+        max(0.0, 100.0 - weighted_rank)
+        + _presence_bonus(presence_count)
+        + _volume_bonus(candidate.opening_volume_ratio)
+        + _opening_change_adjustment(candidate.opening_price_change)
+        + _gap_adjustment(candidate.opening_gap)
+    )
+
+
 def screening_rejection_counts(
     snapshots: Iterable[CandidateSnapshot],
     settings: TradingSettings,
@@ -140,6 +196,18 @@ def opening_screen_reason(
 def _rank_score(candidate: CandidateSnapshot) -> float:
     average_rank = (candidate.turnover_rank + candidate.gain_rank) / 2
     return max(0.0, 100.0 - average_rank)
+
+
+def _fallback_rank(ranks: Mapping[str, int]) -> int:
+    return max(ranks.values(), default=0) + 50
+
+
+def _presence_bonus(presence_count: int) -> float:
+    if presence_count >= 3:
+        return 25.0
+    if presence_count == 2:
+        return 12.0
+    return -5.0
 
 
 def _volume_bonus(volume_ratio: float) -> float:
