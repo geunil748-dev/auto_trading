@@ -5,6 +5,7 @@
 .kis-token-*.json
 .pytest_cache/
 .yfinance-cache/
+.codex-remote-attachments/
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -18,8 +19,12 @@ monitor/server.*.log
 monitor/real_trading_control.json
 monitor/trading_settings.json
 monitor/trading_settings.backup.*.json
+monitor/manual_buy_list.json
+monitor/state_manual_test.json
+monitor/ranking_mode_compare.json
 monitor/reports/
 mobile/stock_monitor_app/.dart_tool/
 mobile/stock_monitor_app/build/
 mobile/stock_monitor_app/dist/
 mobile/stock_monitor_app/android/local.properties
+reports/analysis/

@@ -5,6 +5,7 @@ from trading_bot.models import AccountState, BuyIntent, ScoreRecord
 from trading_bot.runtime import DryRunResult
 from trading_bot.scheduler_recheck import (
     append_entry_reason,
+    fixed_recheck_selected_scores,
     fixed_opening_result,
     hybrid_recheck,
     hybrid_selected_scores,
@@ -50,11 +51,36 @@ class Runtime:
         return self.refreshed
 
 
+class SourceScoring(Scoring):
+    def __init__(
+        self,
+        selected: tuple[ScoreRecord, ...],
+        sources: dict[str, str],
+    ) -> None:
+        super().__init__(selected)
+        self.sources = sources
+
+    def candidate_source(self, ticker: str) -> str:
+        return self.sources.get(ticker, "auto")
+
+
 def result_with_scores(*items: tuple[str, float]) -> DryRunResult:
     selected = tuple(ScoreRecord(ticker, score, score) for ticker, score in items)
     return DryRunResult(
         AccountState(100000, 100000, 0, 0, 0),
         Scoring(selected),
+        tuple(BuyIntent(item.ticker, 1, 10, 10, 0.01) for item in selected),
+    )
+
+
+def result_with_sources(
+    items: tuple[tuple[str, float], ...],
+    sources: dict[str, str],
+) -> DryRunResult:
+    selected = tuple(ScoreRecord(ticker, score, score) for ticker, score in items)
+    return DryRunResult(
+        AccountState(100000, 100000, 0, 0, 0),
+        SourceScoring(selected, sources),
         tuple(BuyIntent(item.ticker, 1, 10, 10, 0.01) for item in selected),
     )
 
@@ -117,6 +143,29 @@ def test_recheck_fixed_watchlist_limits_selected_and_uses_fixed_source(monkeypat
         "source": "fixed_recheck",
         "trade_date": date(2026, 6, 8),
     }
+
+
+def test_fixed_recheck_selected_scores_keeps_manual_candidates_separate_from_auto_limit() -> None:
+    latest_result = result_with_sources(
+        (
+            ("AUTO1", 99),
+            ("AUTO2", 98),
+            ("MAN1", 97),
+            ("MAN2", 96),
+            ("AUTO3", 95),
+        ),
+        {"MAN1": "manual_buy_list", "MAN2": "both"},
+    )
+
+    selected = fixed_recheck_selected_scores(
+        latest_result,
+        TradingSettings(
+            opening_fixed_candidate_limit=1,
+            max_manual_selected_candidates=2,
+        ),
+    )
+
+    assert [item.ticker for item in selected] == ["AUTO1", "MAN1", "MAN2"]
 
 
 def test_hybrid_selected_scores_merges_and_ranks_candidates() -> None:

@@ -32,6 +32,10 @@ class ScreeningMarketData(Protocol):
     def candidate_snapshots(self, tickers: Iterable[str]) -> Mapping[str, CandidateSnapshot]: ...
 
 
+class ManualBuyListSource(Protocol):
+    def enabled_tickers(self) -> Iterable[str]: ...
+
+
 class ScreeningContextSource(Protocol):
     def market_context(self) -> MarketContext: ...
 

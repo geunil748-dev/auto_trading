@@ -195,6 +195,42 @@ $env:PYTHONPATH='src'
 python -m trading_bot mock-buy-list --limit 3
 ```
 
+Manage an operator-curated manual buy candidate watchlist without submitting
+orders:
+
+```powershell
+$env:PYTHONPATH='src'
+python -m trading_bot manual-buy-list add TSLA --note "watch candidate"
+python -m trading_bot manual-buy-list list
+python -m trading_bot manual-buy-list disable TSLA
+python -m trading_bot manual-buy-list remove TSLA
+python -m trading_bot manual-buy-list clear
+```
+
+The watchlist is stored in `monitor/manual_buy_list.json` by default:
+
+```json
+{
+  "tickers": [
+    {
+      "ticker": "TSLA",
+      "enabled": true,
+      "note": "watch candidate",
+      "created_at": "2026-06-15T13:10:00+00:00",
+      "updated_at": "2026-06-15T13:10:00+00:00"
+    }
+  ]
+}
+```
+
+Manual buy candidates are added separately from automatic ranking candidates.
+They do not reduce `MAX_SELECTED_CANDIDATES`, but they must pass the same price,
+opening change, volume ratio, gap, score, breakout, account exposure, and order
+protection rules before a `BuyIntent` can be produced. If a manual candidate is
+bought, existing sell, stop-loss, take-profit, partial take-profit, trailing
+stop, and EOD exit logic manages it the same way as any other position. Real
+trading unlock and emergency-stop protections are not bypassed.
+
 Run the KST daily APScheduler timeline after installing the integrations extra:
 
 ```powershell
@@ -290,6 +326,9 @@ selected, and buy-intent ticker differences as JSON. It does not overwrite
 `monitor/state.json` and does not submit orders. The two modes are run
 sequentially, so live prices can move between runs; treat the result as a
 near-same-time comparison rather than a perfectly identical market snapshot.
+Manual buy-list candidates are excluded by default so the command compares only
+ranking-mode behavior. Use `--include-manual` only when you explicitly want to
+include the manual watchlist in the comparison.
 `trade_value_rank` in this report is enriched from the CLI's in-memory rank map;
 it is not a persisted DB field. When reviewing `composite` candidates, check
 `ranking_presence_count` and `ranking_sources` together with the score and

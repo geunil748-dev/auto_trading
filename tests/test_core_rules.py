@@ -524,6 +524,34 @@ def test_entry_planner_saves_bought_and_soft_score_evaluation() -> None:
     assert repository.logs[0].reject_reason == "BUY_ALLOWED"
 
 
+def test_entry_planner_marks_manual_watchlist_source_and_reason() -> None:
+    repository = InMemoryDailyRepository()
+
+    intents = plan_buy_intents(
+        [ScoreRecord("MAN", 95, 90)],
+        {
+            "MAN": BreakoutInput(
+                last_price_usd=12.5,
+                open_price_usd=10,
+                previous_high_usd=12,
+                previous_low_usd=8,
+            ),
+        },
+        account(),
+        entry_test_settings(require_5m_volume_increase=False),
+        repository=repository,
+        trade_date=date(2026, 5, 22),
+        source="intraday_recheck",
+        source_by_ticker={"MAN": "manual_buy_list"},
+    )
+
+    assert [item.ticker for item in intents] == ["MAN"]
+    assert intents[0].entry_reason.startswith("MANUAL_WATCHLIST+OPENING_BREAKOUT")
+    evaluation = repository.candidate_evaluations[0]
+    assert evaluation.source == "manual_buy_list"
+    assert evaluation.buy_block_reason == "BUY_ALLOWED"
+
+
 def test_entry_planner_requires_configured_5m_volume_increase_percent() -> None:
     settings = entry_test_settings(
         require_5m_volume_increase=True,

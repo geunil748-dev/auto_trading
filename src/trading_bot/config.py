@@ -10,6 +10,8 @@ try:
 except ImportError:  # pragma: no cover - 로컬 규칙 테스트에서 선택 의존성을 허용한다.
     load_dotenv = None
 
+from trading_bot.manual_buy_list import DEFAULT_MANUAL_BUY_LIST_PATH
+
 RUNTIME_SETTINGS_PATH = Path("monitor/trading_settings.json")
 MIN_PRICE_USD_FLOOR = 10.0
 APP_MODE_TEST = "test"
@@ -130,6 +132,10 @@ class TradingSettings:
     max_ranked_evaluation_candidates: int = 125
     target_filtered_candidates: int = 15
     candidate_eval_timeout_seconds: float = 120.0
+    manual_buy_list_enabled: bool = True
+    manual_buy_list_path: str = DEFAULT_MANUAL_BUY_LIST_PATH
+    max_manual_buy_tickers: int = 20
+    max_manual_selected_candidates: int = 20
     max_open_positions: int = 5
     min_selected_candidates: int = 3
     max_selected_candidates: int = 5
@@ -253,6 +259,19 @@ def load_settings() -> TradingSettings:
         candidate_eval_timeout_seconds=_candidate_eval_timeout_env(
             "CANDIDATE_EVAL_TIMEOUT_SECONDS",
             120.0,
+        ),
+        manual_buy_list_enabled=_bool_env("MANUAL_BUY_LIST_ENABLED", True),
+        manual_buy_list_path=os.getenv(
+            "MANUAL_BUY_LIST_PATH",
+            DEFAULT_MANUAL_BUY_LIST_PATH,
+        ).strip() or DEFAULT_MANUAL_BUY_LIST_PATH,
+        max_manual_buy_tickers=_candidate_eval_count_env(
+            "MAX_MANUAL_BUY_TICKERS",
+            20,
+        ),
+        max_manual_selected_candidates=_candidate_eval_count_env(
+            "MAX_MANUAL_SELECTED_CANDIDATES",
+            20,
         ),
         max_open_positions=_int_env("MAX_OPEN_POSITIONS", 5),
         max_selected_candidates=max_selected_candidates,

@@ -130,6 +130,29 @@ def test_load_settings_reads_ranking_limits(tmp_path, monkeypatch) -> None:
     assert runtime_risk_settings_payload(settings)["rankingSelectionMode"] == "composite"
 
 
+def test_load_settings_reads_manual_buy_list_options(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in (
+        "MSSQL_DSN",
+        "MSSQL_HOST",
+        "MSSQL_DATABASE",
+        "MSSQL_USERNAME",
+        "MSSQL_PASSWORD",
+    ):
+        monkeypatch.setenv(name, "")
+    monkeypatch.setenv("MANUAL_BUY_LIST_ENABLED", "false")
+    monkeypatch.setenv("MANUAL_BUY_LIST_PATH", "monitor/custom_manual.json")
+    monkeypatch.setenv("MAX_MANUAL_BUY_TICKERS", "12")
+    monkeypatch.setenv("MAX_MANUAL_SELECTED_CANDIDATES", "4")
+
+    settings = load_settings()
+
+    assert settings.manual_buy_list_enabled is False
+    assert settings.manual_buy_list_path == "monitor/custom_manual.json"
+    assert settings.max_manual_buy_tickers == 12
+    assert settings.max_manual_selected_candidates == 4
+
+
 def test_load_settings_rejects_invalid_ranking_selection_mode(
     tmp_path,
     monkeypatch,

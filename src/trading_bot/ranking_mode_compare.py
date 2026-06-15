@@ -27,6 +27,7 @@ from trading_bot.config import (
     TradingSettings,
 )
 from trading_bot.in_memory import InMemoryDailyRepository
+from trading_bot.manual_buy_list import FileManualBuyListSource
 from trading_bot.models import (
     BotLog,
     CandidateEvaluation,
@@ -48,8 +49,15 @@ def compare_ranking_modes(
     kis_settings: KisSettings,
     *,
     runtime_factory: RuntimeFactory | None = None,
+    include_manual: bool = False,
 ) -> dict[str, Any]:
-    factory = runtime_factory or build_read_only_live_dry_run
+    factory = runtime_factory or (
+        lambda mode_settings, mode_kis_settings: build_read_only_live_dry_run(
+            mode_settings,
+            mode_kis_settings,
+            include_manual=include_manual,
+        )
+    )
     intersection = _run_mode(factory, settings, kis_settings, RANKING_SELECTION_INTERSECTION)
     composite = _run_mode(factory, settings, kis_settings, RANKING_SELECTION_COMPOSITE)
     return _compare_payload(intersection, composite)
@@ -144,6 +152,8 @@ def format_ranking_mode_archive_summary(summary: dict[str, Any]) -> str:
 def build_read_only_live_dry_run(
     settings: TradingSettings,
     kis_settings: KisSettings,
+    *,
+    include_manual: bool = False,
 ) -> tuple[DryRunRuntime, InMemoryDailyRepository]:
     kis = KisOverseasClient(KisJsonClient(kis_settings))
     accounts = KisAccountReader(kis, kis_settings)
@@ -171,6 +181,15 @@ def build_read_only_live_dry_run(
         repository,
         SystemClock(),
         settings,
+        manual_source=(
+            FileManualBuyListSource(
+                settings.manual_buy_list_path,
+                enabled=settings.manual_buy_list_enabled,
+                max_tickers=settings.max_manual_buy_tickers,
+            )
+            if include_manual
+            else None
+        ),
     )
     return (
         DryRunRuntime(pipeline, accounts, KisBreakoutHistory(kis), settings),

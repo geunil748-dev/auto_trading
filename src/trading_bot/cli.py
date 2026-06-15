@@ -51,6 +51,13 @@ from trading_bot.database import (
 from trading_bot.daily_trade_summary import generate_daily_trade_summary
 from trading_bot.monitor_state import state_from_dry_run
 from trading_bot.live_monitor_state import live_kis_monitor_state
+from trading_bot.manual_buy_list import (
+    add_manual_buy_ticker,
+    clear_manual_buy_tickers,
+    list_manual_buy_tickers,
+    remove_manual_buy_ticker,
+    set_manual_buy_ticker_enabled,
+)
 from trading_bot.monitor_server import serve_monitor
 from trading_bot.readiness import mock_trading_readiness
 from trading_bot.ranking_mode_compare import (
@@ -120,10 +127,19 @@ def main() -> None:
     ranking_compare = subparsers.add_parser("compare-ranking-modes")
     ranking_compare.add_argument("--output", type=Path)
     ranking_compare.add_argument("--archive-dir", type=Path)
+    ranking_compare.add_argument("--include-manual", action="store_true")
     ranking_summary = subparsers.add_parser("summarize-ranking-mode-archive")
     ranking_summary.add_argument("--archive-dir", type=Path, required=True)
     ranking_summary.add_argument("--days", type=int)
     ranking_summary.add_argument("--format", choices=("json", "text"), default="json")
+    manual_buy_list = subparsers.add_parser("manual-buy-list")
+    manual_buy_list.add_argument(
+        "action",
+        choices=("add", "remove", "list", "clear", "enable", "disable"),
+    )
+    manual_buy_list.add_argument("ticker", nargs="?")
+    manual_buy_list.add_argument("--note", default="")
+    manual_buy_list.add_argument("--path", type=Path)
 
     args = parser.parse_args()
     if args.command == "show-settings":
@@ -210,7 +226,11 @@ def main() -> None:
         return
 
     if args.command == "compare-ranking-modes":
-        payload = compare_ranking_modes(load_settings(), load_kis_settings())
+        payload = compare_ranking_modes(
+            load_settings(),
+            load_kis_settings(),
+            include_manual=args.include_manual,
+        )
         archive_compare_payload(payload, args.archive_dir)
         write_compare_payload(payload, args.output)
         print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
@@ -222,6 +242,13 @@ def main() -> None:
             print(format_ranking_mode_archive_summary(payload))
         else:
             print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+        return
+
+    if args.command == "manual-buy-list":
+        settings = load_settings()
+        path = args.path or Path(settings.manual_buy_list_path)
+        payload = _manual_buy_list_payload(args, path, settings)
+        print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
         return
 
     if args.command == "init-db":
@@ -381,6 +408,45 @@ def main() -> None:
             )
         )
         return
+
+
+def _manual_buy_list_payload(args, path: Path, settings: TradingSettings) -> dict[str, object]:
+    try:
+        if args.action == "list":
+            return list_manual_buy_tickers(path)
+        if args.action == "clear":
+            return clear_manual_buy_tickers(path)
+        if not args.ticker:
+            raise ValueError("ticker is required")
+        if args.action == "add":
+            return add_manual_buy_ticker(
+                path,
+                args.ticker,
+                note=args.note,
+                max_tickers=settings.max_manual_buy_tickers,
+            )
+        if args.action == "remove":
+            return remove_manual_buy_ticker(path, args.ticker)
+        if args.action == "enable":
+            return set_manual_buy_ticker_enabled(path, args.ticker, True)
+        if args.action == "disable":
+            return set_manual_buy_ticker_enabled(path, args.ticker, False)
+    except ValueError as exc:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "action": args.action,
+                    "ticker": args.ticker,
+                    "path": str(path),
+                    "error": str(exc),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        raise SystemExit(2) from exc
+    raise ValueError(f"Unsupported manual buy list action: {args.action}")
 
 
 def _run_intraday_backtest_compare(

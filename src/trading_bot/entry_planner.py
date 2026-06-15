@@ -29,12 +29,16 @@ def plan_buy_intents(
     repository: object | None = None,
     trade_date: date | None = None,
     source: str = "entry_planner",
+    source_by_ticker: Mapping[str, str] | None = None,
     run_id: str | None = None,
 ) -> list[BuyIntent]:
     intents: list[BuyIntent] = []
     invested = account.invested_usd
     cash = account.cash_usd
     for score in selected_scores:
+        evaluation_source = (
+            source_by_ticker.get(score.ticker, source) if source_by_ticker else source
+        )
         evaluated_at = datetime.now(UTC)
         breakout = _breakout_input(breakout_inputs[score.ticker])
         threshold = _breakout_threshold(breakout, settings)
@@ -58,7 +62,7 @@ def plan_buy_intents(
                     "BREAKOUT_NOT_TRIGGERED",
                     ("BREAKOUT_NOT_TRIGGERED",),
                     trade_date,
-                    source,
+                    evaluation_source,
                     run_id,
                     evaluated_at,
                 ),
@@ -80,7 +84,7 @@ def plan_buy_intents(
                     _first_reason(evaluation.failed_hard_reasons),
                     evaluation.failed_hard_reasons,
                     trade_date,
-                    source,
+                    evaluation_source,
                     run_id,
                     evaluated_at,
                 ),
@@ -101,7 +105,7 @@ def plan_buy_intents(
                     "FINAL_SCORE_BELOW_THRESHOLD",
                     ("FINAL_SCORE_BELOW_THRESHOLD",),
                     trade_date,
-                    source,
+                    evaluation_source,
                     run_id,
                     evaluated_at,
                 ),
@@ -134,7 +138,7 @@ def plan_buy_intents(
                     reason,
                     (reason,),
                     trade_date,
-                    source,
+                    evaluation_source,
                     run_id,
                     evaluated_at,
                 ),
@@ -142,7 +146,12 @@ def plan_buy_intents(
             continue
 
         filled_value = quantity * breakout.last_price_usd
-        reason, detail = _entry_reason(score, final_score, evaluation)
+        reason, detail = _entry_reason(
+            score,
+            final_score,
+            evaluation,
+            manual_watchlist=_is_manual_source(evaluation_source),
+        )
         _safe_save_candidate_evaluation(
             repository,
             _candidate_evaluation(
@@ -156,7 +165,7 @@ def plan_buy_intents(
                 "BUY_ALLOWED",
                 (),
                 trade_date,
-                source,
+                evaluation_source,
                 run_id,
                 evaluated_at,
             ),
@@ -482,8 +491,12 @@ def _entry_reason(
     score: ScoreRecord,
     final_score: float,
     evaluation: EntryTimingEvaluation,
+    *,
+    manual_watchlist: bool = False,
 ) -> tuple[str, str]:
     reasons = ["OPENING_BREAKOUT"]
+    if manual_watchlist:
+        reasons.insert(0, "MANUAL_WATCHLIST")
     if score.news_score >= 60:
         reasons.append("NEWS_POSITIVE")
     if score.chart_score >= 60:
@@ -498,6 +511,10 @@ def _entry_reason(
     if evaluation.failed_log_reasons:
         detail += f", log {','.join(evaluation.failed_log_reasons)}"
     return "+".join(reasons), detail
+
+
+def _is_manual_source(source: str | None) -> bool:
+    return source in {"manual_buy_list", "both"}
 
 
 def _with_invested(account: AccountState, invested_usd: float) -> AccountState:

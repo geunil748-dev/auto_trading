@@ -44,5 +44,9 @@ class DryRunRuntime:
             repository=getattr(self.pipeline, "repository", None),
             trade_date=scoring.trade_date,
             source="dry_run",
+            source_by_ticker={
+                item.ticker: scoring.candidate_source(item.ticker)
+                for item in scoring.selected
+            },
         )
         return DryRunResult(account, scoring, tuple(intents))

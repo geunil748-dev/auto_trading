@@ -156,9 +156,15 @@ def test_compare_ranking_modes_cli_prints_and_writes_output(
     submitter_calls: list[str] = []
     db_schema_calls: list[str] = []
 
-    def fake_compare(settings: TradingSettings, kis_settings: KisSettings):
+    def fake_compare(
+        settings: TradingSettings,
+        kis_settings: KisSettings,
+        *,
+        include_manual: bool = False,
+    ):
         assert settings.ranking_selection_mode == "intersection"
         assert kis_settings.base_url == "https://mock.example"
+        assert include_manual is False
         return payload
 
     monkeypatch.setattr(sys, "argv", [
@@ -201,6 +207,45 @@ def test_compare_ranking_modes_cli_prints_and_writes_output(
     archive_file = archive_dir / "ranking_mode_compare_20260615_123456.json"
     assert json.loads(archive_file.read_text(encoding="utf-8")) == payload
     assert not archive_file.read_bytes().startswith(b"\xef\xbb\xbf")
+    assert json.loads(capsys.readouterr().out)["tradeDate"] == "2026-06-15"
+
+
+def test_compare_ranking_modes_cli_can_include_manual_watchlist(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    payload = {
+        "tradeDate": "2026-06-15",
+        "generatedAt": "2026-06-15T12:34:56+00:00",
+        "intersection": {"targets": [], "selected": [], "buyIntentTickers": []},
+        "composite": {"targets": [], "selected": [], "buyIntentTickers": []},
+        "diff": {},
+        "summary": {},
+    }
+    captured: list[bool] = []
+
+    def fake_compare(
+        _settings: TradingSettings,
+        _kis_settings: KisSettings,
+        *,
+        include_manual: bool = False,
+    ):
+        captured.append(include_manual)
+        return payload
+
+    monkeypatch.setattr(sys, "argv", [
+        "trading-bot",
+        "compare-ranking-modes",
+        "--include-manual",
+    ])
+    monkeypatch.setattr("trading_bot.cli.load_settings", lambda: _settings())
+    monkeypatch.setattr("trading_bot.cli.load_kis_settings", lambda: _kis_settings())
+    monkeypatch.setattr("trading_bot.cli.compare_ranking_modes", fake_compare)
+
+    main()
+
+    assert captured == [True]
     assert json.loads(capsys.readouterr().out)["tradeDate"] == "2026-06-15"
 
 

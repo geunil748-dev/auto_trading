@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date
 from time import perf_counter
 
@@ -16,6 +16,7 @@ from trading_bot.models import (
 from trading_bot.ports import (
     AccountReader,
     DailyRepository,
+    ManualBuyListSource,
     ScoringProvider,
     ScreeningMarketData,
     TradingClock,
@@ -24,14 +25,19 @@ from trading_bot.risk import global_entry_gate
 from trading_bot.scoring import select_candidates
 from trading_bot.screening import (
     composite_ranking_selection,
+    opening_screen_reason,
     ranking_intersection,
     screening_rejection_counts,
+    screening_priority_score,
 )
 
 CANDIDATE_EVAL_TARGET_REACHED = "target_reached"
 CANDIDATE_EVAL_MAX_REACHED = "max_evaluation_candidates_reached"
 CANDIDATE_EVAL_TIMEOUT = "timeout_budget_exceeded"
 CANDIDATE_EVAL_NO_MORE = "no_more_candidates"
+CANDIDATE_SOURCE_AUTO = "auto"
+CANDIDATE_SOURCE_BOTH = "both"
+CANDIDATE_SOURCE_MANUAL = "manual_buy_list"
 
 
 @dataclass(frozen=True)
@@ -40,10 +46,14 @@ class ScoringRun:
     blocked_reason: str | None
     targets: tuple[DailyTarget, ...]
     scores: tuple[DailyScore, ...]
+    candidate_sources: dict[str, str] = field(default_factory=dict)
 
     @property
     def selected(self) -> tuple[ScoreRecord, ...]:
         return tuple(item.score for item in self.scores if item.is_selected)
+
+    def candidate_source(self, ticker: str) -> str:
+        return self.candidate_sources.get(ticker, CANDIDATE_SOURCE_AUTO)
 
 
 @dataclass(frozen=True)
@@ -66,6 +76,15 @@ class CandidateEvaluationProgress:
     elapsed_ms: int
 
 
+@dataclass(frozen=True)
+class ManualCandidateProgress:
+    snapshots: dict[str, CandidateSnapshot]
+    candidates: list[CandidateSnapshot]
+    evaluated_tickers: set[str]
+    quote_requested_count: int
+    daily_requested_count: int
+
+
 class ScreeningScoringPipeline:
     def __init__(
         self,
@@ -75,6 +94,7 @@ class ScreeningScoringPipeline:
         repository: DailyRepository,
         clock: TradingClock,
         settings: TradingSettings,
+        manual_source: ManualBuyListSource | None = None,
     ) -> None:
         self.market_data = market_data
         self.scoring = scoring
@@ -82,6 +102,7 @@ class ScreeningScoringPipeline:
         self.repository = repository
         self.clock = clock
         self.settings = settings
+        self.manual_source = manual_source
 
     def run(self) -> ScoringRun:
         started_at = perf_counter()
@@ -163,9 +184,21 @@ class ScreeningScoringPipeline:
                 break
         initial_intersection_count = len(intersection_tickers)
         ranking_union_count = len(requested_tickers)
+        manual_progress = self._manual_candidate_progress(
+            snapshots,
+            active_profile.settings,
+            evaluated_tickers,
+        )
+        snapshots = manual_progress.snapshots
+        manual_candidates = manual_progress.candidates
+        evaluated_tickers = manual_progress.evaluated_tickers
+        quote_requested_count += manual_progress.quote_requested_count
+        daily_requested_count += manual_progress.daily_requested_count
+        candidates, candidate_sources = _merge_candidate_sources(candidates, manual_candidates)
         strict_shortfall = (
             not self.settings.allow_relaxed_candidate_filter
             and len(candidates) < self.settings.min_selected_candidates
+            and not manual_candidates
         )
         self._save_screening_diagnostics(
             requested_tickers,
@@ -257,7 +290,13 @@ class ScreeningScoringPipeline:
                     f"Screened {len(targets)} targets and selected 0.",
                 )
             )
-            return ScoringRun(trade_date, "STRICT_FILTER_NO_CANDIDATES", targets, ())
+            return ScoringRun(
+                trade_date,
+                "STRICT_FILTER_NO_CANDIDATES",
+                targets,
+                (),
+                candidate_sources,
+            )
 
         if not entry_gate.allowed:
             self._log_pipeline_diagnostics(
@@ -296,7 +335,7 @@ class ScreeningScoringPipeline:
                     f"Screened {len(targets)} targets and selected 0.",
                 )
             )
-            return ScoringRun(trade_date, entry_gate.reason, targets, ())
+            return ScoringRun(trade_date, entry_gate.reason, targets, (), candidate_sources)
 
         scored = [self.scoring.score(item) for item in candidates]
         scoring_settings = active_profile.settings
@@ -319,9 +358,7 @@ class ScreeningScoringPipeline:
                 1 for item in scored if item.total_score >= scoring_settings.min_total_score
             )
             self._log_relaxation_profile(active_profile, len(candidates))
-        selected_tickers = {
-            item.ticker for item in select_candidates(scored, scoring_settings)
-        }
+        selected_tickers = _selected_tickers_by_source(scored, scoring_settings, candidate_sources)
         scores = tuple(
             DailyScore(trade_date, item, item.ticker in selected_tickers)
             for item in scored
@@ -367,7 +404,7 @@ class ScreeningScoringPipeline:
                 f"Screened {len(targets)} targets and selected {len(selected_tickers)}.",
             )
         )
-        return ScoringRun(trade_date, None, targets, scores)
+        return ScoringRun(trade_date, None, targets, scores, candidate_sources)
 
     def _evaluate_ranked_candidates(
         self,
@@ -468,6 +505,81 @@ class ScreeningScoringPipeline:
             stopped_reason=stopped_reason,
             elapsed_ms=int((perf_counter() - eval_started_at) * 1000),
         )
+
+    def _manual_candidate_progress(
+        self,
+        snapshots,
+        settings: TradingSettings,
+        evaluated_tickers: set[str],
+    ) -> ManualCandidateProgress:
+        manual_tickers = self._manual_tickers()
+        if not manual_tickers:
+            return ManualCandidateProgress(dict(snapshots), [], set(evaluated_tickers), 0, 0)
+        candidate_snapshots = dict(snapshots)
+        evaluated = set(evaluated_tickers)
+        to_fetch = tuple(ticker for ticker in manual_tickers if ticker not in candidate_snapshots)
+        quote_requested_count = 0
+        daily_requested_count = 0
+        if to_fetch:
+            fetched = self.market_data.candidate_snapshots(to_fetch)
+            candidate_snapshots.update(fetched)
+            evaluated.update(to_fetch)
+            quote_requested_count = _last_snapshot_request_count(
+                self.market_data,
+                "last_quote_requested_count",
+                len(to_fetch),
+            )
+            daily_requested_count = _last_snapshot_request_count(
+                self.market_data,
+                "last_daily_requested_count",
+                len(to_fetch),
+            )
+        candidates = [
+            candidate_snapshots[ticker]
+            for ticker in manual_tickers
+            if ticker in candidate_snapshots
+            and opening_screen_reason(candidate_snapshots[ticker], settings) is None
+        ]
+        candidates.sort(key=lambda item: (-screening_priority_score(item), item.ticker))
+        self._safe_log(
+            BotLog(
+                "INFO",
+                "screening",
+                "[MANUAL_BUY_LIST] "
+                f"enabled_count={len(manual_tickers)} "
+                f"passed_filter_count={len(candidates)}",
+            )
+        )
+        return ManualCandidateProgress(
+            candidate_snapshots,
+            candidates,
+            evaluated,
+            quote_requested_count,
+            daily_requested_count,
+        )
+
+    def _manual_tickers(self) -> tuple[str, ...]:
+        if not self.settings.manual_buy_list_enabled or self.manual_source is None:
+            return ()
+        try:
+            tickers = tuple(str(ticker).upper() for ticker in self.manual_source.enabled_tickers())
+        except Exception as exc:
+            self._safe_log(
+                BotLog(
+                    "WARNING",
+                    "screening",
+                    f"MANUAL_BUY_LIST_READ_FAILED: {type(exc).__name__}",
+                    reject_reason="MANUAL_BUY_LIST_READ_FAILED",
+                )
+            )
+            return ()
+        unique: list[str] = []
+        seen: set[str] = set()
+        for ticker in tickers:
+            if ticker and ticker not in seen:
+                unique.append(ticker)
+                seen.add(ticker)
+        return tuple(unique[: max(self.settings.max_manual_buy_tickers, 0)])
 
     def _select_ranked_candidates(
         self,
@@ -675,6 +787,48 @@ def _expanded_tickers(gainers, turnover, rank_limit: int) -> set[str]:
         for item in tuple(gainers) + tuple(turnover)
         if item.rank <= rank_limit
     }
+
+
+def _merge_candidate_sources(
+    auto_candidates: list[CandidateSnapshot],
+    manual_candidates: list[CandidateSnapshot],
+) -> tuple[list[CandidateSnapshot], dict[str, str]]:
+    merged = list(auto_candidates)
+    sources = {item.ticker: CANDIDATE_SOURCE_AUTO for item in auto_candidates}
+    existing = {item.ticker for item in auto_candidates}
+    for item in manual_candidates:
+        if item.ticker in existing:
+            sources[item.ticker] = CANDIDATE_SOURCE_BOTH
+            continue
+        merged.append(item)
+        sources[item.ticker] = CANDIDATE_SOURCE_MANUAL
+        existing.add(item.ticker)
+    return merged, sources
+
+
+def _selected_tickers_by_source(
+    scored: list[ScoreRecord],
+    settings: TradingSettings,
+    candidate_sources: dict[str, str],
+) -> set[str]:
+    auto_scores = [
+        item
+        for item in scored
+        if candidate_sources.get(item.ticker, CANDIDATE_SOURCE_AUTO)
+        in {CANDIDATE_SOURCE_AUTO, CANDIDATE_SOURCE_BOTH}
+    ]
+    manual_scores = [
+        item
+        for item in scored
+        if candidate_sources.get(item.ticker) in {CANDIDATE_SOURCE_MANUAL, CANDIDATE_SOURCE_BOTH}
+    ]
+    auto_selected = {item.ticker for item in select_candidates(auto_scores, settings)}
+    manual_settings = replace(
+        settings,
+        max_selected_candidates=max(settings.max_manual_selected_candidates, 0),
+    )
+    manual_selected = {item.ticker for item in select_candidates(manual_scores, manual_settings)}
+    return auto_selected | manual_selected
 
 
 def _with_missing_ranks(rows, tickers: set[str]):

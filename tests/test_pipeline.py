@@ -75,6 +75,37 @@ class MarketData:
         }
 
 
+class ManualSource:
+    def __init__(self, tickers: tuple[str, ...]) -> None:
+        self.tickers = tickers
+
+    def enabled_tickers(self) -> tuple[str, ...]:
+        return self.tickers
+
+
+class ManualMarketData(MarketData):
+    def ranked_gainers(self, limit: int | None = None) -> tuple[RankedStock, ...]:
+        return tuple(RankedStock(f"AUTO{index}", index + 1) for index in range(10))
+
+    def ranked_turnover(self, limit: int | None = None) -> tuple[RankedStock, ...]:
+        return tuple(RankedStock(f"AUTO{index}", index + 1) for index in range(10))
+
+    def ranked_trade_value(self, limit: int | None = None) -> tuple[RankedStock, ...]:
+        return ()
+
+    def candidate_snapshots(self, tickers) -> dict[str, CandidateSnapshot]:
+        batch = tuple(tickers)
+        self.snapshot_requests.append(batch)
+        result = {
+            ticker: snapshot(ticker)
+            for ticker in batch
+            if ticker.startswith("AUTO") or ticker in {"MAN1", "MAN2", "LOWVOL", "LOWSCORE"}
+        }
+        if "LOWVOL" in result:
+            result["LOWVOL"] = snapshot("LOWVOL", volume_ratio=0.5)
+        return result
+
+
 class CompositeRankingMarketData:
     def __init__(self) -> None:
         self.snapshot_requests: list[tuple[str, ...]] = []
@@ -220,6 +251,8 @@ class Scoring:
 
     def score(self, candidate: CandidateSnapshot) -> ScoreRecord:
         self.called += 1
+        if candidate.ticker == "LOWSCORE":
+            return ScoreRecord(candidate.ticker, news_score=0, chart_score=10)
         return ScoreRecord(candidate.ticker, news_score=95, chart_score=80)
 
 
@@ -255,6 +288,7 @@ def snapshot(
 def run_pipeline(
     market_data,
     settings: TradingSettings | None = None,
+    manual_source=None,
 ) -> tuple:
     repository = Repository()
     scoring = Scoring()
@@ -265,6 +299,7 @@ def run_pipeline(
         repository,
         FixedClock(),
         settings or TradingSettings(),
+        manual_source=manual_source,
     ).run()
     return run, repository, scoring
 
@@ -340,6 +375,74 @@ def test_pipeline_composite_mode_uses_trade_value_ranking() -> None:
     message = pipeline_log(repository)
     assert "ranking_selection_mode=composite" in message
     assert "final_selected_count=2" in message
+
+
+def test_pipeline_adds_manual_candidates_without_reducing_auto_selection() -> None:
+    market_data = ManualMarketData(MarketContext(101, 100, 0.01))
+
+    run, repository, _ = run_pipeline(
+        market_data,
+        TradingSettings(
+            min_selected_candidates=1,
+            max_selected_candidates=2,
+            max_manual_selected_candidates=2,
+            target_filtered_candidates=2,
+        ),
+        manual_source=ManualSource(("MAN1", "MAN2")),
+    )
+
+    assert {item.ticker for item in run.selected} == {"AUTO0", "AUTO1", "MAN1", "MAN2"}
+    assert run.candidate_source("AUTO0") == "auto"
+    assert run.candidate_source("MAN1") == "manual_buy_list"
+    assert "MAN1" in {item.candidate.ticker for item in repository.targets}
+    assert "MAN2" in {item.candidate.ticker for item in repository.targets}
+    assert any(
+        log.message == "[MANUAL_BUY_LIST] enabled_count=2 passed_filter_count=2"
+        for log in repository.logs
+    )
+
+
+def test_pipeline_filters_manual_candidates_with_existing_opening_rules() -> None:
+    market_data = ManualMarketData(MarketContext(101, 100, 0.01))
+
+    run, repository, _ = run_pipeline(
+        market_data,
+        TradingSettings(
+            min_selected_candidates=1,
+            max_selected_candidates=2,
+            max_manual_selected_candidates=2,
+            min_volume_ratio=1.0,
+            target_filtered_candidates=2,
+        ),
+        manual_source=ManualSource(("LOWVOL",)),
+    )
+
+    assert "LOWVOL" not in {item.candidate.ticker for item in repository.targets}
+    assert "LOWVOL" not in {item.ticker for item in run.selected}
+    assert any(
+        log.message == "[MANUAL_BUY_LIST] enabled_count=1 passed_filter_count=0"
+        for log in repository.logs
+    )
+
+
+def test_pipeline_manual_low_score_candidate_is_not_selected() -> None:
+    market_data = ManualMarketData(MarketContext(101, 100, 0.01))
+
+    run, repository, _ = run_pipeline(
+        market_data,
+        TradingSettings(
+            min_selected_candidates=1,
+            max_selected_candidates=1,
+            max_manual_selected_candidates=1,
+            min_total_score=35,
+            target_filtered_candidates=1,
+        ),
+        manual_source=ManualSource(("LOWSCORE",)),
+    )
+
+    assert "LOWSCORE" in {item.score.ticker for item in repository.scores}
+    assert "LOWSCORE" not in {item.ticker for item in run.selected}
+    assert run.candidate_source("LOWSCORE") == "manual_buy_list"
 
 
 def test_pipeline_passes_custom_ranking_limits_to_market_data() -> None:

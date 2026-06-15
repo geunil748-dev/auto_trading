@@ -30,7 +30,7 @@ def recheck_fixed_watchlist(
     repository,
 ) -> DryRunResult:
     account = runtime.accounts.current_account()
-    selected = latest_result.scoring.selected[: settings.opening_fixed_candidate_limit]
+    selected = fixed_recheck_selected_scores(latest_result, settings)
     breakout_inputs = {
         item.ticker: runtime.breakout.breakout_input(item.ticker)
         for item in selected
@@ -43,6 +43,7 @@ def recheck_fixed_watchlist(
         repository=repository,
         trade_date=scoring_trade_date(latest_result.scoring),
         source="fixed_recheck",
+        source_by_ticker=_source_by_ticker(latest_result.scoring, selected, "fixed_recheck"),
     )
     return DryRunResult(account, latest_result.scoring, tuple(intents))
 
@@ -68,8 +69,34 @@ def hybrid_recheck(
         repository=repository,
         trade_date=scoring_trade_date(refreshed.scoring),
         source="hybrid_recheck",
+        source_by_ticker=_hybrid_source_by_ticker(
+            opening_result.scoring,
+            refreshed.scoring,
+            selected,
+            "hybrid_recheck",
+        ),
     )
     return DryRunResult(account, refreshed.scoring, tuple(intents))
+
+
+def fixed_recheck_selected_scores(
+    latest_result: DryRunResult,
+    settings: TradingSettings,
+) -> tuple:
+    auto = [
+        score
+        for score in latest_result.scoring.selected
+        if _candidate_source(latest_result.scoring, score.ticker) not in {"manual_buy_list", "both"}
+    ][: settings.opening_fixed_candidate_limit]
+    selected = {score.ticker: score for score in auto}
+    manual = [
+        score
+        for score in latest_result.scoring.selected
+        if _candidate_source(latest_result.scoring, score.ticker) in {"manual_buy_list", "both"}
+    ][: settings.max_manual_selected_candidates]
+    for score in manual:
+        selected.setdefault(score.ticker, score)
+    return tuple(selected.values())
 
 
 def hybrid_selected_scores(
@@ -78,7 +105,7 @@ def hybrid_selected_scores(
     settings: TradingSettings,
 ) -> tuple:
     combined = {}
-    for score in opening_result.scoring.selected[: settings.opening_fixed_candidate_limit]:
+    for score in fixed_recheck_selected_scores(opening_result, settings):
         combined[score.ticker] = score
     intraday_ranked = sorted(
         refreshed.scoring.selected,
@@ -99,6 +126,7 @@ def plan_buy_intents_with_evaluation(
     repository,
     trade_date,
     source: str,
+    source_by_ticker=None,
 ) -> list[BuyIntent]:
     try:
         return plan_buy_intents(
@@ -109,11 +137,36 @@ def plan_buy_intents_with_evaluation(
             repository=repository,
             trade_date=trade_date,
             source=source,
+            source_by_ticker=source_by_ticker,
         )
     except TypeError as exc:
         if "unexpected keyword" not in str(exc):
             raise
         return plan_buy_intents(selected, breakout_inputs, account, settings)
+
+
+def _source_by_ticker(scoring, selected, default: str) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for score in selected:
+        source = _candidate_source(scoring, score.ticker)
+        result[score.ticker] = source if source in {"manual_buy_list", "both"} else default
+    return result
+
+
+def _hybrid_source_by_ticker(opening_scoring, refreshed_scoring, selected, default: str) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for score in selected:
+        source = _candidate_source(refreshed_scoring, score.ticker)
+        if source not in {"manual_buy_list", "both"}:
+            source = _candidate_source(opening_scoring, score.ticker)
+        result[score.ticker] = source if source in {"manual_buy_list", "both"} else default
+    return result
+
+
+def _candidate_source(scoring, ticker: str) -> str:
+    if hasattr(scoring, "candidate_source"):
+        return scoring.candidate_source(ticker)
+    return "auto"
 
 
 def scoring_trade_date(scoring) -> object:

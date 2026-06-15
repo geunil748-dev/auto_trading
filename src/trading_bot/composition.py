@@ -24,6 +24,7 @@ from trading_bot.runtime import DryRunRuntime
 from trading_bot.sentiment import KeywordHeadlineSentiment
 from trading_bot.sell_execution import SellIntentExecutor
 from trading_bot.list_buy_planner import collect_ranked_buy_intents
+from trading_bot.manual_buy_list import FileManualBuyListSource
 
 
 def build_live_dry_run(
@@ -55,6 +56,11 @@ def build_live_dry_run(
         repository,
         SystemClock(),
         settings,
+        manual_source=FileManualBuyListSource(
+            settings.manual_buy_list_path,
+            enabled=settings.manual_buy_list_enabled,
+            max_tickers=settings.max_manual_buy_tickers,
+        ),
     )
     return (
         DryRunRuntime(pipeline, accounts, KisBreakoutHistory(kis), settings),
