@@ -355,6 +355,63 @@ def test_pipeline_screens_scores_and_persists_selected_candidates() -> None:
     assert any(message.startswith("[PIPELINE_SUMMARY]") for message in messages)
 
 
+def test_pipeline_sends_candidate_notification_after_scores_are_saved() -> None:
+    market_data = MarketData(MarketContext(101, 100, 0.01))
+    repository = Repository()
+    notifications = []
+
+    run = ScreeningScoringPipeline(
+        market_data,
+        Scoring(),
+        AccountReader(account()),
+        repository,
+        FixedClock(),
+        TradingSettings(min_selected_candidates=2),
+        candidate_notification_sender=lambda trade_date, targets, scores: notifications.append(
+            (trade_date, targets, scores)
+        )
+        or True,
+    ).run()
+
+    assert run.blocked_reason is None
+    assert len(notifications) == 1
+    trade_date, targets, scores = notifications[0]
+    assert trade_date == date(2026, 5, 22)
+    assert [item.candidate.ticker for item in targets] == ["AAA", "BBB"]
+    assert [item.score.ticker for item in scores] == ["AAA", "BBB"]
+    assert any(
+        log.message == "CANDIDATE_LIST_TELEGRAM_SENT: 후보 리스트 텔레그램 발송 완료"
+        and log.reject_reason == "CANDIDATE_LIST_TELEGRAM_SENT"
+        for log in repository.logs
+    )
+
+
+def test_pipeline_keeps_running_when_candidate_notification_fails() -> None:
+    market_data = MarketData(MarketContext(101, 100, 0.01))
+    repository = Repository()
+
+    def fail_notification(*_args) -> bool:
+        raise RuntimeError("telegram token secret")
+
+    run = ScreeningScoringPipeline(
+        market_data,
+        Scoring(),
+        AccountReader(account()),
+        repository,
+        FixedClock(),
+        TradingSettings(min_selected_candidates=2),
+        candidate_notification_sender=fail_notification,
+    ).run()
+
+    assert run.blocked_reason is None
+    assert [item.candidate.ticker for item in repository.targets] == ["AAA", "BBB"]
+    failure_log = next(
+        log for log in repository.logs if log.reject_reason == "CANDIDATE_LIST_TELEGRAM_FAILED"
+    )
+    assert failure_log.message == "CANDIDATE_LIST_TELEGRAM_FAILED: RuntimeError"
+    assert "secret" not in failure_log.message
+
+
 def test_pipeline_composite_mode_uses_trade_value_ranking() -> None:
     market_data = CompositeRankingMarketData()
 

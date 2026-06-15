@@ -12,6 +12,7 @@ from trading_bot.composition import (
     build_mock_buy_executor,
     build_mock_sell_executor,
 )
+from trading_bot.candidate_notifications import send_candidate_list_notification
 from trading_bot.config import (
     KisSettings,
     TradingSettings,
@@ -94,7 +95,11 @@ def live_mock_tasks(
             _write_closed_state(monitor_state)
             return "미국 휴장일이라 후보 점검을 건너뜁니다."
         current_settings = _current_settings(settings)
-        runtime, repository = build_live_dry_run(current_settings, kis_settings)
+        runtime, repository = build_live_dry_run(
+            current_settings,
+            kis_settings,
+            candidate_notification_sender=_daily_candidate_notification_sender(latest),
+        )
         latest.result = runtime.run()
         latest.repository = repository
         latest.opening_result = latest.result
@@ -412,6 +417,17 @@ class _LatestRunState:
         self.opening_result = None
         self.opening_trade_date = None
         self.opening_fixed_mode = False
+        self.candidate_notification_dates: set[object] = set()
+
+
+def _daily_candidate_notification_sender(latest: _LatestRunState):
+    def send_once(trade_date, targets, scores) -> bool:
+        if trade_date in latest.candidate_notification_dates:
+            return False
+        latest.candidate_notification_dates.add(trade_date)
+        return send_candidate_list_notification(trade_date, targets, scores)
+
+    return send_once
 
 
 def _write_live_state(

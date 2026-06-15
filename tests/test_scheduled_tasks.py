@@ -602,6 +602,46 @@ def test_market_closed_skips_scheduled_trading_and_writes_monitor_state(tmp_path
     assert "\ubbf8\uad6d \uac70\ub798\uc77c" in state_path.read_text(encoding="utf-8")
 
 
+def test_dry_run_wires_daily_once_candidate_notification(monkeypatch, tmp_path) -> None:
+    captured_kwargs = []
+    candidate_calls = []
+
+    class Result:
+        scoring = type("Scoring", (), {"selected": ()})()
+
+    class Runtime:
+        def run(self):
+            return Result()
+
+    def fake_build_live_dry_run(settings, kis_settings, **kwargs):
+        captured_kwargs.append(kwargs)
+        return Runtime(), "repository"
+
+    monkeypatch.setattr("trading_bot.scheduled_tasks.build_live_dry_run", fake_build_live_dry_run)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.state_from_dry_run", lambda result: {})
+    monkeypatch.setattr("trading_bot.scheduled_tasks._write_state_file", lambda *_args: None)
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_candidate_list_notification",
+        lambda trade_date, targets, scores: candidate_calls.append((trade_date, targets, scores))
+        or True,
+    )
+
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+    )
+
+    tasks.dry_run()
+
+    sender = captured_kwargs[0]["candidate_notification_sender"]
+    trade_date = date(2026, 6, 8)
+    assert sender(trade_date, (), ()) is True
+    assert sender(trade_date, (), ()) is False
+    assert candidate_calls == [(trade_date, (), ())]
+
+
 def test_intraday_watch_submits_one_exit_and_remembers_pending_sells(
     monkeypatch,
     tmp_path,
@@ -718,7 +758,7 @@ def test_intraday_recheck_can_reuse_fixed_watchlist(monkeypatch, tmp_path) -> No
     runtime.run = run_once
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_live_dry_run",
-        lambda settings, kis_settings: (runtime, "repository"),
+        lambda settings, kis_settings, **_kwargs: (runtime, "repository"),
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_mock_buy_executor",
@@ -773,7 +813,7 @@ def test_fixed_watchlist_waits_for_next_opening_collection(monkeypatch, tmp_path
     runtime.run = run_once
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_live_dry_run",
-        lambda settings, kis_settings: (runtime, "repository"),
+        lambda settings, kis_settings, **_kwargs: (runtime, "repository"),
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_mock_buy_executor",
@@ -832,7 +872,7 @@ def test_intraday_recheck_hybrid_merges_opening_and_refresh_candidates(monkeypat
     executor = RecordingExecutor()
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_live_dry_run",
-        lambda settings, kis_settings: (runtime, "repository"),
+        lambda settings, kis_settings, **_kwargs: (runtime, "repository"),
     )
     monkeypatch.setattr(
         "trading_bot.scheduled_tasks.build_mock_buy_executor",
