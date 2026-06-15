@@ -11,6 +11,8 @@ TEXT_PATHS = [
     ROOT / "README.md",
     ROOT / "db",
 ]
+TEXT_SUFFIXES = {".py", ".ps1", ".sql", ".txt", ".md", ".json", ".html", ".js", ".css", ".bat"}
+SKIP_DIRS = {".git", ".venv", ".pytest_cache", "__pycache__", "build", "dist"}
 MOJIBAKE_MARKERS = tuple(
     "".join(chr(codepoint) for codepoint in item)
     for item in (
@@ -34,6 +36,21 @@ MOJIBAKE_MARKERS = tuple(
         (0x00EB, 0x00AA),
     )
 )
+
+
+def test_text_files_are_utf8_without_bom() -> None:
+    offenders: list[str] = []
+    for path in _text_files():
+        data = path.read_bytes()
+        if data.startswith(b"\xef\xbb\xbf"):
+            offenders.append(f"{path.relative_to(ROOT)} has UTF-8 BOM")
+            continue
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            offenders.append(f"{path.relative_to(ROOT)} is not UTF-8: byte {exc.start}")
+
+    assert offenders == []
 
 
 def test_user_facing_text_has_no_known_mojibake() -> None:
@@ -75,6 +92,6 @@ def _text_files() -> list[Path]:
         files.extend(
             path
             for path in root.rglob("*")
-            if path.suffix in {".py", ".js", ".html", ".css", ".md", ".sql", ".ps1"}
+            if path.suffix in TEXT_SUFFIXES and not any(part in SKIP_DIRS for part in path.parts)
         )
     return files

@@ -1,4 +1,7 @@
 $ErrorActionPreference = "Stop"
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
 
 $root = Split-Path -Parent $PSScriptRoot
 $sourceDir = Join-Path $root "mobile\stock_monitor_app"
@@ -64,7 +67,7 @@ try {
     $manifestText = Get-Content -LiteralPath $manifest -Raw
     if ($manifestText -notmatch "android.permission.INTERNET") {
         $manifestText = $manifestText -replace "<manifest([^>]*)>", "<manifest`$1>`n    <uses-permission android:name=`"android.permission.INTERNET`" />"
-        Set-Content -LiteralPath $manifest -Encoding utf8 -Value $manifestText
+        [System.IO.File]::WriteAllText((Resolve-Path -LiteralPath $manifest).Path, $manifestText, $utf8NoBom)
     }
 
     & $flutter pub get

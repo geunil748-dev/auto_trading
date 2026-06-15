@@ -11,6 +11,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
 
 # First-run setup script for a new Windows PC or local server notebook.
 # Secrets are copied into .env locally and must never be committed.
