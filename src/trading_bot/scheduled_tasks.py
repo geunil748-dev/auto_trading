@@ -382,9 +382,9 @@ def _risk_guard_no_order_diagnostics(
     ]
 
 
-def _send_fill_notifications(records: list[FillRecord], holdings: list[object]) -> None:
+def _send_fill_notifications(records: list[FillRecord], holdings: list[object]) -> int:
     try:
-        send_fill_notifications(records, holdings)
+        return send_fill_notifications(records, holdings)
     except Exception as exc:
         safe_scheduler_log(
             "WARNING",
@@ -393,7 +393,7 @@ def _send_fill_notifications(records: list[FillRecord], holdings: list[object]) 
             reject_reason="FILL_NOTIFICATION_FAILED",
         )
         # 체결 알림 실패는 주문/DB 저장 흐름과 분리한다.
-        return
+        return 0
 
 
 def _candidate_mode(settings: TradingSettings) -> str:

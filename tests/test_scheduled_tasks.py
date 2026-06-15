@@ -73,6 +73,7 @@ class RecordingExecutor:
 class SnapshotRepository:
     def __init__(self) -> None:
         self.fills: list[FillRecord] = []
+        self.notification_sent: list[FillRecord] = []
         self.entry_snapshots = []
         self.updated_prices: dict[str, float] = {}
         self.final_updates: list[date] = []
@@ -97,6 +98,12 @@ class SnapshotRepository:
 
     def save_fills(self, fills):
         self.fills.extend(fills)
+
+    def pending_fill_notifications(self, fills):
+        return list(fills)
+
+    def mark_fill_notifications_sent(self, fills):
+        self.notification_sent.extend(fills)
 
     def save_entry_profit_snapshots(self, snapshots):
         self.entry_snapshots.extend(snapshots)
