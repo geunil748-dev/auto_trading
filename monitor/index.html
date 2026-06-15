@@ -86,25 +86,6 @@
           </dl>
         </section>
 
-        <section class="global-entry-summary metric-grid" aria-label="전역 진입 상태">
-          <dl>
-            <dt>전역 진입 상태</dt>
-            <dd id="globalEntryGateStatus">-</dd>
-          </dl>
-          <dl>
-            <dt>사유</dt>
-            <dd id="globalEntryGateReason">-</dd>
-          </dl>
-          <dl>
-            <dt>영향</dt>
-            <dd id="globalEntryGateEffect">-</dd>
-          </dl>
-          <dl>
-            <dt>코드</dt>
-            <dd id="globalEntryGateCode">-</dd>
-          </dl>
-        </section>
-
         <p class="account-error" id="accountError" hidden></p>
 
         <section class="history-bar" aria-label="DB 기록 조회">
@@ -123,10 +104,6 @@
                 <p class="eyebrow">API 수집</p>
                 <h2>리스트업 종목</h2>
               </div>
-              <div class="panel-actions">
-                <span class="button-spinner external-spinner" data-spinner-for="refreshTargets" aria-hidden="true"></span>
-                <button id="refreshTargets" class="ghost-action" type="button">새로고침</button>
-              </div>
             </div>
             <div class="table-wrap">
               <table class="data-table">
@@ -142,9 +119,6 @@
                     <th>러너</th>
                     <th>노이즈</th>
                     <th>상태</th>
-                    <th>15분 최종점수</th>
-                    <th>매수 판단</th>
-                    <th>사유</th>
                   </tr>
                 </thead>
                 <tbody id="targetRows"></tbody>

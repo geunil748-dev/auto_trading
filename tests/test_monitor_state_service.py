@@ -118,25 +118,3 @@ def test_dashboard_state_reader_masks_sql_error_on_fallback(tmp_path, monkeypatc
     assert payload["sql"]["connected"] is False
     assert "secret-token" not in payload["sql"]["error"]
     assert "***" in payload["sql"]["error"]
-
-
-def test_dashboard_state_reader_exposes_global_entry_gate(tmp_path) -> None:
-    state = tmp_path / "state.json"
-    state.write_text('{"account":{"cashUsd":"$1.00"}}', encoding="utf-8")
-
-    class SqlReader:
-        def read(self) -> dict[str, object]:
-            return {
-                "account": {"cashUsd": "$2.00"},
-                "globalEntryGate": {
-                    "status": "BLOCKED",
-                    "reason": "MARKET_BELOW_MA20",
-                },
-            }
-
-    payload = DashboardStateReader(SqlReader(), MonitorStateReader(state)).read()
-
-    assert payload["globalEntryGate"] == {
-        "status": "BLOCKED",
-        "reason": "MARKET_BELOW_MA20",
-    }

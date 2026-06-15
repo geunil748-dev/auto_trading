@@ -14,15 +14,10 @@ from trading_bot.adapters.scoring import NewsChartScoringProvider
 from trading_bot.adapters.yahoo_news import YahooFinanceNewsSource
 from trading_bot.clocks import SystemClock
 from trading_bot.config import KisSettings, TradingSettings
-from trading_bot.intraday_backtest_data import YahooIntradayPriceSource
 from trading_bot.models import BotLog
 from trading_bot.order_execution import BuyIntentExecutor
 from trading_bot.persistence import build_daily_repository, build_news_cache_repository
-from trading_bot.pipeline import (
-    CandidateNotificationSender,
-    EntryGateBlockedNotificationSender,
-    ScreeningScoringPipeline,
-)
+from trading_bot.pipeline import ScreeningScoringPipeline
 from trading_bot.ports import DailyRepository
 from trading_bot.quote_polling import PollingExitMonitor
 from trading_bot.runtime import DryRunRuntime
@@ -35,9 +30,6 @@ from trading_bot.manual_buy_list import FileManualBuyListSource
 def build_live_dry_run(
     settings: TradingSettings,
     kis_settings: KisSettings,
-    *,
-    candidate_notification_sender: CandidateNotificationSender | None = None,
-    entry_gate_blocked_notification_sender: EntryGateBlockedNotificationSender | None = None,
 ) -> tuple[DryRunRuntime, DailyRepository]:
     kis = KisOverseasClient(KisJsonClient(kis_settings))
     accounts = KisAccountReader(kis, kis_settings)
@@ -69,16 +61,9 @@ def build_live_dry_run(
             enabled=settings.manual_buy_list_enabled,
             max_tickers=settings.max_manual_buy_tickers,
         ),
-        candidate_notification_sender=candidate_notification_sender,
-        entry_gate_blocked_notification_sender=entry_gate_blocked_notification_sender,
     )
     return (
-        DryRunRuntime(
-            pipeline,
-            accounts,
-            KisBreakoutHistory(kis, YahooIntradayPriceSource()),
-            settings,
-        ),
+        DryRunRuntime(pipeline, accounts, KisBreakoutHistory(kis), settings),
         repository,
     )
 

@@ -19,8 +19,6 @@ class SnapshotRepository:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.fills: list[FillRecord] = []
-        self.pending_fills: list[FillRecord] | None = None
-        self.notification_sent: list[FillRecord] = []
         self.entry_snapshots = []
         self.updated_prices: dict[str, float] = {}
         self.final_updates: list[date] = []
@@ -49,14 +47,6 @@ class SnapshotRepository:
     def save_fills(self, fills):
         self.calls.append("fills")
         self.fills.extend(fills)
-
-    def pending_fill_notifications(self, fills):
-        self.calls.append("pending_notifications")
-        return list(fills) if self.pending_fills is None else self.pending_fills
-
-    def mark_fill_notifications_sent(self, fills):
-        self.calls.append("mark_notifications")
-        self.notification_sent.extend(fills)
 
     def save_entry_profit_snapshots(self, snapshots):
         self.calls.append("entry_snapshots")
@@ -174,6 +164,7 @@ def test_persist_live_snapshot_keeps_save_order_and_fill_callback(monkeypatch) -
     monkeypatch.setattr("trading_bot.scheduler_state.current_trade_date", lambda: date(2026, 6, 5))
     monkeypatch.setattr("trading_bot.scheduler_state.load_settings", lambda: TradingSettings())
     monkeypatch.setattr("trading_bot.scheduler_state.fill_records_from_monitor_rows", lambda *args, **kwargs: records)
+    monkeypatch.setattr("trading_bot.scheduler_state.new_fill_records", lambda records, keys: records)
     monkeypatch.setattr("trading_bot.scheduler_state.save_daily_run_summary", lambda *args: summaries.append(args))
 
     error = persist_live_snapshot(
@@ -193,10 +184,9 @@ def test_persist_live_snapshot_keeps_save_order_and_fill_callback(monkeypatch) -
         "holdings",
         "entry_prices",
         "entry_reasons",
+        "history_fills",
         "fills",
         "entry_snapshots",
-        "pending_notifications",
-        "mark_notifications",
         "update_snapshots",
         "finals",
     ]
@@ -206,40 +196,6 @@ def test_persist_live_snapshot_keeps_save_order_and_fill_callback(monkeypatch) -
     assert repository.final_updates == [date(2026, 6, 5)]
     assert summaries
     assert notifications == [(records, [{"ticker": "AAA", "closePrice": "$11.00"}])]
-    assert repository.notification_sent == records
-
-
-def test_persist_live_snapshot_skips_already_notified_fills(monkeypatch) -> None:
-    repository = SnapshotRepository()
-    repository.pending_fills = []
-    notifications = []
-    records = [
-        FillRecord(
-            trade_date=date(2026, 6, 5),
-            ticker="AAA",
-            side="BUY",
-            quantity=3,
-            fill_price_usd=10.5,
-            fill_amount_usd=31.5,
-            fill_time="22:35:00",
-        )
-    ]
-
-    monkeypatch.setattr("trading_bot.scheduler_state.SqlServerDailyRepository", lambda connect: repository)
-    monkeypatch.setattr("trading_bot.scheduler_state.pyodbc_connect_factory", lambda: object)
-    monkeypatch.setattr("trading_bot.scheduler_state.current_trade_date", lambda: date(2026, 6, 5))
-    monkeypatch.setattr("trading_bot.scheduler_state.load_settings", lambda: TradingSettings())
-    monkeypatch.setattr("trading_bot.scheduler_state.fill_records_from_monitor_rows", lambda *args, **kwargs: records)
-
-    error = persist_live_snapshot(
-        {"account": {}, "orders": [], "holdings": [], "fills": [{"ticker": "AAA"}]},
-        send_fill_notifications_func=lambda records, holdings: notifications.append((records, holdings)),
-    )
-
-    assert error == ""
-    assert repository.fills == records
-    assert notifications == []
-    assert repository.notification_sent == []
 
 
 def test_persist_live_snapshot_returns_blank_for_value_error(monkeypatch) -> None:
