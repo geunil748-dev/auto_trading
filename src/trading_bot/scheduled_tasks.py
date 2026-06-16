@@ -424,8 +424,10 @@ def _daily_candidate_notification_sender(latest: _LatestRunState):
     def send_once(trade_date, targets, scores) -> bool:
         if trade_date in latest.candidate_notification_dates:
             return False
-        latest.candidate_notification_dates.add(trade_date)
-        return send_candidate_list_notification(trade_date, targets, scores)
+        sent = send_candidate_list_notification(trade_date, targets, scores)
+        if sent:
+            latest.candidate_notification_dates.add(trade_date)
+        return sent
 
     return send_once
 

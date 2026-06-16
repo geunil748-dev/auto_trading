@@ -649,6 +649,51 @@ def test_dry_run_wires_daily_once_candidate_notification(monkeypatch, tmp_path) 
     assert candidate_calls == [(trade_date, (), ())]
 
 
+def test_daily_candidate_notification_retries_after_send_failure(monkeypatch, tmp_path) -> None:
+    captured_kwargs = []
+    candidate_results = [False, True]
+    candidate_calls = []
+
+    class Result:
+        scoring = type("Scoring", (), {"selected": ()})()
+
+    class Runtime:
+        def run(self):
+            return Result()
+
+    def fake_build_live_dry_run(settings, kis_settings, **kwargs):
+        captured_kwargs.append(kwargs)
+        return Runtime(), "repository"
+
+    def fake_send_candidate(trade_date, targets, scores):
+        candidate_calls.append((trade_date, targets, scores))
+        return candidate_results.pop(0)
+
+    monkeypatch.setattr("trading_bot.scheduled_tasks.build_live_dry_run", fake_build_live_dry_run)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.state_from_dry_run", lambda result: {})
+    monkeypatch.setattr("trading_bot.scheduled_tasks._write_state_file", lambda *_args: None)
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_candidate_list_notification",
+        fake_send_candidate,
+    )
+
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+    )
+
+    tasks.dry_run()
+
+    sender = captured_kwargs[0]["candidate_notification_sender"]
+    trade_date = date(2026, 6, 8)
+    assert sender(trade_date, (), ()) is False
+    assert sender(trade_date, (), ()) is True
+    assert sender(trade_date, (), ()) is False
+    assert len(candidate_calls) == 2
+
+
 def test_intraday_watch_submits_one_exit_and_remembers_pending_sells(
     monkeypatch,
     tmp_path,
