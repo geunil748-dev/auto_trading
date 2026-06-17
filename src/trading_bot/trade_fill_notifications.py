@@ -93,6 +93,9 @@ def send_market_close_report_from_records(
     records: Iterable[FillRecord],
     holdings: Iterable[object],
     sender: MessageSender | None = None,
+    *,
+    cumulative_realized_pnl: float | None = None,
+    cumulative_realized_rate: float | None = None,
 ) -> bool:
     holding_map = _holding_map(holdings)
     notifier = TradeNotifier(
@@ -112,7 +115,10 @@ def send_market_close_report_from_records(
         for code, item in holding_map.items()
         if item["qty"] > 0 and item["avg_price"] > 0
     }
-    return notifier.send_market_close_report()
+    return notifier.send_market_close_report(
+        cumulative_realized_pnl=cumulative_realized_pnl,
+        cumulative_realized_rate=cumulative_realized_rate,
+    )
 
 
 def _seed_position_for_fill(

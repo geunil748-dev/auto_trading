@@ -167,7 +167,12 @@ class TradeNotifier:
             )
         )
 
-    def send_market_close_report(self) -> bool:
+    def send_market_close_report(
+        self,
+        *,
+        cumulative_realized_pnl: float | None = None,
+        cumulative_realized_rate: float | None = None,
+    ) -> bool:
         self._ensure_daily_date()
         realized_pnl = float(self.daily["realized_pnl"])
         realized_cost = float(self.daily["realized_cost"])
@@ -191,6 +196,8 @@ class TradeNotifier:
                 total_rate,
                 holding_lines,
                 self.money_formatter,
+                cumulative_realized_pnl=cumulative_realized_pnl,
+                cumulative_realized_rate=cumulative_realized_rate,
             )
         )
 

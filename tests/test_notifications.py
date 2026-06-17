@@ -418,6 +418,8 @@ def test_send_market_close_report_from_records() -> None:
             }
         ],
         sender=lambda message: messages.append(message) or True,
+        cumulative_realized_pnl=15.5,
+        cumulative_realized_rate=3.2,
     )
 
     assert sent is True
@@ -425,3 +427,7 @@ def test_send_market_close_report_from_records() -> None:
     assert "매도 횟수: 1회" in messages[0]
     assert "실현손익: +$2.00" in messages[0]
     assert "평가손익: +$1.00" in messages[0]
+    assert "누적실현손익: +$15.50" in messages[0]
+    assert "누적수익률: +3.20%" in messages[0]
+    assert "총손익:" not in messages[0]
+    assert "총수익률:" not in messages[0]

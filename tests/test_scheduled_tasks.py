@@ -376,6 +376,13 @@ def test_market_close_report_uses_alert_telegram_settings(monkeypatch) -> None:
         def entry_reasons(self, trade_date: date) -> dict[str, str]:
             return {}
 
+    class MonitorRepository:
+        def today_realized_profit(self) -> float:
+            return 123.45
+
+        def today_realized_profit_rate(self) -> float:
+            return 6.7
+
     settings = NotificationSettings(
         telegram_bot_token="alert-token",
         telegram_chat_id="alert-chat",
@@ -383,6 +390,10 @@ def test_market_close_report_uses_alert_telegram_settings(monkeypatch) -> None:
     monkeypatch.setattr(
         "trading_bot.scheduler_market_close.SqlServerDailyRepository",
         lambda connect: Repository(),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.SqlServerMonitorRepository",
+        lambda connect: MonitorRepository(),
     )
     monkeypatch.setattr(
         "trading_bot.scheduler_market_close.pyodbc_connect_factory",
@@ -402,9 +413,18 @@ def test_market_close_report_uses_alert_telegram_settings(monkeypatch) -> None:
         lambda fills, entry_prices, entry_reasons, settings: ["record"],
     )
 
-    def fake_send_report(records, holdings, sender):
+    def fake_send_report(
+        records,
+        holdings,
+        sender,
+        *,
+        cumulative_realized_pnl,
+        cumulative_realized_rate,
+    ):
         captured["records"] = records
         captured["holdings"] = holdings
+        captured["cumulative_realized_pnl"] = cumulative_realized_pnl
+        captured["cumulative_realized_rate"] = cumulative_realized_rate
         return sender("market close report")
 
     def fake_send_alert(message, notification_settings):
@@ -431,6 +451,8 @@ def test_market_close_report_uses_alert_telegram_settings(monkeypatch) -> None:
     assert captured["trade_date"] == date(2026, 6, 5)
     assert captured["records"] == ["record"]
     assert captured["holdings"] == [{"ticker": "AAA", "closePrice": "$11.00"}]
+    assert captured["cumulative_realized_pnl"] == 123.45
+    assert captured["cumulative_realized_rate"] == 6.7
     assert captured["message"] == "market close report"
     assert captured["notification_settings"] is settings
 

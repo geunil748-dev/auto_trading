@@ -81,7 +81,9 @@ def send_market_close_report(state: dict[str, object]) -> None:
         return
     try:
         notification_settings = load_notification_settings()
-        repository = SqlServerDailyRepository(pyodbc_connect_factory())
+        connect = pyodbc_connect_factory()
+        repository = SqlServerDailyRepository(connect)
+        monitor_repository = SqlServerMonitorRepository(connect)
         trade_date = current_trade_date()
         records = fill_records_from_monitor_rows(
             fills,
@@ -96,6 +98,8 @@ def send_market_close_report(state: dict[str, object]) -> None:
                 message,
                 notification_settings,
             ),
+            cumulative_realized_pnl=monitor_repository.today_realized_profit(),
+            cumulative_realized_rate=monitor_repository.today_realized_profit_rate(),
         )
     except Exception as exc:
         safe_scheduler_log(

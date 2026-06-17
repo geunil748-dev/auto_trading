@@ -190,7 +190,20 @@ def market_close_report_message(
     total_rate: float,
     holding_lines: list[str],
     money: MoneyFormatter = fmt_won,
+    *,
+    cumulative_realized_pnl: float | None = None,
+    cumulative_realized_rate: float | None = None,
 ) -> str:
+    summary_pnl_label = "총손익"
+    summary_rate_label = "총수익률"
+    summary_pnl = total_pnl
+    summary_rate = total_rate
+    if cumulative_realized_pnl is not None:
+        summary_pnl_label = "누적실현손익"
+        summary_pnl = cumulative_realized_pnl
+    if cumulative_realized_rate is not None:
+        summary_rate_label = "누적수익률"
+        summary_rate = cumulative_realized_rate
     return "\n".join(
         [
             "📊 장마감 수익률 요약",
@@ -207,8 +220,8 @@ def market_close_report_message(
             f"평가손익: {money(evaluation_pnl, True)}",
             f"평가수익률: {fmt_pct(evaluation_rate, signed=True)}",
             "",
-            f"총손익: {money(total_pnl, True)}",
-            f"총수익률: {fmt_pct(total_rate, signed=True)}",
+            f"{summary_pnl_label}: {money(summary_pnl, True)}",
+            f"{summary_rate_label}: {fmt_pct(summary_rate, signed=True)}",
             "",
             "보유 종목",
             "\n".join(holding_lines) if holding_lines else "- 없음",

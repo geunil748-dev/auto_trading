@@ -152,9 +152,20 @@ def test_send_market_close_report_uses_records_and_safe_holdings(monkeypatch) ->
         def entry_reasons(self, trade_date):
             return {}
 
+    class MonitorRepository:
+        def today_realized_profit(self):
+            return 123.45
+
+        def today_realized_profit_rate(self):
+            return 6.7
+
     monkeypatch.setattr(
         "trading_bot.scheduler_market_close.SqlServerDailyRepository",
         lambda connect: Repository(),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.SqlServerMonitorRepository",
+        lambda connect: MonitorRepository(),
     )
     monkeypatch.setattr("trading_bot.scheduler_market_close.pyodbc_connect_factory", lambda: object)
     monkeypatch.setattr(
@@ -171,9 +182,18 @@ def test_send_market_close_report_uses_records_and_safe_holdings(monkeypatch) ->
         lambda fills, entry_prices, entry_reasons, settings: ["record"],
     )
 
-    def fake_send_report(records, holdings, sender):
+    def fake_send_report(
+        records,
+        holdings,
+        sender,
+        *,
+        cumulative_realized_pnl,
+        cumulative_realized_rate,
+    ):
         captured["records"] = records
         captured["holdings"] = holdings
+        captured["cumulative_realized_pnl"] = cumulative_realized_pnl
+        captured["cumulative_realized_rate"] = cumulative_realized_rate
         return sender("market close report")
 
     monkeypatch.setattr(
@@ -196,6 +216,8 @@ def test_send_market_close_report_uses_records_and_safe_holdings(monkeypatch) ->
     assert captured["trade_date"] == date(2026, 6, 5)
     assert captured["records"] == ["record"]
     assert captured["holdings"] == []
+    assert captured["cumulative_realized_pnl"] == 123.45
+    assert captured["cumulative_realized_rate"] == 6.7
     assert captured["message"] == "market close report"
     assert captured["notification_settings"] is settings
 
