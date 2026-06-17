@@ -194,6 +194,21 @@ class TradingSettings:
     real_max_order_krw: int = 100000
     real_max_daily_order_krw: int = 300000
     real_emergency_stop: bool = True
+    early_exit_diagnostics_enabled: bool = False
+    profit_protection_exit_enabled: bool = False
+    profit_protection_trigger_rate: float = 0.02
+    profit_protection_floor_rate: float = -0.003
+    time_stop_exit_enabled: bool = False
+    time_stop_minutes: int = 30
+    time_stop_min_profit_rate: float = 0.0
+    early_negative_exit_enabled: bool = False
+    early_negative_exit_minutes: int = 10
+    early_negative_exit_rate: float = 0.0
+    low_profit_60m_exit_enabled: bool = False
+    low_profit_60m_minutes: int = 60
+    low_profit_60m_min_profit_rate: float = 0.01
+    partial_take_profit_sim_trigger_rate: float = 0.03
+    partial_take_profit_sim_fraction: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -339,6 +354,27 @@ def load_settings() -> TradingSettings:
         enable_pyramiding=_bool_env("ENABLE_PYRAMIDING", False),
         partial_take_profit_enabled=_bool_env("PARTIAL_TAKE_PROFIT_ENABLED", True),
         trailing_stop_activation_rate=_float_env("TRAILING_STOP_ACTIVATION_RATE", 0.03),
+        early_exit_diagnostics_enabled=_bool_env("EARLY_EXIT_DIAGNOSTICS_ENABLED", False),
+        profit_protection_exit_enabled=_bool_env("PROFIT_PROTECTION_EXIT_ENABLED", False),
+        profit_protection_trigger_rate=_float_env("PROFIT_PROTECTION_TRIGGER_RATE", 0.02),
+        profit_protection_floor_rate=_float_env("PROFIT_PROTECTION_FLOOR_RATE", -0.003),
+        time_stop_exit_enabled=_bool_env("TIME_STOP_EXIT_ENABLED", False),
+        time_stop_minutes=_int_env("TIME_STOP_MINUTES", 30),
+        time_stop_min_profit_rate=_float_env("TIME_STOP_MIN_PROFIT_RATE", 0.0),
+        early_negative_exit_enabled=_bool_env("EARLY_NEGATIVE_EXIT_ENABLED", False),
+        early_negative_exit_minutes=_int_env("EARLY_NEGATIVE_EXIT_MINUTES", 10),
+        early_negative_exit_rate=_float_env("EARLY_NEGATIVE_EXIT_RATE", 0.0),
+        low_profit_60m_exit_enabled=_bool_env("LOW_PROFIT_60M_EXIT_ENABLED", False),
+        low_profit_60m_minutes=_int_env("LOW_PROFIT_60M_MINUTES", 60),
+        low_profit_60m_min_profit_rate=_float_env("LOW_PROFIT_60M_MIN_PROFIT_RATE", 0.01),
+        partial_take_profit_sim_trigger_rate=_float_env(
+            "PARTIAL_TAKE_PROFIT_SIM_TRIGGER_RATE",
+            0.03,
+        ),
+        partial_take_profit_sim_fraction=_float_env(
+            "PARTIAL_TAKE_PROFIT_SIM_FRACTION",
+            0.5,
+        ),
         real_trading_enabled=real_trading_requested if app_mode == APP_MODE_REAL else False,
         real_max_order_krw=_int_env("REAL_MAX_ORDER_KRW", 100000),
         real_max_daily_order_krw=_int_env("REAL_MAX_DAILY_ORDER_KRW", 300000),

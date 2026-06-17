@@ -49,6 +49,15 @@ from trading_bot.database import (
     repair_database_schema,
 )
 from trading_bot.daily_trade_summary import generate_daily_trade_summary
+from trading_bot.exit_rule_simulation import (
+    ExitRuleSimulationParams,
+    load_entry_profit_snapshots_from_csv,
+    load_entry_profit_snapshots_from_mssql,
+    simulate_exit_rules,
+    summarize_exit_rule_simulation_archive,
+    write_exit_rule_archive_summary,
+    write_exit_rule_simulation_output,
+)
 from trading_bot.monitor_state import state_from_dry_run
 from trading_bot.live_monitor_state import live_kis_monitor_state
 from trading_bot.manual_buy_list import (
@@ -140,6 +149,18 @@ def main() -> None:
     manual_buy_list.add_argument("ticker", nargs="?")
     manual_buy_list.add_argument("--note", default="")
     manual_buy_list.add_argument("--path", type=Path)
+    exit_sim = subparsers.add_parser("simulate-exit-rules")
+    exit_sim.add_argument("--date-from", type=date.fromisoformat)
+    exit_sim.add_argument("--date-to", type=date.fromisoformat)
+    exit_sim.add_argument("--input-csv", type=Path)
+    exit_sim.add_argument("--output", type=Path)
+    exit_sim.add_argument("--format", choices=("json", "text"), default="json")
+    _add_exit_rule_param_args(exit_sim)
+    exit_summary = subparsers.add_parser("summarize-exit-rule-simulations")
+    exit_summary.add_argument("--input-dir", type=Path, default=Path("reports/analysis"))
+    exit_summary.add_argument("--days", type=int)
+    exit_summary.add_argument("--output", type=Path)
+    exit_summary.add_argument("--format", choices=("json", "text"), default="json")
 
     args = parser.parse_args()
     if args.command == "show-settings":
@@ -249,6 +270,45 @@ def main() -> None:
         path = args.path or Path(settings.manual_buy_list_path)
         payload = _manual_buy_list_payload(args, path, settings)
         print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+        return
+
+    if args.command == "simulate-exit-rules":
+        if args.input_csv:
+            rows, warnings = load_entry_profit_snapshots_from_csv(args.input_csv)
+            source = f"csv:{args.input_csv}"
+        else:
+            rows, warnings = load_entry_profit_snapshots_from_mssql(
+                date_from=args.date_from,
+                date_to=args.date_to,
+            )
+            source = "mssql:entry_profit_snapshot"
+        payload = simulate_exit_rules(
+            rows,
+            params=_exit_rule_params_from_args(args),
+            source=source,
+            warnings=warnings,
+        )
+        print(
+            write_exit_rule_simulation_output(
+                payload,
+                output=args.output,
+                output_format=args.format,
+            )
+        )
+        return
+
+    if args.command == "summarize-exit-rule-simulations":
+        payload = summarize_exit_rule_simulation_archive(
+            args.input_dir,
+            days=args.days,
+        )
+        print(
+            write_exit_rule_archive_summary(
+                payload,
+                output=args.output,
+                output_format=args.format,
+            )
+        )
         return
 
     if args.command == "init-db":
@@ -408,6 +468,36 @@ def main() -> None:
             )
         )
         return
+
+
+def _add_exit_rule_param_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--early-negative-minutes", type=int, default=10)
+    parser.add_argument("--early-negative-threshold", type=float, default=0.0)
+    parser.add_argument("--early-loss-5m-threshold", type=float, default=-0.02)
+    parser.add_argument("--time-stop-minutes", type=int, default=30)
+    parser.add_argument("--time-stop-threshold", type=float, default=0.0)
+    parser.add_argument("--low-profit-30m-threshold", type=float, default=0.003)
+    parser.add_argument("--low-profit-60m-threshold", type=float, default=0.01)
+    parser.add_argument("--profit-protection-trigger", type=float, default=0.02)
+    parser.add_argument("--profit-protection-floor", type=float, default=-0.003)
+    parser.add_argument("--partial-take-profit-trigger", type=float, default=0.03)
+    parser.add_argument("--partial-take-profit-fraction", type=float, default=0.5)
+
+
+def _exit_rule_params_from_args(args: argparse.Namespace) -> ExitRuleSimulationParams:
+    return ExitRuleSimulationParams(
+        early_negative_minutes=args.early_negative_minutes,
+        early_negative_threshold=args.early_negative_threshold,
+        early_loss_5m_threshold=args.early_loss_5m_threshold,
+        time_stop_minutes=args.time_stop_minutes,
+        time_stop_threshold=args.time_stop_threshold,
+        low_profit_30m_threshold=args.low_profit_30m_threshold,
+        low_profit_60m_threshold=args.low_profit_60m_threshold,
+        profit_protection_trigger=args.profit_protection_trigger,
+        profit_protection_floor=args.profit_protection_floor,
+        partial_take_profit_trigger=args.partial_take_profit_trigger,
+        partial_take_profit_fraction=args.partial_take_profit_fraction,
+    )
 
 
 def _manual_buy_list_payload(args, path: Path, settings: TradingSettings) -> dict[str, object]:

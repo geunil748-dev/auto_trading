@@ -421,6 +421,30 @@ SQL Server에 기록합니다. 주문 스냅샷은 `order_snapshot`, 체결 이�
 매수 체결은 `entry_profit_snapshot`으로 이어져 5/10/15/20/30/60분 후
 수익률과 최종 청산 사유를 분석할 수 있게 합니다.
 
+### 진입 후 청산 규칙 시뮬레이션
+
+`entry_profit_snapshot` 기반 조기청산/수익보호 규칙은 실제 매도 주문 전에
+read-only 시뮬레이션으로 검증할 수 있습니다. 아래 CLI는 DB를 수정하지
+않고 `entry_profit_snapshot`을 SELECT 하거나 CSV 파일을 읽어 JSON/text
+결과를 생성합니다.
+
+```powershell
+$env:PYTHONPATH='src'
+python -m trading_bot simulate-exit-rules --date-from 2026-06-01 --date-to 2026-06-17
+python -m trading_bot simulate-exit-rules --input-csv reports/analysis/entry_profit_snapshot_rows_2026-06-17.csv --output reports/analysis/exit_rule_simulation_from_csv.json
+python -m trading_bot simulate-exit-rules --format text --input-csv reports/analysis/entry_profit_snapshot_rows_2026-06-17.csv
+python -m trading_bot summarize-exit-rule-simulations --input-dir reports/analysis --days 14 --format text
+```
+
+운영 중 진단 로그만 남기려면 `.env`에서 `EARLY_EXIT_DIAGNOSTICS_ENABLED=true`와
+검토할 규칙별 `*_EXIT_ENABLED=true`를 함께 설정합니다. 이 진단은
+`EXIT_RULE_DIAGNOSTIC ... actual_exit_not_changed=true` 로그만 남기며,
+`SellIntent`, mock/real 매도 주문, KIS 주문 경로를 변경하지 않습니다.
+
+실제 청산 규칙으로 승격하려면 최소 30건 이상의 완료 거래 또는 2~4주
+이상의 모의매매 검증에서 순효과가 반복 확인된 뒤 별도 작업으로 진행해야
+합니다. 현재 표본이 작으면 시뮬레이션 결과는 관찰용으로만 사용합니다.
+
 중복 체결 저장을 피하기 위해 기존 `fill_history`를 조회한 뒤 새 체결만
 저장합니다. 장마감 이후에는 `daily_run_summary`와 일일 요약 리포트를
 갱신합니다.

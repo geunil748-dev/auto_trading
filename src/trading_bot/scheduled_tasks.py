@@ -20,6 +20,7 @@ from trading_bot.config import (
 )
 from trading_bot.daily_report import write_daily_report
 from trading_bot.database import mssql_dsn_from_env, pyodbc_connect_factory
+from trading_bot.exit_rule_diagnostics import build_exit_rule_diagnostics
 from trading_bot.intraday_entries import (
     NoOrderDiagnostic,
     limited_intraday_buy_intents_with_diagnostics,
@@ -152,6 +153,7 @@ def live_mock_tasks(
             partial_take_profit_tickers=partial_done,
         )
         latest.highs.update({item.ticker: item.high_price_usd for item in refreshed})
+        _save_exit_rule_diagnostics(repository, refreshed, current_settings)
         latest.pending_exits.intersection_update(item.ticker for item in refreshed)
         # 같은 보유 종목에 미체결 매도 주문을 중복 제출하지 않도록 보호한다.
         executable = [item for item in exits if item.ticker not in latest.pending_exits]
@@ -508,6 +510,26 @@ def _remembered_highs(
         )
         for item in positions
     ]
+
+
+def _save_exit_rule_diagnostics(
+    repository: object,
+    positions: list[PositionState],
+    settings: TradingSettings,
+) -> int:
+    try:
+        logs = build_exit_rule_diagnostics(positions, settings)
+        for log in logs:
+            repository.save_log(log)
+        return len(logs)
+    except Exception as exc:
+        safe_scheduler_log(
+            "WARNING",
+            "scheduler",
+            f"EXIT_RULE_DIAGNOSTICS_FAILED {safe_exception_summary(exc)}",
+            reject_reason="EXIT_RULE_DIAGNOSTICS_FAILED",
+        )
+        return 0
 
 
 def _current_settings(
