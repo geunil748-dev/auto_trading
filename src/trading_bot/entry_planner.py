@@ -407,6 +407,12 @@ def _price_change_from_open(breakout: BreakoutInput) -> float:
     return (breakout.last_price_usd - breakout.open_price_usd) / breakout.open_price_usd
 
 
+def _entry_price_vs_breakout(entry_price: float, threshold: float) -> float | None:
+    if threshold <= 0:
+        return None
+    return entry_price / threshold - 1.0
+
+
 def _volume_increase_percent(breakout: BreakoutInput) -> float | None:
     if (
         breakout.current_5m_volume is None
@@ -547,6 +553,38 @@ def _candidate_evaluation(
     soft_reasons = tuple(evaluation.failed_soft_reasons if evaluation else ())
     final_score_pass = final_score >= settings.min_total_score
     reasons = tuple(reason for reason in buy_block_reasons if reason)
+    entry_price_vs_breakout = _entry_price_vs_breakout(breakout.last_price_usd, threshold)
+    manual_candidate = _is_manual_source(source)
+    analysis_context = {
+        "candidate_source": source,
+        "ranking_selection_mode": settings.ranking_selection_mode,
+        "manual_candidate": manual_candidate,
+        "opening_price_change": _price_change_from_open(breakout),
+        "opening_volume_ratio": None,
+        "opening_gap": None,
+        "selection_score": score.total_score,
+        "chart_score": score.chart_score,
+        "news_score": score.news_score,
+        "total_score": score.total_score,
+        "final_score": final_score,
+        "breakout_threshold": threshold,
+        "entry_price_vs_breakout": entry_price_vs_breakout,
+        "max_entry_price_change": settings.max_entry_price_change,
+        "breakout_k": settings.breakout_k,
+        "min_total_score": settings.min_total_score,
+        "min_volume_ratio": settings.min_volume_ratio,
+        "max_opening_gap": settings.max_opening_gap,
+        "min_opening_price_change": settings.min_opening_price_change,
+        "bid_ask_spread_rate": None,
+        "expected_fill_price_gap_rate": None,
+        "order_protection_checked": False,
+        "order_protection_source": "not_checked_at_entry_planner",
+        "market_nasdaq_price": None,
+        "market_nasdaq_ma20": None,
+        "fx_change_rate": None,
+        "minutes_since_market_open": None,
+        "entry_time_timezone_assumption": "Asia/Seoul",
+    }
     return CandidateEvaluation(
         run_id=run_id,
         evaluation_time=evaluated_at,
@@ -589,6 +627,7 @@ def _candidate_evaluation(
         condition_result_json=json.dumps(
             {
                 **condition_results,
+                **analysis_context,
                 "failed_hard_reasons": list(hard_reasons),
                 "failed_soft_reasons": list(soft_reasons),
                 "failed_log_reasons": list(evaluation.failed_log_reasons if evaluation else ()),
@@ -603,10 +642,27 @@ def _candidate_evaluation(
                 "open_price_usd": breakout.open_price_usd,
                 "previous_high_usd": breakout.previous_high_usd,
                 "previous_low_usd": breakout.previous_low_usd,
+                "candidate_source": source,
+                "ranking_selection_mode": settings.ranking_selection_mode,
+                "manual_candidate": manual_candidate,
                 "breakout_threshold": threshold,
+                "entry_price_vs_breakout": entry_price_vs_breakout,
+                "opening_price_change": _price_change_from_open(breakout),
+                "opening_volume_ratio": None,
+                "opening_gap": None,
+                "selection_score": score.total_score,
                 "news_score": score.news_score,
                 "chart_score": score.chart_score,
                 "total_score": score.total_score,
+                "final_score": final_score,
+                "gain_rank": None,
+                "turnover_rank": None,
+                "trade_value_rank": None,
+                "ranking_presence_count": None,
+                "bid_ask_spread_rate": None,
+                "expected_fill_price_gap_rate": None,
+                "order_protection_checked": False,
+                "entry_time_timezone_assumption": "Asia/Seoul",
             },
             ensure_ascii=False,
         ),
@@ -623,6 +679,18 @@ def _settings_snapshot(settings: TradingSettings) -> dict[str, object]:
         "minOpeningPriceChangePercent": settings.min_opening_price_change * 100,
         "minVolumeRatio": settings.min_volume_ratio,
         "maxOpeningGapPercent": settings.max_opening_gap * 100,
+        "rankingSelectionMode": settings.ranking_selection_mode,
+        "maxEntryPriceChange": settings.max_entry_price_change,
+        "breakoutK": settings.breakout_k,
+        "maxBidAskSpreadRate": settings.max_bid_ask_spread_rate,
+        "maxExpectedFillPriceGapRate": settings.max_expected_fill_price_gap_rate,
+        "min_total_score": settings.min_total_score,
+        "min_volume_ratio": settings.min_volume_ratio,
+        "max_opening_gap": settings.max_opening_gap,
+        "min_opening_price_change": settings.min_opening_price_change,
+        "max_entry_price_change": settings.max_entry_price_change,
+        "breakout_k": settings.breakout_k,
+        "ranking_selection_mode": settings.ranking_selection_mode,
         "overheatLimitConditionMode": settings.overheat_limit_condition_mode,
         "breakoutCloseConditionMode": settings.breakout_close_condition_mode,
         "volumeIncreaseConditionMode": settings.volume_increase_condition_mode,

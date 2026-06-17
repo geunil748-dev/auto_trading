@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -49,6 +50,15 @@ from trading_bot.database import (
     repair_database_schema,
 )
 from trading_bot.daily_trade_summary import generate_daily_trade_summary
+from trading_bot.entry_root_cause_analysis import (
+    CostOptions,
+    analyze_entry_root_causes,
+    load_entry_root_cause_rows_from_csv,
+    load_entry_root_cause_rows_from_mssql,
+    summarize_entry_root_cause_archive,
+    write_entry_root_cause_archive_summary,
+    write_entry_root_cause_output,
+)
 from trading_bot.exit_rule_simulation import (
     ExitRuleSimulationParams,
     load_entry_profit_snapshots_from_csv,
@@ -161,6 +171,28 @@ def main() -> None:
     exit_summary.add_argument("--days", type=int)
     exit_summary.add_argument("--output", type=Path)
     exit_summary.add_argument("--format", choices=("json", "text"), default="json")
+    root_cause = subparsers.add_parser("analyze-entry-root-cause")
+    root_cause.add_argument("--date-from", type=date.fromisoformat)
+    root_cause.add_argument("--date-to", type=date.fromisoformat)
+    root_cause.add_argument("--input-csv", type=Path)
+    root_cause.add_argument("--output", type=Path)
+    root_cause.add_argument("--format", choices=("json", "text"), default="json")
+    root_cause.add_argument(
+        "--entry-timezone",
+        default=os.getenv("ENTRY_ANALYSIS_ENTRY_TIMEZONE", "Asia/Seoul"),
+    )
+    root_cause.add_argument(
+        "--market-timezone",
+        default=os.getenv("ENTRY_ANALYSIS_MARKET_TIMEZONE", "America/New_York"),
+    )
+    root_cause.add_argument("--commission-rate", type=float, default=0.0)
+    root_cause.add_argument("--slippage-rate", type=float, default=0.0)
+    root_cause.add_argument("--spread-cost-rate", type=float, default=0.0)
+    root_archive = subparsers.add_parser("summarize-entry-root-cause-archive")
+    root_archive.add_argument("--input-dir", type=Path, default=Path("reports/analysis"))
+    root_archive.add_argument("--days", type=int)
+    root_archive.add_argument("--output", type=Path)
+    root_archive.add_argument("--format", choices=("json", "text"), default="json")
 
     args = parser.parse_args()
     if args.command == "show-settings":
@@ -304,6 +336,57 @@ def main() -> None:
         )
         print(
             write_exit_rule_archive_summary(
+                payload,
+                output=args.output,
+                output_format=args.format,
+            )
+        )
+        return
+
+    if args.command == "analyze-entry-root-cause":
+        if args.input_csv:
+            rows, warnings = load_entry_root_cause_rows_from_csv(args.input_csv)
+            source_type = "csv"
+            source_path = str(args.input_csv)
+        else:
+            rows, warnings = load_entry_root_cause_rows_from_mssql(
+                date_from=args.date_from,
+                date_to=args.date_to,
+            )
+            source_type = "mssql"
+            source_path = ""
+        payload = analyze_entry_root_causes(
+            rows,
+            cost_options=CostOptions(
+                commission_rate=args.commission_rate,
+                slippage_rate=args.slippage_rate,
+                spread_cost_rate=args.spread_cost_rate,
+            ),
+            entry_timezone=args.entry_timezone,
+            market_timezone=args.market_timezone,
+            source={
+                "type": source_type,
+                "path": source_path,
+                "dateFrom": args.date_from.isoformat() if args.date_from else None,
+                "dateTo": args.date_to.isoformat() if args.date_to else None,
+                "entryTimezone": args.entry_timezone,
+                "marketTimezone": args.market_timezone,
+            },
+            warnings=warnings,
+        )
+        print(
+            write_entry_root_cause_output(
+                payload,
+                output=args.output,
+                output_format=args.format,
+            )
+        )
+        return
+
+    if args.command == "summarize-entry-root-cause-archive":
+        payload = summarize_entry_root_cause_archive(args.input_dir, days=args.days)
+        print(
+            write_entry_root_cause_archive_summary(
                 payload,
                 output=args.output,
                 output_format=args.format,

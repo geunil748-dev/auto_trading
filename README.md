@@ -445,6 +445,41 @@ python -m trading_bot summarize-exit-rule-simulations --input-dir reports/analys
 이상의 모의매매 검증에서 순효과가 반복 확인된 뒤 별도 작업으로 진행해야
 합니다. 현재 표본이 작으면 시뮬레이션 결과는 관찰용으로만 사용합니다.
 
+### 진입 손실 원인 분석
+
+조기청산/부분익절 같은 처방형 룰을 켜기 전에, 손실 원인을 먼저 쪼개
+보기 위한 read-only 분석 CLI를 제공합니다. 이 CLI는 DB를 수정하지 않고
+`entry_profit_snapshot`, `candidate_evaluations`, `trade_history`,
+`fill_history` 등을 SELECT 하거나 CSV 파일을 읽어 원인 후보를 요약합니다.
+
+```powershell
+$env:PYTHONPATH='src'
+python -m trading_bot analyze-entry-root-cause --date-from 2026-06-01 --date-to 2026-06-17
+python -m trading_bot analyze-entry-root-cause --date-from 2026-06-01 --date-to 2026-06-17 --format text
+python -m trading_bot analyze-entry-root-cause --input-csv reports/analysis/entry_profit_snapshot_rows_2026-06-17.csv --format text
+python -m trading_bot summarize-entry-root-cause-archive --input-dir reports/analysis --days 5 --format text
+```
+
+비용 반영은 단순 1회 왕복 추정 모델입니다. 실제 수수료, 환전, 부분익절,
+분할청산, 주문별 체결 품질을 정밀 계산하지 않고 아래 세 값을 더해
+`netFinalProfitRate = grossFinalProfitRate - estimatedCostRate`로 표시합니다.
+
+```powershell
+python -m trading_bot analyze-entry-root-cause --date-from 2026-06-01 --date-to 2026-06-17 --commission-rate 0.001 --slippage-rate 0.001 --spread-cost-rate 0.001 --format text
+```
+
+분석 그룹은 진입 시간대, 가격대, 후보 source(auto/manual/both), ranking
+mode(intersection/composite), entry_reason 태그, exit_reason, 5/10/30/60분
+초반 흐름, 돌파 품질, 유동성/스프레드, 랭킹 presence, 수동/자동 후보 여부를
+포함합니다. manual/auto와 composite/intersection을 나누는 이유는 후보
+유입 경로별 품질 차이가 손실의 원인인지 확인하기 위해서입니다.
+
+완료 거래가 30건 미만이면 전략 변경 판단에는 부족하며, 전체 표본이
+50건 미만이면 그룹별 통계가 불안정할 수 있습니다. 특히 수수료/슬리피지와
+스프레드 비용 때문에 잦은 부분익절이나 조기청산은 총손익을 오히려 악화시킬
+수 있으므로, 이 분석은 “근본 원인 후보 찾기” 용도로만 사용하고 실제
+매수/매도 룰 변경은 별도 모의매매 검증 뒤 진행합니다.
+
 중복 체결 저장을 피하기 위해 기존 `fill_history`를 조회한 뒤 새 체결만
 저장합니다. 장마감 이후에는 `daily_run_summary`와 일일 요약 리포트를
 갱신합니다.
