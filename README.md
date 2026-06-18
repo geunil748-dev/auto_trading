@@ -127,6 +127,25 @@ APP_MODE=test
 order-capable paths still remain locked unless `REAL_TRADING_ENABLED=true`,
 `REAL_EMERGENCY_STOP=false`, and the runtime manual unlock are all satisfied.
 
+테스트/모의 서버에서 주문/체결 표본을 늘려야 할 때만 나스닥 20일선 전역
+진입 차단(`MARKET_BELOW_MA20`)을 우회할 수 있습니다.
+
+```powershell
+APP_MODE=test
+MOCK_TRADING=true
+ALLOW_MARKET_BELOW_MA20_BYPASS=true
+```
+
+이 설정은 `APP_MODE=test`와 `MOCK_TRADING=true`가 동시에 만족될 때만
+효력이 있습니다. `APP_MODE=real`에서는 true로 설정해도 강제로 비활성화되어
+실투자에서는 기존처럼 `MARKET_BELOW_MA20`가 하드 필터로 유지됩니다. 우회가
+발생하면 `MARKET_BELOW_MA20_BYPASSED`가 `bot_log`,
+`trading_event_log`, 후보평가 JSON, 매수 `entry_reason_detail`에 남아
+분석 시 정상 데이터(`normal_trades`)와 우회 데이터
+(`market_bypass_trades`)를 분리할 수 있습니다. 이 옵션은 시장 필터 우회
+데이터 수집용이며, 주문 수량, 주문 API payload, 주문 보호, 손절/익절/트레일링
+조건은 변경하지 않습니다.
+
 Create missing SQL Server tables after setting `MSSQL_DSN`:
 
 ```powershell
@@ -140,6 +159,49 @@ Run explicit schema repair only when a preflight or release note requires it:
 $env:PYTHONPATH='src'
 python -m trading_bot repair-db-schema
 ```
+
+Trading event logging is split into three roles:
+
+- `candidate_evaluations`: latest per-candidate decision state.
+- `bot_log`: human-facing operational messages used by existing monitor/report paths.
+- `trading_event_log`: append-only analytical event stream for screening, buy-block,
+  order protection, order failure, fills, sell signals, and notifications.
+
+New decision/reject reasons should be recorded through
+`trading_bot.trading_event_logger` so `trading_event_log`, existing
+`candidate_evaluations`, and `bot_log` stay aligned. Do not put KIS tokens,
+app keys, account numbers, DB DSNs/passwords, Telegram tokens/chat ids, or
+monitor bearer tokens into `details_json`; the common logger redacts known
+sensitive keys before saving.
+
+Read-only event analysis:
+
+```powershell
+$env:PYTHONPATH='src'
+python -m trading_bot analyze-trading-events --date-from 2026-06-01 --date-to 2026-06-17
+python -m trading_bot analyze-trading-events --date-from 2026-06-01 --date-to 2026-06-17 --format text
+python -m trading_bot analyze-trading-events --date-from 2026-06-01 --date-to 2026-06-17 --ticker PURR
+python -m trading_bot analyze-trading-events --date-from 2026-06-01 --date-to 2026-06-17 --event-type BUY_NOT_SUBMITTED
+python -m trading_bot analyze-trading-events --date-from 2026-06-01 --date-to 2026-06-17 --reason-code BID_ASK_SPREAD_TOO_WIDE
+```
+
+Ticker event timeline API for the monitor server:
+
+```powershell
+curl.exe "http://localhost:4174/api/trading-events/timeline?date=2026-06-17&ticker=PURR&limit=200"
+```
+
+Every trading event stores a `details_json.correlation` block with a stable
+`flow_key` such as `YYYY-MM-DD:TICKER`, plus optional order/fill keys. This
+keeps candidate, no-order, order, fill, sell, and notification events connected
+without adding more DB columns.
+
+Event-log transition plan:
+
+- Phase A: add `trading_event_log` and dual-write important decision points.
+- Phase B: use `analyze-trading-events` as the primary event analysis CLI.
+- Phase C: move selected monitor/report reads to `trading_event_log`.
+- Phase D: keep `bot_log` focused on operator-facing messages.
 
 Check mock-trading readiness before a live session. This command is read-only
 and does not repair or migrate MSSQL schema:

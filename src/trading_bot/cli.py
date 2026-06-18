@@ -87,6 +87,11 @@ from trading_bot.ranking_mode_compare import (
     write_compare_payload,
 )
 from trading_bot.trade_summary_export import export_trade_summary
+from trading_bot.trading_event_analysis import (
+    analyze_trading_events,
+    load_trading_events_from_mssql,
+    write_trading_events_output,
+)
 
 
 def main() -> None:
@@ -193,6 +198,13 @@ def main() -> None:
     root_archive.add_argument("--days", type=int)
     root_archive.add_argument("--output", type=Path)
     root_archive.add_argument("--format", choices=("json", "text"), default="json")
+    event_analysis = subparsers.add_parser("analyze-trading-events")
+    event_analysis.add_argument("--date-from", type=date.fromisoformat)
+    event_analysis.add_argument("--date-to", type=date.fromisoformat)
+    event_analysis.add_argument("--ticker")
+    event_analysis.add_argument("--event-type")
+    event_analysis.add_argument("--reason-code")
+    event_analysis.add_argument("--format", choices=("json", "text"), default="json")
 
     args = parser.parse_args()
     if args.command == "show-settings":
@@ -392,6 +404,26 @@ def main() -> None:
                 output_format=args.format,
             )
         )
+        return
+
+    if args.command == "analyze-trading-events":
+        rows, warnings = load_trading_events_from_mssql(
+            date_from=args.date_from,
+            date_to=args.date_to,
+            ticker=args.ticker,
+            event_type=args.event_type,
+            reason_code=args.reason_code,
+        )
+        payload = analyze_trading_events(
+            rows,
+            date_from=args.date_from,
+            date_to=args.date_to,
+            ticker=args.ticker,
+            event_type=args.event_type,
+            reason_code=args.reason_code,
+            warnings=warnings,
+        )
+        print(write_trading_events_output(payload, output_format=args.format))
         return
 
     if args.command == "init-db":

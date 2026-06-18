@@ -10,6 +10,12 @@ from trading_bot.order_protection import QuoteReader, buy_order_protection_log
 from trading_bot.ports import DailyRepository
 from trading_bot.performance_analysis import split_entry_reason, strategy_label, tag_label
 from trading_bot.strategy_metadata import strategy_metadata_from_settings
+from trading_bot.trading_event_logger import (
+    record_order_reconciliation,
+    record_order_protection_blocked,
+    record_order_submit_failed,
+    record_order_submitted,
+)
 
 OrderSubmitter = Callable[[BuyIntent], dict[str, object]]
 
@@ -41,19 +47,44 @@ class BuyIntentExecutor:
         for intent in submitted:
             protection_log = buy_order_protection_log(intent, self.settings, self.quote_reader)
             if protection_log is not None and protection_log.reject_reason != "QUOTE_LOOKUP_FAILED":
+                record_order_protection_blocked(
+                    self.repository,
+                    intent,
+                    protection_log,
+                    trade_date=self.today(),
+                    blocking=True,
+                    fallback_bot_log=False,
+                )
                 self.repository.save_log(protection_log)
                 continue
             if protection_log is not None:
+                record_order_protection_blocked(
+                    self.repository,
+                    intent,
+                    protection_log,
+                    trade_date=self.today(),
+                    blocking=False,
+                    fallback_bot_log=False,
+                )
                 self.repository.save_log(protection_log)
             submitted_result = self._submit_with_retry(intent)
             if submitted_result is None:
                 continue
             retry_count, response = submitted_result
+            order_id = _order_id(response)
             _mark_candidate_evaluation_order_submitted(
                 self.repository,
                 intent,
                 self.today(),
-                _order_id(response),
+                order_id,
+            )
+            record_order_submitted(
+                self.repository,
+                intent,
+                trade_date=self.today(),
+                order_id=order_id,
+                response=response,
+                fallback_bot_log=False,
             )
             successful.append(intent)
             trades.append(
@@ -78,6 +109,14 @@ class BuyIntentExecutor:
                 )
             )
         self.repository.save_trades(trades)
+        record_order_reconciliation(
+            self.repository,
+            trade_date=self.today(),
+            side="BUY",
+            planned=submitted,
+            trades=trades,
+            fallback_bot_log=False,
+        )
         self.repository.save_log(BotLog("INFO", "execution", _buy_log(successful)))
         return trades
 
@@ -100,6 +139,17 @@ class BuyIntentExecutor:
                         threshold_value=float(max_retries),
                     )
                 )
+                record_order_submit_failed(
+                    self.repository,
+                    intent,
+                    trade_date=self.today(),
+                    side="BUY",
+                    reason_code="API_ERROR",
+                    severity="ERROR",
+                    attempt=attempt,
+                    max_retries=max_retries,
+                    fallback_bot_log=False,
+                )
                 if attempt >= max_retries:
                     self.repository.save_log(
                         BotLog(
@@ -112,6 +162,17 @@ class BuyIntentExecutor:
                             threshold_value=float(max_retries),
                         )
                     )
+                    record_order_submit_failed(
+                        self.repository,
+                        intent,
+                        trade_date=self.today(),
+                        side="BUY",
+                        reason_code="ORDER_FAILED",
+                        severity="ERROR",
+                        attempt=attempt,
+                        max_retries=max_retries,
+                        fallback_bot_log=False,
+                    )
                     return None
                 self.repository.save_log(
                     BotLog(
@@ -123,6 +184,17 @@ class BuyIntentExecutor:
                         actual_value=float(attempt + 1),
                         threshold_value=float(max_retries),
                     )
+                )
+                record_order_submit_failed(
+                    self.repository,
+                    intent,
+                    trade_date=self.today(),
+                    side="BUY",
+                    reason_code="RETRY",
+                    severity="WARNING",
+                    attempt=attempt + 1,
+                    max_retries=max_retries,
+                    fallback_bot_log=False,
                 )
                 self.retry_sleep(max(0, self.settings.order_retry_delay_seconds))
         return None

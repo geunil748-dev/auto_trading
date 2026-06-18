@@ -267,6 +267,177 @@ BEGIN
 END
 """
 
+TRADING_EVENT_LOG_REPAIR_SQL = """
+IF OBJECT_ID(N'dbo.trading_event_log', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.trading_event_log (
+        id BIGINT IDENTITY PRIMARY KEY,
+        event_id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        event_time DATETIME2 NOT NULL,
+        created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+        trade_date DATE NULL,
+        mode NVARCHAR(20) NULL,
+        app_mode NVARCHAR(20) NULL,
+        run_id NVARCHAR(100) NULL,
+        correlation_id NVARCHAR(100) NULL,
+        order_id NVARCHAR(100) NULL,
+        order_no NVARCHAR(100) NULL,
+        ticker NVARCHAR(32) NULL,
+        ticker_name NVARCHAR(200) NULL,
+        side NVARCHAR(20) NULL,
+        stage NVARCHAR(50) NOT NULL,
+        event_type NVARCHAR(80) NOT NULL,
+        severity NVARCHAR(20) NOT NULL DEFAULT 'INFO',
+        decision NVARCHAR(80) NULL,
+        reason_code NVARCHAR(120) NULL,
+        reason_label NVARCHAR(300) NULL,
+        is_blocking BIT NULL,
+        is_final_decision BIT NULL,
+        order_submitted BIT NULL,
+        buy_allowed BIT NULL,
+        sell_allowed BIT NULL,
+        quantity INT NULL,
+        price_usd DECIMAL(19, 6) NULL,
+        order_value_usd DECIMAL(19, 6) NULL,
+        actual_value FLOAT NULL,
+        threshold_value FLOAT NULL,
+        profit_rate FLOAT NULL,
+        candidate_source NVARCHAR(80) NULL,
+        ranking_selection_mode NVARCHAR(40) NULL,
+        strategy_version NVARCHAR(100) NULL,
+        settings_snapshot_hash NVARCHAR(100) NULL,
+        message NVARCHAR(MAX) NULL,
+        details_json NVARCHAR(MAX) NULL
+    );
+END
+
+IF COL_LENGTH('dbo.trading_event_log', 'event_id') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD event_id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID();
+
+IF COL_LENGTH('dbo.trading_event_log', 'created_at') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME();
+
+IF COL_LENGTH('dbo.trading_event_log', 'trade_date') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD trade_date DATE NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'mode') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD mode NVARCHAR(20) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'app_mode') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD app_mode NVARCHAR(20) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'run_id') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD run_id NVARCHAR(100) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'correlation_id') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD correlation_id NVARCHAR(100) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'order_id') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD order_id NVARCHAR(100) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'order_no') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD order_no NVARCHAR(100) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'ticker') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD ticker NVARCHAR(32) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'ticker_name') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD ticker_name NVARCHAR(200) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'side') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD side NVARCHAR(20) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'stage') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD stage NVARCHAR(50) NOT NULL DEFAULT 'UNKNOWN';
+
+IF COL_LENGTH('dbo.trading_event_log', 'event_type') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD event_type NVARCHAR(80) NOT NULL DEFAULT 'UNKNOWN';
+
+IF COL_LENGTH('dbo.trading_event_log', 'severity') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD severity NVARCHAR(20) NOT NULL DEFAULT 'INFO';
+
+IF COL_LENGTH('dbo.trading_event_log', 'decision') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD decision NVARCHAR(80) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'reason_code') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD reason_code NVARCHAR(120) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'reason_label') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD reason_label NVARCHAR(300) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'is_blocking') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD is_blocking BIT NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'is_final_decision') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD is_final_decision BIT NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'order_submitted') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD order_submitted BIT NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'buy_allowed') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD buy_allowed BIT NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'sell_allowed') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD sell_allowed BIT NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'quantity') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD quantity INT NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'price_usd') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD price_usd DECIMAL(19, 6) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'order_value_usd') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD order_value_usd DECIMAL(19, 6) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'actual_value') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD actual_value FLOAT NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'threshold_value') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD threshold_value FLOAT NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'profit_rate') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD profit_rate FLOAT NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'candidate_source') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD candidate_source NVARCHAR(80) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'ranking_selection_mode') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD ranking_selection_mode NVARCHAR(40) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'strategy_version') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD strategy_version NVARCHAR(100) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'settings_snapshot_hash') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD settings_snapshot_hash NVARCHAR(100) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'message') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD message NVARCHAR(MAX) NULL;
+
+IF COL_LENGTH('dbo.trading_event_log', 'details_json') IS NULL
+    ALTER TABLE dbo.trading_event_log ADD details_json NVARCHAR(MAX) NULL;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_trading_event_log_trade_date_time' AND object_id = OBJECT_ID('dbo.trading_event_log'))
+    CREATE INDEX IX_trading_event_log_trade_date_time ON dbo.trading_event_log (trade_date, event_time);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_trading_event_log_ticker_date' AND object_id = OBJECT_ID('dbo.trading_event_log'))
+    CREATE INDEX IX_trading_event_log_ticker_date ON dbo.trading_event_log (ticker, trade_date);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_trading_event_log_event_type' AND object_id = OBJECT_ID('dbo.trading_event_log'))
+    CREATE INDEX IX_trading_event_log_event_type ON dbo.trading_event_log (event_type, trade_date);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_trading_event_log_reason_code' AND object_id = OBJECT_ID('dbo.trading_event_log'))
+    CREATE INDEX IX_trading_event_log_reason_code ON dbo.trading_event_log (reason_code, trade_date);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_trading_event_log_stage' AND object_id = OBJECT_ID('dbo.trading_event_log'))
+    CREATE INDEX IX_trading_event_log_stage ON dbo.trading_event_log (stage, trade_date);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_trading_event_log_correlation' AND object_id = OBJECT_ID('dbo.trading_event_log'))
+    CREATE INDEX IX_trading_event_log_correlation ON dbo.trading_event_log (correlation_id);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_trading_event_log_order_no' AND object_id = OBJECT_ID('dbo.trading_event_log'))
+    CREATE INDEX IX_trading_event_log_order_no ON dbo.trading_event_log (order_no);
+"""
+
 
 def initialize_database(
     connect: Callable[[], Any],
@@ -287,12 +458,19 @@ def repair_database_schema(connect: Callable[[], Any]) -> list[dict[str, str]]:
     used by read-only preflight checks.
     """
     with closing(connect()) as connection:
-        connection.cursor().execute(DAILY_TARGET_REPAIR_SQL)
+        cursor = connection.cursor()
+        cursor.execute(DAILY_TARGET_REPAIR_SQL)
+        cursor.execute(TRADING_EVENT_LOG_REPAIR_SQL)
         connection.commit()
     return [
         {
             "name": "daily_target_numeric_columns",
             "action": "executed_if_table_exists",
             "detail": "volume_ratio and price_change are repaired to DECIMAL(12, 2) NULL",
-        }
+        },
+        {
+            "name": "trading_event_log",
+            "action": "created_or_repaired_if_missing",
+            "detail": "trading_event_log table and indexes are ensured idempotently",
+        },
     ]

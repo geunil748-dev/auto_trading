@@ -1035,12 +1035,16 @@ def test_intraday_recheck_records_buy_allowed_no_order_reason(
         def __init__(self) -> None:
             self.no_orders = []
             self.logs = []
+            self.trading_events = []
 
         def mark_candidate_evaluation_order_not_submitted(self, ticker, trade_date, reason):
             self.no_orders.append((ticker, reason))
 
         def save_log(self, log):
             self.logs.append(log)
+
+        def save_trading_events(self, events):
+            self.trading_events.extend(events)
 
     repository = RecheckRepository()
     executor = RecordingExecutor()
@@ -1074,5 +1078,7 @@ def test_intraday_recheck_records_buy_allowed_no_order_reason(
     tasks.intraday_recheck()
 
     assert repository.no_orders == [("AAA", "NO_ORDER_UNFILLED_ORDER")]
+    assert repository.trading_events[0].event_type == "BUY_NOT_SUBMITTED"
+    assert repository.trading_events[0].reason_code == "NO_ORDER_UNFILLED_ORDER"
     assert repository.logs[0].reject_reason == "NO_ORDER_UNFILLED_ORDER"
     assert [item.ticker for item in executor.calls[0]] == ["BBB"]

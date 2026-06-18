@@ -2,7 +2,7 @@ from dataclasses import replace
 from datetime import date, datetime, timezone
 
 from trading_bot.config import TradingSettings
-from trading_bot.models import BotLog, BuyIntent, CandidateEvaluation, TradeRecord
+from trading_bot.models import BotLog, BuyIntent, CandidateEvaluation, TradeRecord, TradingEvent
 from trading_bot.order_execution import BuyIntentExecutor
 from trading_bot.strategy_metadata import strategy_metadata_from_settings
 
@@ -12,12 +12,16 @@ class Repository:
         self.trades: list[TradeRecord] = []
         self.logs: list[BotLog] = []
         self.candidate_evaluations: list[CandidateEvaluation] = []
+        self.trading_events: list[TradingEvent] = []
 
     def save_trades(self, trades: list[TradeRecord]) -> None:
         self.trades.extend(trades)
 
     def save_log(self, log: BotLog) -> None:
         self.logs.append(log)
+
+    def save_trading_events(self, events: list[TradingEvent]) -> None:
+        self.trading_events.extend(events)
 
     def mark_candidate_evaluation_order_submitted(
         self,
@@ -98,6 +102,9 @@ def test_buy_intent_executor_marks_candidate_evaluation_order_submitted() -> Non
 
     assert repository.candidate_evaluations[0].order_submitted is True
     assert repository.candidate_evaluations[0].order_id == "1001"
+    assert repository.trading_events[0].event_type == "ORDER_SUBMIT_SUCCEEDED"
+    assert repository.trading_events[0].order_no == "1001"
+    assert repository.trading_events[-1].event_type == "ORDER_RECONCILIATION_MATCHED"
 
 
 def test_buy_intent_executor_handles_empty_intents() -> None:
@@ -146,6 +153,10 @@ def test_buy_intent_executor_records_failures_and_continues() -> None:
     assert repository.logs[2].level == "INFO"
     assert "OK" in repository.logs[2].message
     assert "FAIL" not in repository.logs[2].message
+    assert [item.reason_code for item in repository.trading_events[:2]] == [
+        "API_ERROR",
+        "ORDER_FAILED",
+    ]
 
 
 def test_buy_intent_executor_retries_temporary_api_errors() -> None:
@@ -170,6 +181,10 @@ def test_buy_intent_executor_retries_temporary_api_errors() -> None:
     assert calls == 2
     assert trades[0].retry_count == 1
     assert [item.reject_reason for item in repository.logs[:2]] == ["API_ERROR", "RETRY"]
+    assert [item.reason_code for item in repository.trading_events[:2]] == [
+        "API_ERROR",
+        "RETRY",
+    ]
 
 
 def test_buy_intent_executor_blocks_wide_bid_ask_spread() -> None:
@@ -187,3 +202,5 @@ def test_buy_intent_executor_blocks_wide_bid_ask_spread() -> None:
     assert submitted == []
     assert trades == []
     assert repository.logs[0].reject_reason == "BID_ASK_SPREAD_TOO_WIDE"
+    assert repository.trading_events[0].event_type == "ORDER_PROTECTION_BLOCKED"
+    assert repository.trading_events[0].is_blocking is True

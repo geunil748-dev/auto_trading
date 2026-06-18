@@ -16,6 +16,7 @@ from trading_bot.models import (
     RankedStock,
     ScoreRecord,
     TradeRecord,
+    TradingEvent,
     BreakoutInput,
 )
 
@@ -78,6 +79,8 @@ class DailyRepository(Protocol):
     ) -> None: ...
 
     def save_log(self, log: BotLog) -> None: ...
+
+    def save_trading_events(self, events: Iterable[TradingEvent]) -> None: ...
 
     def save_trades(self, trades: Iterable[TradeRecord]) -> None: ...
 

@@ -151,6 +151,7 @@ class TradingSettings:
     trailing_stop_activation_rate: float = 0.03
     max_daily_account_loss: float = -0.03
     max_fx_change: float = 0.02
+    allow_market_below_ma20_bypass: bool = False
     max_opening_gap: float = 0.30
     min_opening_price_change: float = 0.0
     min_volume_ratio: float = 1.00
@@ -244,12 +245,17 @@ def load_settings() -> TradingSettings:
         load_dotenv()
 
     app_mode = _app_mode_env()
+    mock_trading = _bool_env("MOCK_TRADING", True)
     real_trading_requested = _bool_env("REAL_TRADING_ENABLED", False)
+    market_below_ma20_bypass_requested = _bool_env(
+        "ALLOW_MARKET_BELOW_MA20_BYPASS",
+        False,
+    )
     max_selected_candidates = _max_selected_candidates_env("MAX_SELECTED_CANDIDATES", 5)
     target_filtered_default = max(15, max_selected_candidates * 3)
     settings = _validate_candidate_evaluation_settings(TradingSettings(
         app_mode=app_mode,
-        mock_trading=_bool_env("MOCK_TRADING", True),
+        mock_trading=mock_trading,
         min_price_usd=_min_price_env("MIN_PRICE_USD", MIN_PRICE_USD_FLOOR),
         max_price_usd=_float_env("MAX_PRICE_USD", 300.0),
         gainer_ranking_limit=_ranking_limit_env("GAINER_RANKING_LIMIT", 100),
@@ -296,6 +302,11 @@ def load_settings() -> TradingSettings:
         min_opening_price_change=_float_env("MIN_OPENING_PRICE_CHANGE", 0.0),
         min_volume_ratio=_float_env("MIN_VOLUME_RATIO", 1.00),
         min_total_score=_float_env("MIN_TOTAL_SCORE", 35.0),
+        allow_market_below_ma20_bypass=(
+            market_below_ma20_bypass_requested
+            if app_mode == APP_MODE_TEST and mock_trading
+            else False
+        ),
         max_intraday_entry_rounds=_int_env("MAX_INTRADAY_ENTRY_ROUNDS", 2),
         max_intraday_buy_intents_per_round=_int_env(
             "MAX_INTRADAY_BUY_INTENTS_PER_ROUND",
@@ -419,6 +430,7 @@ def runtime_risk_settings_payload(
         "minOpeningPriceChangePercent": current.min_opening_price_change * 100,
         "minVolumeRatio": current.min_volume_ratio,
         "maxOpeningGapPercent": current.max_opening_gap * 100,
+        "allowMarketBelowMa20Bypass": bool(current.allow_market_below_ma20_bypass),
         "refreshIntradayCandidates": bool(current.refresh_intraday_candidates),
         "candidateSelectionMode": current.candidate_selection_mode,
         "maxEntryPriceChangePercent": current.max_entry_price_change * 100,

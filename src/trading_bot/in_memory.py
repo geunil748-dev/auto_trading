@@ -3,7 +3,15 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import date
 
-from trading_bot.models import BotLog, CandidateEvaluation, DailyScore, DailyTarget, FillRecord, TradeRecord
+from trading_bot.models import (
+    BotLog,
+    CandidateEvaluation,
+    DailyScore,
+    DailyTarget,
+    FillRecord,
+    TradeRecord,
+    TradingEvent,
+)
 
 
 class InMemoryDailyRepository:
@@ -14,6 +22,7 @@ class InMemoryDailyRepository:
         self.fills: list[FillRecord] = []
         self.logs: list[BotLog] = []
         self.candidate_evaluations: list[CandidateEvaluation] = []
+        self.trading_events: list[TradingEvent] = []
 
     def save_daily_targets(self, targets: Iterable[DailyTarget]) -> None:
         self.targets.extend(targets)
@@ -73,3 +82,6 @@ class InMemoryDailyRepository:
 
     def save_log(self, log: BotLog) -> None:
         self.logs.append(log)
+
+    def save_trading_events(self, events: Iterable[TradingEvent]) -> None:
+        self.trading_events.extend(events)

@@ -5,6 +5,7 @@ def test_get_route_constants_match_monitor_endpoints() -> None:
     assert monitor_routes.GET_HEALTH == "/health"
     assert monitor_routes.GET_STATE == "/api/state"
     assert monitor_routes.GET_HISTORY == "/api/history"
+    assert monitor_routes.GET_TRADING_EVENT_TIMELINE == "/api/trading-events/timeline"
     assert monitor_routes.GET_DAILY_SUMMARY == "/api/daily-summary"
     assert monitor_routes.GET_DAILY_SUMMARY_DETAIL == "/api/daily-summary/detail"
     assert monitor_routes.GET_TRADING_SETTINGS == "/api/trading-settings"

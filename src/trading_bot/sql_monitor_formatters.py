@@ -277,6 +277,45 @@ def _fill(row: tuple[Any, ...]) -> dict[str, str]:
     }
 
 
+def _trading_event(row: tuple[Any, ...]) -> dict[str, object]:
+    (
+        event_time,
+        trade_date,
+        ticker,
+        ticker_name,
+        side,
+        stage,
+        event_type,
+        severity,
+        decision,
+        reason_code,
+        is_blocking,
+        correlation_id,
+        order_id,
+        order_no,
+        message,
+        details_json,
+    ) = row[:16]
+    return {
+        "eventTime": _time_text(event_time),
+        "eventDate": _date_text(trade_date),
+        "ticker": str(ticker or ""),
+        "name": str(ticker_name or ""),
+        "side": "" if side is None else str(side),
+        "stage": "" if stage is None else str(stage),
+        "eventType": "" if event_type is None else str(event_type),
+        "severity": _level_text(severity),
+        "decision": "" if decision is None else str(decision),
+        "reasonCode": "" if reason_code is None else str(reason_code),
+        "blocking": _bool_value(is_blocking),
+        "correlationId": "" if correlation_id is None else str(correlation_id),
+        "orderId": "" if order_id is None else str(order_id),
+        "orderNo": "" if order_no is None else str(order_no),
+        "message": _message_text(message),
+        "details": _json_details(details_json),
+    }
+
+
 def _entry_profit_snapshot(row: tuple[Any, ...]) -> dict[str, str]:
     (
         trade_date,
@@ -809,6 +848,18 @@ def _message_text(message: Any) -> str:
     return _replace_known_tokens(text)
 
 
+def _json_details(value: Any) -> object:
+    if value in (None, ""):
+        return {}
+    if not isinstance(value, str):
+        return value
+    try:
+        loaded = json.loads(value)
+    except json.JSONDecodeError:
+        return {"raw": value}
+    return loaded if isinstance(loaded, dict) else {"value": loaded}
+
+
 def _candidate_evaluation_saved_text(text: str) -> str:
     pairs = dict(_key_value_pairs(text.removeprefix("candidate_evaluation_saved ")))
     return (
@@ -1001,6 +1052,7 @@ _REASON_TEXT = {
     "LOW_OPENING_CHANGE": "장초반 상승률 부족",
     "LOW_OPENING_VOLUME": "장초반 거래량 부족",
     "MARKET_BELOW_MA20": "나스닥 20일선 하회",
+    "MARKET_BELOW_MA20_BYPASSED": "나스닥 20일선 하회 우회",
     "MANUAL_SELL": "수동 매도",
     "MANUAL_SELL_ALL": "전량 수동 매도",
     "MISSING_SNAPSHOT": "시세 스냅샷 없음",

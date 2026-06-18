@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
+from typing import Any
 
 
 class Sentiment(Enum):
@@ -132,6 +133,44 @@ class BotLog:
     reject_reason: str = ""
     actual_value: float | None = None
     threshold_value: float | None = None
+
+
+@dataclass(frozen=True)
+class TradingEvent:
+    event_time: datetime
+    stage: str
+    event_type: str
+    severity: str = "INFO"
+    trade_date: date | None = None
+    mode: str | None = None
+    app_mode: str | None = None
+    run_id: str | None = None
+    correlation_id: str | None = None
+    order_id: str | None = None
+    order_no: str | None = None
+    ticker: str | None = None
+    ticker_name: str | None = None
+    side: str | None = None
+    decision: str | None = None
+    reason_code: str | None = None
+    reason_label: str | None = None
+    is_blocking: bool | None = None
+    is_final_decision: bool | None = None
+    order_submitted: bool | None = None
+    buy_allowed: bool | None = None
+    sell_allowed: bool | None = None
+    quantity: int | None = None
+    price_usd: float | None = None
+    order_value_usd: float | None = None
+    actual_value: float | None = None
+    threshold_value: float | None = None
+    profit_rate: float | None = None
+    candidate_source: str | None = None
+    ranking_selection_mode: str | None = None
+    strategy_version: str | None = None
+    settings_snapshot_hash: str | None = None
+    message: str | None = None
+    details_json: str | dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

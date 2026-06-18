@@ -203,6 +203,33 @@ class Repository:
     def history_realized_profit_rate(self, trade_date) -> float:
         return self.today_realized_profit_rate()
 
+    def history_trading_event_timeline(
+        self,
+        trade_date,
+        ticker=None,
+        limit=200,
+    ) -> list[tuple[object, ...]]:
+        return [
+            (
+                datetime(2026, 5, 22, 22, 40, 1),
+                "2026-05-22",
+                "AAA",
+                "Alpha",
+                "BUY",
+                "ORDER_SUBMISSION",
+                "ORDER_SUBMIT_SUCCEEDED",
+                "INFO",
+                "ORDER_SUBMIT_SUCCEEDED",
+                "ORDER_SUBMIT_SUCCEEDED",
+                False,
+                "2026-05-22:AAA",
+                "1001",
+                "1001",
+                "order_submit_succeeded symbol=AAA",
+                '{"correlation":{"flow_key":"2026-05-22:AAA"}}',
+            )
+        ]
+
 
 def test_sql_monitor_state_shapes_dashboard_rows() -> None:
     state = SqlMonitorStateSource(Repository()).read()
@@ -388,6 +415,22 @@ def test_sql_monitor_state_shapes_dashboard_rows() -> None:
             "maxDrawdown": "-2.50%",
         },
     ]
+
+
+def test_sql_monitor_state_reads_trading_event_timeline() -> None:
+    payload = SqlMonitorStateSource(Repository()).read_trading_event_timeline(
+        date(2026, 5, 22),
+        ticker="AAA",
+        limit=50,
+    )
+
+    assert payload["date"] == "2026-05-22"
+    assert payload["ticker"] == "AAA"
+    assert payload["events"][0]["ticker"] == "AAA"
+    assert payload["events"][0]["eventType"] == "ORDER_SUBMIT_SUCCEEDED"
+    assert payload["events"][0]["correlationId"] == "2026-05-22:AAA"
+    assert payload["events"][0]["details"]["correlation"]["flow_key"] == "2026-05-22:AAA"
+    state = SqlMonitorStateSource(Repository()).read()
     assert state["exitReasonStats"] == [
         {
             "exitReason": "STOP_LOSS",

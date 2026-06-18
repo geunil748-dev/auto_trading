@@ -8,6 +8,7 @@ from trading_bot.monitor_state_service import (
     read_daily_summary_detail_state,
     read_daily_summary_state,
     read_history_state,
+    read_trading_event_timeline_state,
 )
 
 
@@ -95,6 +96,46 @@ def test_read_daily_summary_state_uses_reader_method_when_available() -> None:
 
 def test_read_daily_summary_state_falls_back_for_reader_without_method() -> None:
     assert read_daily_summary_state(object()) == {"summaries": []}
+
+
+def test_read_trading_event_timeline_state_uses_reader_method() -> None:
+    class Reader:
+        def read_trading_event_timeline(
+            self,
+            trade_date: date,
+            ticker: str | None = None,
+            limit: int = 200,
+        ) -> dict[str, object]:
+            return {
+                "date": trade_date.isoformat(),
+                "ticker": ticker,
+                "limit": limit,
+                "events": [{"ticker": ticker}],
+            }
+
+    assert read_trading_event_timeline_state(
+        Reader(),
+        date(2026, 6, 18),
+        ticker="AAA",
+        limit=10,
+    ) == {
+        "date": "2026-06-18",
+        "ticker": "AAA",
+        "limit": 10,
+        "events": [{"ticker": "AAA"}],
+    }
+
+
+def test_read_trading_event_timeline_state_falls_back_for_reader_without_method() -> None:
+    assert read_trading_event_timeline_state(
+        object(),
+        date(2026, 6, 18),
+        ticker="AAA",
+    ) == {
+        "date": "2026-06-18",
+        "ticker": "AAA",
+        "events": [],
+    }
 
 
 def test_read_daily_summary_detail_state_falls_back_for_reader_without_method() -> None:

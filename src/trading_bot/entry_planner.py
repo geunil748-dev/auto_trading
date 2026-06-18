@@ -16,9 +16,12 @@ from trading_bot.config import (
     TradingSettings,
 )
 from trading_bot.models import AccountState, BreakoutInput, BotLog, BuyIntent, CandidateEvaluation, ScoreRecord
-from trading_bot.risk import position_entry_gate
+from trading_bot.risk import MARKET_BELOW_MA20_BYPASSED, position_entry_gate
 from trading_bot.scoring import position_fraction_for_score
 from trading_bot.strategy import breakout_triggered
+from trading_bot.trading_event_logger import record_candidate_evaluation_event
+
+ENTRY_REASON_MAX_LENGTH = 80
 
 
 def plan_buy_intents(
@@ -31,6 +34,7 @@ def plan_buy_intents(
     source: str = "entry_planner",
     source_by_ticker: Mapping[str, str] | None = None,
     run_id: str | None = None,
+    entry_reason_tags: tuple[str, ...] = (),
 ) -> list[BuyIntent]:
     intents: list[BuyIntent] = []
     invested = account.invested_usd
@@ -65,6 +69,7 @@ def plan_buy_intents(
                     evaluation_source,
                     run_id,
                     evaluated_at,
+                    entry_reason_tags,
                 ),
             )
             continue
@@ -87,6 +92,7 @@ def plan_buy_intents(
                     evaluation_source,
                     run_id,
                     evaluated_at,
+                    entry_reason_tags,
                 ),
             )
             continue
@@ -108,6 +114,7 @@ def plan_buy_intents(
                     evaluation_source,
                     run_id,
                     evaluated_at,
+                    entry_reason_tags,
                 ),
             )
             continue
@@ -141,6 +148,7 @@ def plan_buy_intents(
                     evaluation_source,
                     run_id,
                     evaluated_at,
+                    entry_reason_tags,
                 ),
             )
             continue
@@ -151,6 +159,7 @@ def plan_buy_intents(
             final_score,
             evaluation,
             manual_watchlist=_is_manual_source(evaluation_source),
+            extra_tags=entry_reason_tags,
         )
         _safe_save_candidate_evaluation(
             repository,
@@ -168,6 +177,7 @@ def plan_buy_intents(
                 evaluation_source,
                 run_id,
                 evaluated_at,
+                entry_reason_tags,
             ),
         )
         intents.append(
@@ -225,6 +235,7 @@ BUY_BLOCK_REASON_LABELS = {
     "POSITION_EXPOSURE_LIMIT": "종목별 노출 한도 초과",
     "ACCOUNT_EXPOSURE_LIMIT": "계좌 노출 한도 초과",
     "MARKET_BELOW_MA20": "시장 MA20 하회",
+    "MARKET_BELOW_MA20_BYPASSED": "시장 MA20 하회 우회",
     "FX_VOLATILITY": "환율 변동성 초과",
     "DAILY_ACCOUNT_LOSS": "일 손실 한도 초과",
     "OPEN_POSITION_LIMIT": "보유 종목 수 한도 초과",
@@ -499,6 +510,7 @@ def _entry_reason(
     evaluation: EntryTimingEvaluation,
     *,
     manual_watchlist: bool = False,
+    extra_tags: tuple[str, ...] = (),
 ) -> tuple[str, str]:
     reasons = ["OPENING_BREAKOUT"]
     if manual_watchlist:
@@ -507,6 +519,14 @@ def _entry_reason(
         reasons.append("NEWS_POSITIVE")
     if score.chart_score >= 60:
         reasons.append("CHART_POSITIVE")
+    detail_tags = []
+    for tag in extra_tags:
+        if not tag or tag in reasons:
+            continue
+        detail_tags.append(tag)
+        candidate_reasons = [*reasons, tag]
+        if len("+".join(candidate_reasons)) <= ENTRY_REASON_MAX_LENGTH:
+            reasons.append(tag)
     detail = (
         f"총점 {score.total_score:.1f}, "
         f"final {final_score:.1f}, "
@@ -516,6 +536,8 @@ def _entry_reason(
         detail += f", soft {','.join(evaluation.failed_soft_reasons)}"
     if evaluation.failed_log_reasons:
         detail += f", log {','.join(evaluation.failed_log_reasons)}"
+    if detail_tags:
+        detail += f", tags {','.join(detail_tags)}"
     return "+".join(reasons), detail
 
 
@@ -547,6 +569,7 @@ def _candidate_evaluation(
     source: str,
     run_id: str | None,
     evaluated_at: datetime,
+    entry_reason_tags: tuple[str, ...] = (),
 ) -> CandidateEvaluation:
     condition_results = dict(evaluation.condition_results or {}) if evaluation else {}
     hard_reasons = tuple(evaluation.failed_hard_reasons if evaluation else ())
@@ -555,6 +578,11 @@ def _candidate_evaluation(
     reasons = tuple(reason for reason in buy_block_reasons if reason)
     entry_price_vs_breakout = _entry_price_vs_breakout(breakout.last_price_usd, threshold)
     manual_candidate = _is_manual_source(source)
+    market_bypass_reason = (
+        MARKET_BELOW_MA20_BYPASSED
+        if MARKET_BELOW_MA20_BYPASSED in entry_reason_tags
+        else None
+    )
     analysis_context = {
         "candidate_source": source,
         "ranking_selection_mode": settings.ranking_selection_mode,
@@ -584,6 +612,10 @@ def _candidate_evaluation(
         "fx_change_rate": None,
         "minutes_since_market_open": None,
         "entry_time_timezone_assumption": "Asia/Seoul",
+        "market_below_ma20_bypassed": market_bypass_reason is not None,
+        "market_bypass_reason": market_bypass_reason,
+        "analysis_group": "market_bypass_trades" if market_bypass_reason else "normal_trades",
+        "entry_reason_tags": list(entry_reason_tags),
     }
     return CandidateEvaluation(
         run_id=run_id,
@@ -655,6 +687,10 @@ def _candidate_evaluation(
                 "chart_score": score.chart_score,
                 "total_score": score.total_score,
                 "final_score": final_score,
+                "market_below_ma20_bypassed": market_bypass_reason is not None,
+                "market_bypass_reason": market_bypass_reason,
+                "analysis_group": "market_bypass_trades" if market_bypass_reason else "normal_trades",
+                "entry_reason_tags": list(entry_reason_tags),
                 "gain_rank": None,
                 "turnover_rank": None,
                 "trade_value_rank": None,
@@ -708,6 +744,7 @@ def _safe_save_candidate_evaluation(
         return
     try:
         repository.save_candidate_evaluations([evaluation])
+        record_candidate_evaluation_event(repository, evaluation, fallback_bot_log=False)
         if hasattr(repository, "save_log"):
             condition_results = (
                 json.loads(evaluation.condition_result_json)

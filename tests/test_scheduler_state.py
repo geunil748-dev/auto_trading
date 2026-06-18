@@ -24,6 +24,7 @@ class SnapshotRepository:
         self.entry_snapshots = []
         self.updated_prices: dict[str, float] = {}
         self.final_updates: list[date] = []
+        self.trading_events = []
 
     def save_account_snapshot(self, account, trade_date):
         self.calls.append("account")
@@ -69,6 +70,9 @@ class SnapshotRepository:
     def update_entry_profit_snapshot_finals(self, trade_date):
         self.calls.append("finals")
         self.final_updates.append(trade_date)
+
+    def save_trading_events(self, events):
+        self.trading_events.extend(events)
 
 
 def test_write_state_file_adds_last_updated_and_replaces_tmp(tmp_path) -> None:
@@ -207,6 +211,11 @@ def test_persist_live_snapshot_keeps_save_order_and_fill_callback(monkeypatch) -
     assert summaries
     assert notifications == [(records, [{"ticker": "AAA", "closePrice": "$11.00"}])]
     assert repository.notification_sent == records
+    assert any(event.event_type == "FILL_SAVED" for event in repository.trading_events)
+    assert any(
+        event.event_type == "FILL_NOTIFICATION_SENT"
+        for event in repository.trading_events
+    )
 
 
 def test_persist_live_snapshot_skips_already_notified_fills(monkeypatch) -> None:
@@ -240,6 +249,82 @@ def test_persist_live_snapshot_skips_already_notified_fills(monkeypatch) -> None
     assert repository.fills == records
     assert notifications == []
     assert repository.notification_sent == []
+    assert any(
+        event.event_type == "FILL_NOTIFICATION_SKIPPED_DUPLICATE"
+        for event in repository.trading_events
+    )
+
+
+def test_persist_live_snapshot_records_fill_data_quality_event(monkeypatch) -> None:
+    repository = SnapshotRepository()
+    records = [
+        FillRecord(
+            trade_date=date(2026, 6, 5),
+            ticker="AAA",
+            side="BUY",
+            quantity=3,
+            fill_price_usd=10.5,
+            fill_amount_usd=31.5,
+            fill_time="22:35:00",
+        )
+    ]
+
+    monkeypatch.setattr("trading_bot.scheduler_state.SqlServerDailyRepository", lambda connect: repository)
+    monkeypatch.setattr("trading_bot.scheduler_state.pyodbc_connect_factory", lambda: object)
+    monkeypatch.setattr("trading_bot.scheduler_state.current_trade_date", lambda: date(2026, 6, 5))
+    monkeypatch.setattr("trading_bot.scheduler_state.load_settings", lambda: TradingSettings())
+    monkeypatch.setattr("trading_bot.scheduler_state.fill_records_from_monitor_rows", lambda *args, **kwargs: records)
+
+    error = persist_live_snapshot(
+        {
+            "account": {},
+            "orders": [],
+            "holdings": [],
+            "fills": [{"ticker": "AAA"}, {"ticker": ""}],
+        },
+        send_fill_notifications_func=lambda records, holdings: len(records),
+    )
+
+    assert error == ""
+    event = next(
+        item
+        for item in repository.trading_events
+        if item.reason_code == "FILL_MONITOR_ROWS_SKIPPED"
+    )
+    assert event.details_json["raw_fill_count"] == 2
+    assert event.details_json["saved_fill_count"] == 1
+
+
+def test_persist_live_snapshot_records_fill_notification_no_sender(monkeypatch) -> None:
+    repository = SnapshotRepository()
+    records = [
+        FillRecord(
+            trade_date=date(2026, 6, 5),
+            ticker="AAA",
+            side="BUY",
+            quantity=3,
+            fill_price_usd=10.5,
+            fill_amount_usd=31.5,
+            fill_time="22:35:00",
+        )
+    ]
+
+    monkeypatch.setattr("trading_bot.scheduler_state.SqlServerDailyRepository", lambda connect: repository)
+    monkeypatch.setattr("trading_bot.scheduler_state.pyodbc_connect_factory", lambda: object)
+    monkeypatch.setattr("trading_bot.scheduler_state.current_trade_date", lambda: date(2026, 6, 5))
+    monkeypatch.setattr("trading_bot.scheduler_state.load_settings", lambda: TradingSettings())
+    monkeypatch.setattr("trading_bot.scheduler_state.fill_records_from_monitor_rows", lambda *args, **kwargs: records)
+
+    error = persist_live_snapshot(
+        {"account": {}, "orders": [], "holdings": [], "fills": [{"ticker": "AAA"}]},
+        send_fill_notifications_func=None,
+    )
+
+    assert error == ""
+    assert any(
+        event.event_type == "FILL_NOTIFICATION_SKIPPED_NO_SENDER"
+        for event in repository.trading_events
+    )
 
 
 def test_persist_live_snapshot_returns_blank_for_value_error(monkeypatch) -> None:

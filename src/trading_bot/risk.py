@@ -10,6 +10,11 @@ from trading_bot.models import AccountState, CandidateSnapshot, PositionState
 class RiskDecision:
     allowed: bool
     reason: str | None = None
+    bypass_reason: str | None = None
+
+
+MARKET_BELOW_MA20 = "MARKET_BELOW_MA20"
+MARKET_BELOW_MA20_BYPASSED = "MARKET_BELOW_MA20_BYPASSED"
 
 
 def global_entry_gate(
@@ -19,8 +24,12 @@ def global_entry_gate(
     account: AccountState,
     settings: TradingSettings,
 ) -> RiskDecision:
+    bypass_reason = None
     if nasdaq_price_usd < nasdaq_ma20_usd:
-        return RiskDecision(False, "MARKET_BELOW_MA20")
+        if _market_below_ma20_bypass_allowed(settings):
+            bypass_reason = MARKET_BELOW_MA20_BYPASSED
+        else:
+            return RiskDecision(False, MARKET_BELOW_MA20)
     if abs(fx_change_rate) >= settings.max_fx_change:
         return RiskDecision(False, "FX_VOLATILITY")
     if account.daily_profit_rate <= settings.max_daily_account_loss:
@@ -31,7 +40,15 @@ def global_entry_gate(
         return RiskDecision(False, "INVALID_ACCOUNT_EQUITY")
     if account.invested_usd / account.equity_usd >= settings.max_account_exposure:
         return RiskDecision(False, "ACCOUNT_EXPOSURE_LIMIT")
-    return RiskDecision(True)
+    return RiskDecision(True, bypass_reason=bypass_reason)
+
+
+def _market_below_ma20_bypass_allowed(settings: TradingSettings) -> bool:
+    return (
+        bool(settings.allow_market_below_ma20_bypass)
+        and settings.app_mode == "test"
+        and bool(settings.mock_trading)
+    )
 
 
 def defensive_candidate_gate(

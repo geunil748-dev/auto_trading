@@ -3,6 +3,7 @@ from __future__ import annotations
 GET_HEALTH = "/health"
 GET_STATE = "/api/state"
 GET_HISTORY = "/api/history"
+GET_TRADING_EVENT_TIMELINE = "/api/trading-events/timeline"
 GET_DAILY_SUMMARY = "/api/daily-summary"
 GET_DAILY_SUMMARY_DETAIL = "/api/daily-summary/detail"
 GET_TRADING_SETTINGS = "/api/trading-settings"

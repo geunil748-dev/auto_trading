@@ -25,6 +25,7 @@ from trading_bot.models import (
     TradeRecord,
     BuyIntent,
     SellIntent,
+    TradingEvent,
 )
 from trading_bot.repositories import SqlServerDailyRepository
 from trading_bot.repositories import SqlServerMonitorRepository
@@ -343,6 +344,63 @@ def test_sql_repository_marks_candidate_evaluation_order_not_submitted() -> None
         "AAA",
         date(2026, 5, 22),
     )
+
+
+def test_sql_repository_writes_trading_event_log() -> None:
+    cursors: list[Cursor] = []
+
+    def connect() -> Connection:
+        cursor = Cursor()
+        cursors.append(cursor)
+        return Connection(cursor)
+
+    repository = SqlServerDailyRepository(connect)
+    repository.save_trading_events(
+        [
+            TradingEvent(
+                event_time=datetime(2026, 6, 18, 1, 2, 3),
+                trade_date=date(2026, 6, 18),
+                ticker="AAA",
+                stage="ORDER_PROTECTION",
+                event_type="ORDER_PROTECTION_BLOCKED",
+                severity="WARNING",
+                reason_code="BID_ASK_SPREAD_TOO_WIDE",
+                details_json={"사유": "스프레드", "token": "secret"},
+            )
+        ]
+    )
+
+    assert "CREATE TABLE dbo.trading_event_log" in cursors[0].calls[0][0]
+    assert "IX_trading_event_log_reason_code" in cursors[0].calls[0][0]
+    assert "INSERT INTO trading_event_log" in cursors[1].calls[0][0]
+    row = cursors[1].calls[0][1][0]
+    assert row[8] == "AAA"
+    assert row[11:16] == (
+        "ORDER_PROTECTION",
+        "ORDER_PROTECTION_BLOCKED",
+        "WARNING",
+        None,
+        "BID_ASK_SPREAD_TOO_WIDE",
+    )
+    assert '"사유": "스프레드"' in row[-1]
+
+
+def test_sql_monitor_repository_reads_trading_event_timeline() -> None:
+    cursor = Cursor()
+    connection = Connection(cursor)
+    repository = SqlServerMonitorRepository(lambda: connection)
+
+    repository.history_trading_event_timeline(
+        date(2026, 6, 18),
+        ticker="aaa",
+        limit=20,
+    )
+
+    sql, params = cursor.calls[0]
+    assert "SELECT TOP (20)" in sql
+    assert "FROM trading_event_log" in sql
+    assert "ORDER BY event_time ASC, id ASC" in sql
+    assert params == (date(2026, 6, 18), "AAA", "AAA")
 
 
 def test_sql_monitor_run_summaries_ignore_history_date() -> None:

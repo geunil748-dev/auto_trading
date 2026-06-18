@@ -73,6 +73,39 @@ def test_load_settings_test_mode_ignores_real_trading_unlock(monkeypatch) -> Non
     assert settings.real_emergency_stop is True
 
 
+def test_load_settings_allows_market_ma20_bypass_only_in_test_mock_mode(monkeypatch) -> None:
+    monkeypatch.setenv("APP_MODE", "test")
+    monkeypatch.setenv("MOCK_TRADING", "true")
+    monkeypatch.setenv("ALLOW_MARKET_BELOW_MA20_BYPASS", "true")
+
+    settings = load_settings()
+
+    assert settings.allow_market_below_ma20_bypass is True
+    assert runtime_risk_settings_payload(settings)["allowMarketBelowMa20Bypass"] is True
+
+
+def test_load_settings_forces_market_ma20_bypass_off_in_real_mode(monkeypatch) -> None:
+    monkeypatch.setenv("APP_MODE", "real")
+    monkeypatch.setenv("MOCK_TRADING", "true")
+    monkeypatch.setenv("ALLOW_MARKET_BELOW_MA20_BYPASS", "true")
+
+    settings = load_settings()
+
+    assert settings.allow_market_below_ma20_bypass is False
+
+
+def test_load_settings_forces_market_ma20_bypass_off_when_mock_trading_disabled(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("APP_MODE", "test")
+    monkeypatch.setenv("MOCK_TRADING", "false")
+    monkeypatch.setenv("ALLOW_MARKET_BELOW_MA20_BYPASS", "true")
+
+    settings = load_settings()
+
+    assert settings.allow_market_below_ma20_bypass is False
+
+
 def test_load_settings_rejects_invalid_app_mode(monkeypatch) -> None:
     monkeypatch.setenv("APP_MODE", "prod")
 

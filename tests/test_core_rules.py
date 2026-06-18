@@ -87,6 +87,40 @@ def test_global_gate_uses_market_priority_before_fx() -> None:
     assert blocked.reason == "MARKET_BELOW_MA20"
 
 
+def test_global_gate_can_bypass_market_ma20_only_in_test_mock_mode() -> None:
+    settings = TradingSettings(allow_market_below_ma20_bypass=True)
+
+    decision = global_entry_gate(99, 100, 0.0, account(), settings)
+
+    assert decision.allowed
+    assert decision.reason is None
+    assert decision.bypass_reason == "MARKET_BELOW_MA20_BYPASSED"
+
+
+def test_global_gate_does_not_bypass_market_ma20_in_real_mode() -> None:
+    settings = TradingSettings(
+        app_mode="real",
+        mock_trading=False,
+        allow_market_below_ma20_bypass=True,
+    )
+
+    decision = global_entry_gate(99, 100, 0.0, account(), settings)
+
+    assert not decision.allowed
+    assert decision.reason == "MARKET_BELOW_MA20"
+    assert decision.bypass_reason is None
+
+
+def test_global_gate_market_bypass_keeps_other_global_blocks() -> None:
+    settings = TradingSettings(allow_market_below_ma20_bypass=True)
+
+    decision = global_entry_gate(99, 100, 0.03, account(), settings)
+
+    assert not decision.allowed
+    assert decision.reason == "FX_VOLATILITY"
+    assert decision.bypass_reason is None
+
+
 def test_defensive_gate_blocks_gap_and_price_outliers() -> None:
     assert defensive_candidate_gate(candidate("LOW", price=4.99), SETTINGS).reason == "PENNY_STOCK"
     assert defensive_candidate_gate(candidate("GAP", open_price=13.1), SETTINGS).reason == "OPENING_GAP"
@@ -481,6 +515,8 @@ def test_entry_planner_saves_unbought_hard_filter_evaluation() -> None:
     assert json.loads(evaluation.buy_block_reasons) == ["BREAKOUT_CLOSE_FAILED"]
     assert evaluation.hard_filter_failed_count == 1
     assert evaluation.soft_condition_failed_count == 0
+    assert repository.trading_events[0].event_type == "BUY_BLOCKED"
+    assert repository.trading_events[0].reason_code == "BREAKOUT_CLOSE_FAILED"
 
 
 def test_entry_planner_saves_bought_and_soft_score_evaluation() -> None:
@@ -522,6 +558,7 @@ def test_entry_planner_saves_bought_and_soft_score_evaluation() -> None:
         "매수판정=매수 허용 하드필터탈락=0 소프트조건탈락=1 VWAP/MA20상태=비활성화"
     )
     assert repository.logs[0].reject_reason == "BUY_ALLOWED"
+    assert repository.trading_events[0].event_type == "BUY_ALLOWED"
 
 
 def test_entry_planner_marks_manual_watchlist_source_and_reason() -> None:
@@ -550,6 +587,36 @@ def test_entry_planner_marks_manual_watchlist_source_and_reason() -> None:
     evaluation = repository.candidate_evaluations[0]
     assert evaluation.source == "manual_buy_list"
     assert evaluation.buy_block_reason == "BUY_ALLOWED"
+
+
+def test_entry_planner_records_market_bypass_tag_in_intent_and_evaluation() -> None:
+    repository = InMemoryDailyRepository()
+
+    intents = plan_buy_intents(
+        [ScoreRecord("BYP", 95, 90)],
+        {
+            "BYP": BreakoutInput(
+                last_price_usd=12.5,
+                open_price_usd=10,
+                previous_high_usd=12,
+                previous_low_usd=8,
+            ),
+        },
+        account(),
+        entry_test_settings(require_5m_volume_increase=False),
+        repository=repository,
+        trade_date=date(2026, 5, 22),
+        entry_reason_tags=("MARKET_BELOW_MA20_BYPASSED",),
+    )
+
+    assert [item.ticker for item in intents] == ["BYP"]
+    assert "MARKET_BELOW_MA20_BYPASSED" in intents[0].entry_reason
+    assert "MARKET_BELOW_MA20_BYPASSED" in intents[0].entry_reason_detail
+    condition_json = json.loads(repository.candidate_evaluations[0].condition_result_json)
+    raw_json = json.loads(repository.candidate_evaluations[0].raw_candidate_json)
+    assert condition_json["market_below_ma20_bypassed"] is True
+    assert condition_json["analysis_group"] == "market_bypass_trades"
+    assert raw_json["market_bypass_reason"] == "MARKET_BELOW_MA20_BYPASSED"
 
 
 def test_entry_planner_requires_configured_5m_volume_increase_percent() -> None:

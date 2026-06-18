@@ -618,3 +618,67 @@ UPDATE dbo.bot_log
 SET trade_date = CAST(created_at AS DATE)
 WHERE trade_date IS NULL;
 ');
+
+IF OBJECT_ID(N'dbo.trading_event_log', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.trading_event_log (
+        id BIGINT IDENTITY PRIMARY KEY,
+        event_id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        event_time DATETIME2 NOT NULL,
+        created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+        trade_date DATE NULL,
+        mode NVARCHAR(20) NULL,
+        app_mode NVARCHAR(20) NULL,
+        run_id NVARCHAR(100) NULL,
+        correlation_id NVARCHAR(100) NULL,
+        order_id NVARCHAR(100) NULL,
+        order_no NVARCHAR(100) NULL,
+        ticker NVARCHAR(32) NULL,
+        ticker_name NVARCHAR(200) NULL,
+        side NVARCHAR(20) NULL,
+        stage NVARCHAR(50) NOT NULL,
+        event_type NVARCHAR(80) NOT NULL,
+        severity NVARCHAR(20) NOT NULL DEFAULT 'INFO',
+        decision NVARCHAR(80) NULL,
+        reason_code NVARCHAR(120) NULL,
+        reason_label NVARCHAR(300) NULL,
+        is_blocking BIT NULL,
+        is_final_decision BIT NULL,
+        order_submitted BIT NULL,
+        buy_allowed BIT NULL,
+        sell_allowed BIT NULL,
+        quantity INT NULL,
+        price_usd DECIMAL(19, 6) NULL,
+        order_value_usd DECIMAL(19, 6) NULL,
+        actual_value FLOAT NULL,
+        threshold_value FLOAT NULL,
+        profit_rate FLOAT NULL,
+        candidate_source NVARCHAR(80) NULL,
+        ranking_selection_mode NVARCHAR(40) NULL,
+        strategy_version NVARCHAR(100) NULL,
+        settings_snapshot_hash NVARCHAR(100) NULL,
+        message NVARCHAR(MAX) NULL,
+        details_json NVARCHAR(MAX) NULL
+    );
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_trading_event_log_trade_date_time' AND object_id = OBJECT_ID('dbo.trading_event_log'))
+    CREATE INDEX IX_trading_event_log_trade_date_time ON dbo.trading_event_log (trade_date, event_time);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_trading_event_log_ticker_date' AND object_id = OBJECT_ID('dbo.trading_event_log'))
+    CREATE INDEX IX_trading_event_log_ticker_date ON dbo.trading_event_log (ticker, trade_date);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_trading_event_log_event_type' AND object_id = OBJECT_ID('dbo.trading_event_log'))
+    CREATE INDEX IX_trading_event_log_event_type ON dbo.trading_event_log (event_type, trade_date);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_trading_event_log_reason_code' AND object_id = OBJECT_ID('dbo.trading_event_log'))
+    CREATE INDEX IX_trading_event_log_reason_code ON dbo.trading_event_log (reason_code, trade_date);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_trading_event_log_stage' AND object_id = OBJECT_ID('dbo.trading_event_log'))
+    CREATE INDEX IX_trading_event_log_stage ON dbo.trading_event_log (stage, trade_date);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_trading_event_log_correlation' AND object_id = OBJECT_ID('dbo.trading_event_log'))
+    CREATE INDEX IX_trading_event_log_correlation ON dbo.trading_event_log (correlation_id);
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_trading_event_log_order_no' AND object_id = OBJECT_ID('dbo.trading_event_log'))
+    CREATE INDEX IX_trading_event_log_order_no ON dbo.trading_event_log (order_no);

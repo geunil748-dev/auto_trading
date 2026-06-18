@@ -44,6 +44,7 @@ def recheck_fixed_watchlist(
         trade_date=scoring_trade_date(latest_result.scoring),
         source="fixed_recheck",
         source_by_ticker=_source_by_ticker(latest_result.scoring, selected, "fixed_recheck"),
+        entry_reason_tags=_bypass_tags(latest_result.scoring),
     )
     return DryRunResult(account, latest_result.scoring, tuple(intents))
 
@@ -74,6 +75,9 @@ def hybrid_recheck(
             refreshed.scoring,
             selected,
             "hybrid_recheck",
+        ),
+        entry_reason_tags=(
+            _bypass_tags(refreshed.scoring) or _bypass_tags(opening_result.scoring)
         ),
     )
     return DryRunResult(account, refreshed.scoring, tuple(intents))
@@ -127,6 +131,7 @@ def plan_buy_intents_with_evaluation(
     trade_date,
     source: str,
     source_by_ticker=None,
+    entry_reason_tags: tuple[str, ...] = (),
 ) -> list[BuyIntent]:
     try:
         return plan_buy_intents(
@@ -138,11 +143,17 @@ def plan_buy_intents_with_evaluation(
             trade_date=trade_date,
             source=source,
             source_by_ticker=source_by_ticker,
+            entry_reason_tags=entry_reason_tags,
         )
     except TypeError as exc:
         if "unexpected keyword" not in str(exc):
             raise
         return plan_buy_intents(selected, breakout_inputs, account, settings)
+
+
+def _bypass_tags(scoring) -> tuple[str, ...]:
+    reason = getattr(scoring, "bypass_reason", None)
+    return (reason,) if reason else ()
 
 
 def _source_by_ticker(scoring, selected, default: str) -> dict[str, str]:

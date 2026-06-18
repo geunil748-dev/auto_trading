@@ -1,7 +1,7 @@
 from datetime import date
 
 from trading_bot.config import TradingSettings
-from trading_bot.models import BotLog, SellIntent, TradeRecord
+from trading_bot.models import BotLog, SellIntent, TradeRecord, TradingEvent
 from trading_bot.sell_execution import SellIntentExecutor
 from trading_bot.strategy_metadata import strategy_metadata_from_settings
 
@@ -10,12 +10,16 @@ class Repository:
     def __init__(self) -> None:
         self.trades: list[TradeRecord] = []
         self.logs: list[BotLog] = []
+        self.trading_events: list[TradingEvent] = []
 
     def save_trades(self, trades: list[TradeRecord]) -> None:
         self.trades.extend(trades)
 
     def save_log(self, log: BotLog) -> None:
         self.logs.append(log)
+
+    def save_trading_events(self, events: list[TradingEvent]) -> None:
+        self.trading_events.extend(events)
 
 
 def test_sell_intent_executor_records_exit_reason() -> None:
@@ -49,6 +53,12 @@ def test_sell_intent_executor_records_exit_reason() -> None:
     ]
     assert repository.logs == [
         BotLog("INFO", "execution", "매도 주문 1건: AAA 2주 @ $9.70 (사유 트레일링 스탑)")
+    ]
+
+    assert [item.event_type for item in repository.trading_events] == [
+        "EXIT_SIGNAL",
+        "SELL_ORDER_SUBMITTED",
+        "ORDER_RECONCILIATION_MATCHED",
     ]
 
 
@@ -110,3 +120,14 @@ def test_sell_intent_executor_records_failures_and_continues() -> None:
     assert repository.logs[2].level == "INFO"
     assert "OK" in repository.logs[2].message
     assert "FAIL" not in repository.logs[2].message
+    assert [item.event_type for item in repository.trading_events] == [
+        "EXIT_SIGNAL",
+        "ORDER_SUBMIT_FAILED",
+        "ORDER_SUBMIT_FAILED",
+        "EXIT_SIGNAL",
+        "SELL_ORDER_SUBMITTED",
+        "ORDER_RECONCILIATION_MISSING_TRADE_RECORD",
+        "ORDER_RECONCILIATION_MATCHED",
+    ]
+    assert repository.trading_events[1].reason_code == "API_ERROR"
+    assert repository.trading_events[2].reason_code == "ORDER_FAILED"

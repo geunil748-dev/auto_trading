@@ -69,6 +69,7 @@ from trading_bot.scheduled_messages import log_row, recheck_message, watch_messa
 from trading_bot.trade_fill_notifications import (
     send_fill_notifications,
 )
+from trading_bot.trading_event_logger import record_buy_not_submitted
 from trading_bot.trading_date import current_trade_date
 
 
@@ -340,36 +341,14 @@ def _mark_candidate_no_order_diagnostics(
         return
     trade_date = current_trade_date()
     for diagnostic in diagnostics:
-        if hasattr(repository, "mark_candidate_evaluation_order_not_submitted"):
-            try:
-                repository.mark_candidate_evaluation_order_not_submitted(
-                    diagnostic.ticker,
-                    trade_date,
-                    diagnostic.reason,
-                )
-            except Exception as exc:
-                safe_scheduler_log(
-                    "WARNING",
-                    "candidate_evaluation",
-                    "CANDIDATE_NO_ORDER_REASON_SAVE_FAILED: "
-                    f"{safe_exception_summary(exc)}",
-                    symbol=diagnostic.ticker,
-                    reject_reason="CANDIDATE_NO_ORDER_REASON_SAVE_FAILED",
-                )
-        if hasattr(repository, "save_log"):
-            try:
-                repository.save_log(
-                    BotLog(
-                        "INFO",
-                        "candidate_evaluation",
-                        "candidate_order_not_submitted "
-                        f"symbol={diagnostic.ticker} reason={diagnostic.reason}",
-                        symbol=diagnostic.ticker,
-                        reject_reason=diagnostic.reason,
-                    )
-                )
-            except Exception:
-                pass
+        record_buy_not_submitted(
+            repository,
+            ticker=diagnostic.ticker,
+            trade_date=trade_date,
+            reason_code=diagnostic.reason,
+            stage="INTRADAY_RECHECK",
+            details={"detail": diagnostic.detail},
+        )
 
 
 def _risk_guard_no_order_diagnostics(

@@ -10,6 +10,7 @@ from trading_bot.models import (
     MarketContext,
     RankedStock,
     ScoreRecord,
+    TradingEvent,
 )
 from trading_bot.pipeline import ScreeningScoringPipeline
 
@@ -32,6 +33,7 @@ class Repository:
         self.targets: list[DailyTarget] = []
         self.scores: list[DailyScore] = []
         self.logs: list[BotLog] = []
+        self.trading_events: list[TradingEvent] = []
 
     def save_daily_targets(self, targets: tuple[DailyTarget, ...]) -> None:
         self.targets.extend(targets)
@@ -41,6 +43,9 @@ class Repository:
 
     def save_log(self, log: BotLog) -> None:
         self.logs.append(log)
+
+    def save_trading_events(self, events: list[TradingEvent]) -> None:
+        self.trading_events.extend(events)
 
 
 class MarketData:
@@ -385,6 +390,75 @@ def test_pipeline_sends_candidate_notification_after_scores_are_saved() -> None:
         for log in repository.logs
     )
 
+    assert any(
+        event.event_type == "CANDIDATE_LIST_TELEGRAM_SENT"
+        for event in repository.trading_events
+    )
+
+
+def test_pipeline_sends_candidate_notification_when_global_gate_blocks_entry() -> None:
+    market_data = MarketData(MarketContext(99, 100, 0.01))
+    repository = Repository()
+    notifications = []
+
+    run = ScreeningScoringPipeline(
+        market_data,
+        Scoring(),
+        AccountReader(account()),
+        repository,
+        FixedClock(),
+        TradingSettings(),
+        candidate_notification_sender=lambda trade_date, targets, scores: notifications.append(
+            (trade_date, targets, scores)
+        )
+        or True,
+    ).run()
+
+    assert run.blocked_reason == "MARKET_BELOW_MA20"
+    assert len(notifications) == 1
+    trade_date, targets, scores = notifications[0]
+    assert trade_date == date(2026, 5, 22)
+    assert [item.candidate.ticker for item in targets] == ["AAA", "BBB"]
+    assert [item.score.ticker for item in scores] == ["AAA", "BBB"]
+    assert [item.score.ticker for item in scores if item.is_selected] == ["AAA", "BBB"]
+    assert any(
+        log.message == "CANDIDATE_LIST_TELEGRAM_SENT: 후보 리스트 텔레그램 발송 완료"
+        and log.reject_reason == "CANDIDATE_LIST_TELEGRAM_SENT"
+        for log in repository.logs
+    )
+
+
+def test_pipeline_records_market_ma20_bypass_when_enabled_for_test_mock() -> None:
+    market_data = MarketData(MarketContext(99, 100, 0.01))
+    repository = Repository()
+
+    run = ScreeningScoringPipeline(
+        market_data,
+        Scoring(),
+        AccountReader(account()),
+        repository,
+        FixedClock(),
+        TradingSettings(allow_market_below_ma20_bypass=True),
+    ).run()
+
+    assert run.blocked_reason is None
+    assert run.bypass_reason == "MARKET_BELOW_MA20_BYPASSED"
+    assert [item.ticker for item in run.selected] == ["AAA", "BBB"]
+    assert any(
+        log.reject_reason == "MARKET_BELOW_MA20_BYPASSED"
+        and log.actual_value == 99
+        and log.threshold_value == 100
+        for log in repository.logs
+    )
+    bypass_event = next(
+        event
+        for event in repository.trading_events
+        if event.event_type == "MARKET_BELOW_MA20_BYPASSED"
+    )
+    assert bypass_event.stage == "RISK_GUARD"
+    assert bypass_event.is_blocking is False
+    assert bypass_event.details_json["analysis_group"] == "market_bypass_trades"
+
 
 def test_pipeline_keeps_running_when_candidate_notification_fails() -> None:
     market_data = MarketData(MarketContext(101, 100, 0.01))
@@ -410,6 +484,12 @@ def test_pipeline_keeps_running_when_candidate_notification_fails() -> None:
     )
     assert failure_log.message == "CANDIDATE_LIST_TELEGRAM_FAILED: RuntimeError"
     assert "secret" not in failure_log.message
+    failure_event = next(
+        event
+        for event in repository.trading_events
+        if event.event_type == "CANDIDATE_LIST_TELEGRAM_FAILED"
+    )
+    assert failure_event.reason_code == "CANDIDATE_LIST_TELEGRAM_FAILED"
 
 
 def test_pipeline_composite_mode_uses_trade_value_ranking() -> None:
@@ -523,7 +603,7 @@ def test_pipeline_passes_custom_ranking_limits_to_market_data() -> None:
     assert market_data.trade_value_limit == 300
 
 
-def test_pipeline_logs_and_skips_market_calls_when_global_gate_blocks_entry() -> None:
+def test_pipeline_scores_candidates_when_global_gate_blocks_entry() -> None:
     market_data = MarketData(MarketContext(99, 100, 0.01))
     repository = Repository()
 
@@ -538,11 +618,12 @@ def test_pipeline_logs_and_skips_market_calls_when_global_gate_blocks_entry() ->
 
     assert run.blocked_reason == "MARKET_BELOW_MA20"
     assert [item.candidate.ticker for item in repository.targets] == ["AAA", "BBB"]
-    assert repository.scores == []
+    assert [item.score.ticker for item in repository.scores] == ["AAA", "BBB"]
+    assert [item.ticker for item in run.selected] == ["AAA", "BBB"]
     assert market_data.snapshot_requests[0] == ("BBB", "AAA", "DDD", "OUT", "CCC")
     assert repository.logs[-2:] == [
         BotLog("WARNING", "pipeline", "Entry blocked: MARKET_BELOW_MA20"),
-        BotLog("INFO", "pipeline", "Screened 2 targets and selected 0."),
+        BotLog("INFO", "pipeline", "Screened 2 targets and selected 2."),
     ]
 
 

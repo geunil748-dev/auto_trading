@@ -43,6 +43,7 @@ from trading_bot.monitor_routes import (
     GET_HISTORY,
     GET_MANUAL_SCREENING,
     GET_STATE,
+    GET_TRADING_EVENT_TIMELINE,
     GET_TRADING_SETTINGS,
     INDEX_FILE,
     INDEX_PATH,
@@ -57,6 +58,7 @@ from trading_bot.monitor_state_service import (
     build_state_reader,
     read_daily_summary_detail_state,
     read_daily_summary_state,
+    read_trading_event_timeline_state,
     read_history_state,
     read_monitor_state,
 )
@@ -103,6 +105,9 @@ def _handler(
                 return
             if path == GET_HISTORY:
                 self._write_history()
+                return
+            if path == GET_TRADING_EVENT_TIMELINE:
+                self._write_trading_event_timeline()
                 return
             if path == GET_DAILY_SUMMARY:
                 self._write_daily_summary()
@@ -173,6 +178,20 @@ def _handler(
             if not self._authorize_api():
                 return
             self._write_json(read_history_state(reader, _query_date(self.path)))
+
+        def _write_trading_event_timeline(self) -> None:
+            if not self._authorize_api():
+                return
+            tickers = _query_tickers(self.path)
+            ticker = tickers[0] if tickers else None
+            self._write_json(
+                read_trading_event_timeline_state(
+                    reader,
+                    _query_date(self.path),
+                    ticker=ticker,
+                    limit=_query_limit(self.path, default=200, maximum=500),
+                )
+            )
 
         def _write_daily_summary(self) -> None:
             if not self._authorize_api():

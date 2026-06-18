@@ -24,6 +24,7 @@ class RiskRepository:
         self.partial_tickers = partial_tickers or set()
         self.logs = []
         self.calls = []
+        self.trading_events = []
 
     def last_stop_loss_at(self, trade_date, ticker):
         self.calls.append(("last_stop_loss_at", trade_date, ticker))
@@ -39,6 +40,9 @@ class RiskRepository:
 
     def save_log(self, log):
         self.logs.append(log)
+
+    def save_trading_events(self, events):
+        self.trading_events.extend(events)
 
 
 def test_apply_stop_loss_entry_guards_returns_empty_for_no_intents() -> None:
@@ -57,6 +61,8 @@ def test_apply_stop_loss_entry_guards_blocks_when_consecutive_stop_loss_limit_re
     assert intents == []
     assert repository.logs[0].reject_reason == "CONSECUTIVE_STOP_LOSS_LIMIT"
     assert repository.logs[0].actual_value == 3.0
+    assert repository.trading_events[0].event_type == "BUY_NOT_SUBMITTED"
+    assert repository.trading_events[0].reason_code == "CONSECUTIVE_STOP_LOSS_LIMIT"
 
 
 def test_apply_stop_loss_entry_guards_keeps_intent_when_consecutive_count_is_below_limit() -> None:
@@ -83,6 +89,7 @@ def test_apply_stop_loss_entry_guards_blocks_ticker_inside_cooldown() -> None:
     assert intents == []
     assert repository.logs[0].reject_reason == "STOP_LOSS_COOLDOWN"
     assert repository.logs[0].symbol == "AAA"
+    assert repository.trading_events[0].reason_code == "STOP_LOSS_COOLDOWN"
 
 
 def test_apply_stop_loss_entry_guards_keeps_ticker_outside_cooldown() -> None:

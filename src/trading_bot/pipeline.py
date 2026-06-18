@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from datetime import date
+from datetime import UTC, date, datetime
 from time import perf_counter
 
 from trading_bot.config import RANKING_SELECTION_COMPOSITE, TradingSettings
@@ -11,6 +11,7 @@ from trading_bot.models import (
     CandidateSnapshot,
     DailyScore,
     DailyTarget,
+    TradingEvent,
     RankedStock,
     ScoreRecord,
 )
@@ -22,7 +23,7 @@ from trading_bot.ports import (
     ScreeningMarketData,
     TradingClock,
 )
-from trading_bot.risk import global_entry_gate
+from trading_bot.risk import MARKET_BELOW_MA20_BYPASSED, global_entry_gate
 from trading_bot.scoring import select_candidates
 from trading_bot.screening import (
     composite_ranking_selection,
@@ -31,6 +32,7 @@ from trading_bot.screening import (
     screening_rejection_counts,
     screening_priority_score,
 )
+from trading_bot.trading_event_logger import record_notification_event, record_trading_event
 
 CANDIDATE_EVAL_TARGET_REACHED = "target_reached"
 CANDIDATE_EVAL_MAX_REACHED = "max_evaluation_candidates_reached"
@@ -54,6 +56,7 @@ class ScoringRun:
     targets: tuple[DailyTarget, ...]
     scores: tuple[DailyScore, ...]
     candidate_sources: dict[str, str] = field(default_factory=dict)
+    bypass_reason: str | None = None
 
     @property
     def selected(self) -> tuple[ScoreRecord, ...]:
@@ -308,45 +311,6 @@ class ScreeningScoringPipeline:
                 candidate_sources,
             )
 
-        if not entry_gate.allowed:
-            self._log_pipeline_diagnostics(
-                started_at,
-                requested_gainer_limit=active_profile.gainer_limit,
-                requested_turnover_limit=active_profile.turnover_limit,
-                requested_trade_value_limit=active_profile.turnover_limit,
-                gainers_count=len(gainers),
-                volume_count=len(turnover),
-                trade_value_count=len(trade_value),
-                intersection_count=initial_intersection_count,
-                ranking_union_count=ranking_union_count,
-                ranked_evaluation_limit=ranked_evaluation_limit,
-                evaluated_candidate_count=len(evaluated_tickers),
-                quote_requested_count=quote_requested_count,
-                daily_requested_count=daily_requested_count,
-                snapshot_success_count=len(snapshots),
-                snapshot_fail_count=len(evaluated_tickers - snapshots.keys()),
-                risk_pass_count=len(candidates),
-                scoring_pass_count=0,
-                final_selected_count=0,
-                saved_count=len(targets),
-                candidate_eval_elapsed_ms=candidate_eval_elapsed_ms,
-                candidate_eval_stopped_reason=candidate_eval_stopped_reason,
-                snapshots=snapshots,
-                scored=(),
-                settings=active_profile.settings,
-            )
-            self.repository.save_log(
-                BotLog("WARNING", "pipeline", f"Entry blocked: {entry_gate.reason}")
-            )
-            self.repository.save_log(
-                BotLog(
-                    "INFO",
-                    "pipeline",
-                    f"Screened {len(targets)} targets and selected 0.",
-                )
-            )
-            return ScoringRun(trade_date, entry_gate.reason, targets, (), candidate_sources)
-
         scored = [self.scoring.score(item) for item in candidates]
         scoring_settings = active_profile.settings
         scoring_pass_count = sum(
@@ -408,6 +372,19 @@ class ScreeningScoringPipeline:
             scored=scored,
             settings=scoring_settings,
         )
+        blocked_reason = entry_gate.reason if not entry_gate.allowed else None
+        bypass_reason = entry_gate.bypass_reason if entry_gate.allowed else None
+        if bypass_reason:
+            self._record_market_bypass(
+                trade_date,
+                bypass_reason,
+                market.nasdaq_price_usd,
+                market.nasdaq_ma20_usd,
+            )
+        if blocked_reason:
+            self.repository.save_log(
+                BotLog("WARNING", "pipeline", f"Entry blocked: {blocked_reason}")
+            )
         self.repository.save_log(
             BotLog(
                 "INFO",
@@ -415,7 +392,14 @@ class ScreeningScoringPipeline:
                 f"Screened {len(targets)} targets and selected {len(selected_tickers)}.",
             )
         )
-        return ScoringRun(trade_date, None, targets, scores, candidate_sources)
+        return ScoringRun(
+            trade_date,
+            blocked_reason,
+            targets,
+            scores,
+            candidate_sources,
+            bypass_reason=bypass_reason,
+        )
 
     def _evaluate_ranked_candidates(
         self,
@@ -785,6 +769,60 @@ class ScreeningScoringPipeline:
             )
         )
 
+    def _record_market_bypass(
+        self,
+        trade_date: date,
+        reason_code: str,
+        nasdaq_price_usd: float,
+        nasdaq_ma20_usd: float,
+    ) -> None:
+        if reason_code != MARKET_BELOW_MA20_BYPASSED:
+            return
+        message = (
+            "MARKET_BELOW_MA20_BYPASSED: "
+            "테스트/모의 환경에서 나스닥 20일선 전역 진입 차단을 우회했습니다."
+        )
+        record_trading_event(
+            self.repository,
+            TradingEvent(
+                event_time=datetime.now(UTC),
+                trade_date=trade_date,
+                mode="mock" if self.settings.mock_trading else "test",
+                app_mode=self.settings.app_mode,
+                stage="RISK_GUARD",
+                event_type=reason_code,
+                severity="WARNING",
+                side="BUY",
+                decision=reason_code,
+                reason_code=reason_code,
+                reason_label="테스트/모의 환경 시장 MA20 하회 우회",
+                is_blocking=False,
+                actual_value=nasdaq_price_usd,
+                threshold_value=nasdaq_ma20_usd,
+                message=message,
+                details_json={
+                    "original_reason": "MARKET_BELOW_MA20",
+                    "bypass_reason": reason_code,
+                    "nasdaq_price_usd": nasdaq_price_usd,
+                    "nasdaq_ma20_usd": nasdaq_ma20_usd,
+                    "app_mode": self.settings.app_mode,
+                    "mock_trading": self.settings.mock_trading,
+                    "analysis_group": "market_bypass_trades",
+                },
+            ),
+            fallback_bot_log=False,
+        )
+        self._safe_log(
+            BotLog(
+                "WARNING",
+                "pipeline",
+                message,
+                reject_reason=reason_code,
+                actual_value=nasdaq_price_usd,
+                threshold_value=nasdaq_ma20_usd,
+            )
+        )
+
     def _safe_log(self, log: BotLog) -> None:
         try:
             self.repository.save_log(log)
@@ -802,6 +840,15 @@ class ScreeningScoringPipeline:
         try:
             sent = self.candidate_notification_sender(trade_date, targets, scores)
         except Exception as exc:
+            record_notification_event(
+                self.repository,
+                event_type="CANDIDATE_LIST_TELEGRAM_FAILED",
+                severity="WARNING",
+                reason_code="CANDIDATE_LIST_TELEGRAM_FAILED",
+                message=f"CANDIDATE_LIST_TELEGRAM_FAILED: {type(exc).__name__}",
+                details={"target_count": len(targets), "score_count": len(scores)},
+                fallback_bot_log=False,
+            )
             self._safe_log(
                 BotLog(
                     "WARNING",
@@ -812,6 +859,14 @@ class ScreeningScoringPipeline:
             )
             return
         if sent:
+            record_notification_event(
+                self.repository,
+                event_type="CANDIDATE_LIST_TELEGRAM_SENT",
+                severity="INFO",
+                reason_code="CANDIDATE_LIST_TELEGRAM_SENT",
+                details={"target_count": len(targets), "score_count": len(scores)},
+                fallback_bot_log=False,
+            )
             self._safe_log(
                 BotLog(
                     "INFO",
@@ -821,6 +876,14 @@ class ScreeningScoringPipeline:
                 )
             )
             return
+        record_notification_event(
+            self.repository,
+            event_type="CANDIDATE_LIST_TELEGRAM_SKIPPED",
+            severity="WARNING",
+            reason_code="CANDIDATE_LIST_TELEGRAM_SKIPPED",
+            details={"target_count": len(targets), "score_count": len(scores)},
+            fallback_bot_log=False,
+        )
         self._safe_log(
             BotLog(
                 "WARNING",

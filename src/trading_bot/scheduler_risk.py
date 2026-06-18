@@ -6,6 +6,7 @@ from trading_bot.config import TradingSettings
 from trading_bot.models import BotLog, BuyIntent
 from trading_bot.scheduler_logging import safe_exception_summary, safe_scheduler_log
 from trading_bot.trading_date import current_trade_date
+from trading_bot.trading_event_logger import record_buy_not_submitted
 
 
 def apply_stop_loss_entry_guards(
@@ -15,17 +16,30 @@ def apply_stop_loss_entry_guards(
 ) -> list[BuyIntent]:
     if not intents:
         return []
-    if consecutive_stop_loss_count(repository) >= settings.max_consecutive_stop_loss_count:
+    stop_loss_count = consecutive_stop_loss_count(repository)
+    if stop_loss_count >= settings.max_consecutive_stop_loss_count:
         repository.save_log(
             BotLog(
                 "WARNING",
                 "risk",
                 "연속 손절 제한에 도달해 신규 매수를 중단했습니다.",
                 reject_reason="CONSECUTIVE_STOP_LOSS_LIMIT",
-                actual_value=float(consecutive_stop_loss_count(repository)),
+                actual_value=float(stop_loss_count),
                 threshold_value=float(settings.max_consecutive_stop_loss_count),
             )
         )
+        for intent in intents:
+            record_buy_not_submitted(
+                repository,
+                ticker=intent.ticker,
+                trade_date=current_trade_date(),
+                reason_code="CONSECUTIVE_STOP_LOSS_LIMIT",
+                stage="RISK_GUARD",
+                actual_value=float(stop_loss_count),
+                threshold_value=float(settings.max_consecutive_stop_loss_count),
+                details={"guard": "max_consecutive_stop_loss"},
+                fallback_bot_log=False,
+            )
         return []
     allowed: list[BuyIntent] = []
     for intent in intents:
@@ -41,6 +55,17 @@ def apply_stop_loss_entry_guards(
                     actual_value=float(settings.stop_loss_cooldown_minutes),
                     threshold_value=float(settings.stop_loss_cooldown_minutes),
                 )
+            )
+            record_buy_not_submitted(
+                repository,
+                ticker=intent.ticker,
+                trade_date=current_trade_date(),
+                reason_code="STOP_LOSS_COOLDOWN",
+                stage="RISK_GUARD",
+                actual_value=float(settings.stop_loss_cooldown_minutes),
+                threshold_value=float(settings.stop_loss_cooldown_minutes),
+                details={"guard": "stop_loss_cooldown"},
+                fallback_bot_log=False,
             )
             continue
         allowed.append(intent)

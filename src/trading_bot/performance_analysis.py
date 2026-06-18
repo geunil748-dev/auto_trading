@@ -28,6 +28,7 @@ TAG_LABELS = {
     "VOLUME_SURGE": "거래량 급증",
     "HYBRID_CANDIDATE": "하이브리드 후보",
     "REFRESH_CANDIDATE": "15분 신규 후보",
+    "MARKET_BELOW_MA20_BYPASSED": "나스닥 20일선 우회",
 }
 
 EXIT_LABELS = {

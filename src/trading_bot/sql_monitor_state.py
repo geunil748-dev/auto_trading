@@ -25,6 +25,7 @@ from trading_bot.sql_monitor_formatters import (
     _summary,
     _target,
     _trade,
+    _trading_event,
     _trading_stats,
 )
 from trading_bot.trading_date import current_trade_date
@@ -155,6 +156,25 @@ class SqlMonitorStateSource:
     ) -> dict[str, object]:
         row = self.repository.daily_trade_summary_report_detail(trade_date, mode)
         return {"summary": None if row is None else _daily_summary_report_detail(row)}
+
+    def read_trading_event_timeline(
+        self,
+        trade_date: date,
+        ticker: str | None = None,
+        limit: int = 200,
+    ) -> dict[str, object]:
+        return {
+            "date": trade_date.isoformat(),
+            "ticker": ticker,
+            "events": [
+                _trading_event(row)
+                for row in self.repository.history_trading_event_timeline(
+                    trade_date,
+                    ticker=ticker,
+                    limit=limit,
+                )
+            ],
+        }
 
 
 def _evaluations_by_ticker(rows: list[tuple[object, ...]]) -> dict[str, tuple[object, ...]]:

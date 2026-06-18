@@ -19,6 +19,11 @@ from trading_bot.scheduled_messages import log_row
 from trading_bot.scheduler_logging import safe_exception_summary
 from trading_bot.scheduler_market_close import save_daily_run_summary
 from trading_bot.trading_date import current_trade_date
+from trading_bot.trading_event_logger import (
+    record_data_quality_event,
+    record_fill_saved_event,
+    record_notification_event,
+)
 
 
 FillNotificationCallback = Callable[[list[FillRecord], list[object]], int | None]
@@ -79,14 +84,42 @@ def persist_live_snapshot(
                 entry_reasons,
                 settings=settings,
             )
+            if len(records) != len(fills):
+                record_data_quality_event(
+                    repository,
+                    reason_code="FILL_MONITOR_ROWS_SKIPPED",
+                    stage="ORDER_FILL",
+                    trade_date=trade_date,
+                    message="fill_monitor_rows_skipped",
+                    details={
+                        "raw_fill_count": len(fills),
+                        "saved_fill_count": len(records),
+                        "skipped_count": len(fills) - len(records),
+                    },
+                    fallback_bot_log=False,
+                )
             if records:
                 repository.save_fills(records)
+                for record in records:
+                    record_fill_saved_event(repository, record, fallback_bot_log=False)
                 repository.save_entry_profit_snapshots(
                     entry_profit_snapshots_from_fills(records)
                 )
                 if any(item.profit_usd is not None for item in records):
                     save_daily_run_summary(settings, None, None)
             pending_notifications = repository.pending_fill_notifications(records)
+            pending_ids = {id(item) for item in pending_notifications}
+            for record in records:
+                if id(record) not in pending_ids:
+                    record_notification_event(
+                        repository,
+                        event_type="FILL_NOTIFICATION_SKIPPED_DUPLICATE",
+                        severity="INFO",
+                        reason_code="FILL_NOTIFICATION_SKIPPED_DUPLICATE",
+                        ticker=record.ticker,
+                        details={"side": record.side, "order_no": record.order_no},
+                        fallback_bot_log=False,
+                    )
             if pending_notifications and send_fill_notifications_func is not None:
                 sent_count = send_fill_notifications_func(
                     pending_notifications,
@@ -97,6 +130,37 @@ def persist_live_snapshot(
                 if sent_count > 0:
                     repository.mark_fill_notifications_sent(
                         pending_notifications[:sent_count]
+                    )
+                    for record in pending_notifications[:sent_count]:
+                        record_notification_event(
+                            repository,
+                            event_type="FILL_NOTIFICATION_SENT",
+                            severity="INFO",
+                            reason_code="FILL_NOTIFICATION_SENT",
+                            ticker=record.ticker,
+                            details={"side": record.side, "order_no": record.order_no},
+                            fallback_bot_log=False,
+                        )
+                for record in pending_notifications[sent_count:]:
+                    record_notification_event(
+                        repository,
+                        event_type="FILL_NOTIFICATION_FAILED",
+                        severity="WARNING",
+                        reason_code="FILL_NOTIFICATION_FAILED",
+                        ticker=record.ticker,
+                        details={"side": record.side, "order_no": record.order_no},
+                        fallback_bot_log=False,
+                    )
+            elif pending_notifications and send_fill_notifications_func is None:
+                for record in pending_notifications:
+                    record_notification_event(
+                        repository,
+                        event_type="FILL_NOTIFICATION_SKIPPED_NO_SENDER",
+                        severity="WARNING",
+                        reason_code="FILL_NOTIFICATION_SKIPPED_NO_SENDER",
+                        ticker=record.ticker,
+                        details={"side": record.side, "order_no": record.order_no},
+                        fallback_bot_log=False,
                     )
         if isinstance(holdings, list):
             repository.update_entry_profit_snapshots(

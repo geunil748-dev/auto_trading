@@ -49,15 +49,13 @@ def test_repair_database_schema_runs_explicit_repair_sql() -> None:
     actions = repair_database_schema(lambda: connection)
 
     script = connection.cursor_value.scripts[0]
+    event_script = connection.cursor_value.scripts[1]
     assert "ALTER TABLE dbo.daily_target ALTER COLUMN volume_ratio" in script
     assert "ALTER TABLE dbo.daily_target ALTER COLUMN price_change" in script
-    assert actions == [
-        {
-            "name": "daily_target_numeric_columns",
-            "action": "executed_if_table_exists",
-            "detail": "volume_ratio and price_change are repaired to DECIMAL(12, 2) NULL",
-        }
-    ]
+    assert "CREATE TABLE dbo.trading_event_log" in event_script
+    assert "IX_trading_event_log_reason_code" in event_script
+    assert actions[0]["name"] == "daily_target_numeric_columns"
+    assert actions[1]["name"] == "trading_event_log"
     assert connection.commits == 1
     assert connection.closed
 

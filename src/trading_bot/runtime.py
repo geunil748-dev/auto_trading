@@ -32,6 +32,8 @@ class DryRunRuntime:
     def run(self) -> DryRunResult:
         account = self.accounts.current_account()
         scoring = self.pipeline.run()
+        if scoring.blocked_reason:
+            return DryRunResult(account, scoring, ())
         breakout_inputs = {
             item.ticker: self.breakout.breakout_input(item.ticker)
             for item in scoring.selected
@@ -48,5 +50,8 @@ class DryRunRuntime:
                 item.ticker: scoring.candidate_source(item.ticker)
                 for item in scoring.selected
             },
+            entry_reason_tags=(
+                (scoring.bypass_reason,) if scoring.bypass_reason else ()
+            ),
         )
         return DryRunResult(account, scoring, tuple(intents))

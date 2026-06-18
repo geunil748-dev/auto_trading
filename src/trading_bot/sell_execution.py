@@ -9,6 +9,12 @@ from trading_bot.models import BotLog, SellIntent, TradeRecord
 from trading_bot.performance_analysis import exit_label
 from trading_bot.ports import DailyRepository
 from trading_bot.strategy_metadata import strategy_metadata_from_settings
+from trading_bot.trading_event_logger import (
+    record_exit_signal,
+    record_order_reconciliation,
+    record_order_submit_failed,
+    record_sell_order_submitted,
+)
 
 SellSubmitter = Callable[[SellIntent], dict[str, object]]
 
@@ -36,10 +42,22 @@ class SellIntentExecutor:
         trades: list[TradeRecord] = []
         strategy_metadata = strategy_metadata_from_settings(self.settings)
         for intent in submitted:
+            record_exit_signal(
+                self.repository,
+                intent,
+                trade_date=self.today(),
+                fallback_bot_log=False,
+            )
             retry_count = self._submit_with_retry(intent)
             if retry_count is None:
                 continue
             successful.append(intent)
+            record_sell_order_submitted(
+                self.repository,
+                intent,
+                trade_date=self.today(),
+                fallback_bot_log=False,
+            )
             # 체결 확인 전에는 주문 접수만 기록하고, 실제 보유 수량은 KIS 잔고 조회로 동기화한다.
             trades.append(
                 TradeRecord(
@@ -63,6 +81,14 @@ class SellIntentExecutor:
                 )
             )
         self.repository.save_trades(trades)
+        record_order_reconciliation(
+            self.repository,
+            trade_date=self.today(),
+            side="SELL",
+            planned=submitted,
+            trades=trades,
+            fallback_bot_log=False,
+        )
         self.repository.save_log(BotLog("INFO", "execution", _sell_log(successful)))
         return trades
 
@@ -85,6 +111,17 @@ class SellIntentExecutor:
                         threshold_value=float(max_retries),
                     )
                 )
+                record_order_submit_failed(
+                    self.repository,
+                    intent,
+                    trade_date=self.today(),
+                    side="SELL",
+                    reason_code="API_ERROR",
+                    severity="ERROR",
+                    attempt=attempt,
+                    max_retries=max_retries,
+                    fallback_bot_log=False,
+                )
                 if attempt >= max_retries:
                     self.repository.save_log(
                         BotLog(
@@ -97,6 +134,17 @@ class SellIntentExecutor:
                             threshold_value=float(max_retries),
                         )
                     )
+                    record_order_submit_failed(
+                        self.repository,
+                        intent,
+                        trade_date=self.today(),
+                        side="SELL",
+                        reason_code="ORDER_FAILED",
+                        severity="ERROR",
+                        attempt=attempt,
+                        max_retries=max_retries,
+                        fallback_bot_log=False,
+                    )
                     return None
                 self.repository.save_log(
                     BotLog(
@@ -108,6 +156,17 @@ class SellIntentExecutor:
                         actual_value=float(attempt + 1),
                         threshold_value=float(max_retries),
                     )
+                )
+                record_order_submit_failed(
+                    self.repository,
+                    intent,
+                    trade_date=self.today(),
+                    side="SELL",
+                    reason_code="RETRY",
+                    severity="WARNING",
+                    attempt=attempt + 1,
+                    max_retries=max_retries,
+                    fallback_bot_log=False,
                 )
                 self.retry_sleep(max(0, self.settings.order_retry_delay_seconds))
         return None

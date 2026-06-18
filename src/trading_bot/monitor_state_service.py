@@ -99,6 +99,18 @@ class DashboardStateReader:
     def read_daily_summary_detail(self, trade_date: date, mode: str) -> dict[str, object]:
         return self.sql_reader.read_daily_summary_detail(trade_date, mode)
 
+    def read_trading_event_timeline(
+        self,
+        trade_date: date,
+        ticker: str | None = None,
+        limit: int = 200,
+    ) -> dict[str, object]:
+        return self.sql_reader.read_trading_event_timeline(
+            trade_date,
+            ticker=ticker,
+            limit=limit,
+        )
+
 
 def accounts_from_cached_state(raw_state: dict[str, object]) -> dict[str, object]:
     if isinstance(raw_state.get("accounts"), dict):
@@ -188,3 +200,18 @@ def read_daily_summary_detail_state(
     if hasattr(reader, "read_daily_summary_detail"):
         return reader.read_daily_summary_detail(trade_date, mode)
     return {"summary": None}
+
+
+def read_trading_event_timeline_state(
+    reader: Any,
+    trade_date: date,
+    ticker: str | None = None,
+    limit: int = 200,
+) -> dict[str, object]:
+    if hasattr(reader, "read_trading_event_timeline"):
+        return reader.read_trading_event_timeline(trade_date, ticker=ticker, limit=limit)
+    return {
+        "date": trade_date.isoformat(),
+        "ticker": ticker,
+        "events": [],
+    }
