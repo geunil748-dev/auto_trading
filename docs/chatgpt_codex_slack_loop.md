@@ -4,6 +4,8 @@
 
 The Slack loop turns the daily operations report into a safe action queue. ChatGPT may propose LOW and MEDIUM risk work through Slack `@Codex`, but Codex must only create a branch and pull request. Humans remain responsible for approval, merge, and production rollout.
 
+Note: Slack <@U0BC29CQUBD> read-only integration was verified before enabling automated task prompts.
+
 ## Risk Classification
 
 | Risk | Definition | Automation Rule |
