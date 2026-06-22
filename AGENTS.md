@@ -57,3 +57,20 @@
 - UI 기능은 HTML, JS, CSS, formatter/label, API payload, 테스트가 함께 반영됐는지 확인한다.
 - 관련 테스트를 실행하고, 실행하지 못한 테스트는 이유를 결과 보고에 명시한다.
 - 최종 보고에는 병합된 기능, 의도적으로 제외한 기능, 아직 남은 누락 후보, 테스트 결과를 반드시 포함한다.
+
+## Codex automation safety rules
+
+ChatGPT-Codex daily automation is branch-and-PR-only by default.
+
+- LOW risk: documentation, formatting, report wording, read-only analysis notes, test naming, or other changes with no runtime behavior impact.
+- MEDIUM risk: bounded changes to tests, read-only reporting code, non-trading UI, logs, or developer tooling where production trading behavior is not changed.
+- HIGH risk: any change touching trading decisions, KIS API, order submission, scheduler timing, DB schema, credentials, account handling, live API calls, money movement, deployment, merge, or release actions.
+- LOW and MEDIUM tasks may be proposed automatically through Slack `@Codex` when the scope is specific and bounded.
+- HIGH tasks require explicit human approval before implementation and must not be auto-executed.
+- Codex must create a feature branch and pull request only.
+- Codex must not push directly to `main`.
+- Codex must not merge pull requests.
+- Codex must not access or print `.env`, tokens, app keys, app secrets, account numbers, passwords, or credentials.
+- Codex must not call KIS API, Telegram API, Slack API, order APIs, broker APIs, or other external APIs unless a human explicitly approved that exact operation.
+- Daily report generation must use read-only `SELECT` queries only and must not modify DB schema or data.
+- Generated report outputs under `reports/analysis/` must not be committed.
