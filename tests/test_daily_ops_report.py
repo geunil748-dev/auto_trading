@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from pathlib import Path
 import sys
 from datetime import date, datetime, timezone
 
@@ -14,17 +15,15 @@ from trading_bot.daily_ops_report import (
 
 
 def test_daily_ops_report_paths_use_requested_output_dir() -> None:
+    output_dir = Path("reports/analysis/daily_2026-06-23")
+
     paths = daily_ops_report_paths(
         date(2026, 6, 23),
-        output_dir=__import__("pathlib").Path("reports/analysis/daily_2026-06-23"),
+        output_dir=output_dir,
     )
 
-    assert str(paths.summary_path) == (
-        "reports/analysis/daily_2026-06-23/daily_ops_summary_2026-06-23.md"
-    )
-    assert str(paths.metrics_path) == (
-        "reports/analysis/daily_2026-06-23/daily_ops_metrics_2026-06-23.json"
-    )
+    assert paths.summary_path == output_dir / "daily_ops_summary_2026-06-23.md"
+    assert paths.metrics_path == output_dir / "daily_ops_metrics_2026-06-23.json"
 
 
 def test_build_placeholder_metrics_has_required_report_sections(tmp_path) -> None:
