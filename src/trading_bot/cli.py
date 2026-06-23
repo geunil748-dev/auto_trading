@@ -49,6 +49,7 @@ from trading_bot.database import (
     pyodbc_connect_factory,
     repair_database_schema,
 )
+from trading_bot.daily_ops_report import export_daily_ops_report
 from trading_bot.daily_trade_summary import generate_daily_trade_summary
 from trading_bot.entry_root_cause_analysis import (
     CostOptions,
@@ -145,6 +146,11 @@ def main() -> None:
         type=Path,
         default=Path("monitor/reports"),
     )
+    daily_ops_report = subparsers.add_parser("export-daily-ops-report")
+    daily_ops_report.add_argument(
+        "--date", dest="trade_date", type=date.fromisoformat, required=True
+    )
+    daily_ops_report.add_argument("--output-dir", type=Path, required=True)
     daily_summary = subparsers.add_parser("generate-daily-summary")
     daily_summary.add_argument("--date", dest="trade_date", type=date.fromisoformat)
     daily_summary.add_argument("--mode", choices=("mock", "real"), default="mock")
@@ -263,6 +269,24 @@ def main() -> None:
                     "trade_date": result.trade_date.isoformat(),
                     "mode": result.mode,
                     "output_path": str(result.path),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return
+
+    if args.command == "export-daily-ops-report":
+        result = export_daily_ops_report(
+            trade_date=args.trade_date,
+            output_dir=args.output_dir,
+        )
+        print(
+            json.dumps(
+                {
+                    "trade_date": result.trade_date.isoformat(),
+                    "summary_path": str(result.summary_path),
+                    "metrics_path": str(result.metrics_path),
                 },
                 indent=2,
                 ensure_ascii=False,
