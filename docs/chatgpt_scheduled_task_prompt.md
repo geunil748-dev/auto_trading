@@ -39,8 +39,19 @@
 파일 선택 규칙:
 - `daily_ops_summary_YYYY-MM-DD.md`와 `daily_ops_metrics_YYYY-MM-DD.json`은 파일명 날짜가 가장 최신인 한 쌍을 사용한다.
 - summary와 metrics의 날짜가 다르면 WARN으로 표시하고, 더 최신 파일만 임의로 섞어 해석하지 않는다.
-- 최신 파일을 찾을 수 없으면 FAIL로 표시하고 DB 연결을 시도하지 않는다.
+- 최신 summary 또는 metrics 파일을 찾을 수 없으면 `data_quality`를 반드시 FAIL로 표시하고 DB 연결을 시도하지 않는다.
+- `daily_ops_summary_YYYY-MM-DD.md` 또는 `daily_ops_metrics_YYYY-MM-DD.json` 중 하나라도 누락되면 `data_quality`를 반드시 FAIL로 표시한다.
 - Excel 파일이 함께 제공되었더라도 summary와 metrics가 우선 입력이다.
+
+리포트 패키지 누락 dry-run 규칙:
+- 최신 daily ops summary 또는 metrics가 누락된 경우 missing-report dry-run mode로 전환한다.
+- missing-report dry-run mode에서는 DB에 접근하지 않았고 운영 데이터를 분석하지 않았다는 문장을 Slack 메시지에 명확히 포함한다.
+- 최신 metrics 파일이 누락되면 최종 목표 진행률은 다른 문서 증거가 있더라도 최대 70%로 제한한다.
+- metrics 파일이 존재하지만 placeholder metrics만 사용할 수 있으면 최종 목표 진행률은 최대 75%로 제한한다.
+- 리포트 패키지가 누락된 경우 Slack 메시지에 실제 `<@U0BC29CQUBD>` 멘션이나 실제 `@Codex` 실행 호출 문구를 포함하지 않는다.
+- missing-report dry-run mode의 LOW/MEDIUM 후보는 `[Codex 실행 후보]`로만 표시하고 자동 실행 요청 문장으로 쓰지 않는다.
+- HIGH 후보는 항상 `[승인 필요]`로 유지하고, 명시적 사람 승인 전까지 실행 후보로 바꾸지 않는다.
+- missing-report dry-run mode의 추천 다음 작업은 매매 로직 수정이 아니라 daily report package 생성 및 업로드여야 한다.
 
 절대 금지:
 - DB에 직접 연결하지 않는다.
@@ -58,6 +69,8 @@
 - 이전 JSON 리포트에 `daily_progress_percent`가 있으면 delta를 계산한다.
 - 이전 JSON 리포트가 없거나 신뢰할 수 없으면 delta는 `N/A`로 표시한다.
 - 증거는 저장소 문서, accepted/merged PR, 최신 daily metrics, 명시적 사람 승인에 둔다.
+- 최신 metrics 파일이 누락된 missing-report dry-run mode에서는 계산 결과가 70%를 넘으면 70%로 캡을 적용한다.
+- placeholder metrics만 있는 경우 계산 결과가 75%를 넘으면 75%로 캡을 적용한다.
 - Slack 아이디어만으로 `done` 처리하지 않는다.
 
 어제 운영 요약:
@@ -86,7 +99,9 @@ Slack 메시지 작성:
 - 알 수 없는 값은 추정하지 말고 `N/A`로 표시한다.
 - 민감값은 마스킹하거나 생략한다.
 - LOW/MEDIUM `@Codex` 제안은 branch-and-PR-only 범위를 명시한다.
-- HIGH risk 항목은 명시적 사람 승인 전까지 구현 금지라고 쓴다.
+- missing-report dry-run mode에서는 실제 `<@U0BC29CQUBD>` 멘션이나 실제 `@Codex` 호출을 쓰지 않고 LOW/MEDIUM을 `[Codex 실행 후보]`로만 표시한다.
+- HIGH risk 항목은 명시적 사람 승인 전까지 구현 금지라고 쓰고, missing-report dry-run mode에서도 `[승인 필요]`로 표시한다.
+- missing-report dry-run mode의 Follow-ups 첫 항목은 daily report package를 생성하고 업로드하라는 안내여야 하며, 매매 로직 수정 권고를 우선하지 않는다.
 
 최종 출력:
 1. Slack-ready message
@@ -103,7 +118,8 @@ Scheduled Task는 아래 형식을 유지하되, 값은 최신 `daily_ops_summar
 ```text
 [Auto Trading Daily Ops] YYYY-MM-DD KST
 Status: PASS | WARN | FAIL
-Progress: NN.N% (delta: +N.N | -N.N | N/A)
+Data quality: PASS | WARN | FAIL
+Progress: NN.N% (delta: +N.N | -N.N | N/A; cap: none | 70% missing metrics | 75% placeholder metrics)
 Analysis period: YYYY-MM-DD to YYYY-MM-DD
 
 Core result:
@@ -113,6 +129,7 @@ Core result:
 - Candidate funnel: candidates -> selected -> buy_allowed -> order_submitted -> fills
 - Main block reason: ...
 - Data quality: ...
+- Missing-report dry-run note: DB was not accessed and no operational data was analyzed.
 
 Runner / noisy universe:
 - Runner finding: ...
@@ -136,7 +153,12 @@ Recommended @Codex proposals:
 Human approval needed:
 - HIGH: ... 명시적 사람 승인 전까지 Codex 자동 실행 금지.
 
+Missing-report dry-run alternative labels:
+- LOW/MEDIUM: [Codex 실행 후보] ... (실제 `<@U0BC29CQUBD>` 멘션 또는 `@Codex` 호출 금지)
+- HIGH: [승인 필요] ... 명시적 사람 승인 전까지 Codex 자동 실행 금지.
+
 Follow-ups:
+- If report package is missing: generate and upload the latest daily_ops_summary_YYYY-MM-DD.md and daily_ops_metrics_YYYY-MM-DD.json before recommending trading logic changes.
 - ...
 ```
 
