@@ -2474,6 +2474,9 @@ class SqlServerMonitorRepository:
             )
 
     def today_realized_profit(self) -> float:
+        return self.cumulative_realized_profit()
+
+    def cumulative_realized_profit(self) -> float:
         return self._sum_profit(
             """
             SELECT COALESCE(SUM(profit_usd), 0)
@@ -2485,6 +2488,9 @@ class SqlServerMonitorRepository:
         )
 
     def today_realized_profit_rate(self) -> float:
+        return self.cumulative_realized_profit_rate()
+
+    def cumulative_realized_profit_rate(self) -> float:
         # 전체 매도 체결 기준 수익률: 실현손익 / 매수원금.
         return self._profit_rate_percent(
             """

@@ -98,8 +98,8 @@ def send_market_close_report(state: dict[str, object]) -> None:
                 message,
                 notification_settings,
             ),
-            cumulative_realized_pnl=monitor_repository.today_realized_profit(),
-            cumulative_realized_rate=monitor_repository.today_realized_profit_rate(),
+            cumulative_realized_pnl=_cumulative_realized_profit(monitor_repository),
+            cumulative_realized_rate=_cumulative_realized_profit_rate(monitor_repository),
         )
     except Exception as exc:
         safe_scheduler_log(
@@ -109,3 +109,17 @@ def send_market_close_report(state: dict[str, object]) -> None:
             reject_reason="MARKET_CLOSE_REPORT_FAILED",
         )
         return
+
+
+def _cumulative_realized_profit(monitor_repository: object) -> float:
+    method = getattr(monitor_repository, "cumulative_realized_profit", None)
+    if callable(method):
+        return float(method())
+    return float(monitor_repository.today_realized_profit())
+
+
+def _cumulative_realized_profit_rate(monitor_repository: object) -> float:
+    method = getattr(monitor_repository, "cumulative_realized_profit_rate", None)
+    if callable(method):
+        return float(method())
+    return float(monitor_repository.today_realized_profit_rate())

@@ -153,10 +153,10 @@ def test_send_market_close_report_uses_records_and_safe_holdings(monkeypatch) ->
             return {}
 
     class MonitorRepository:
-        def today_realized_profit(self):
+        def cumulative_realized_profit(self):
             return 123.45
 
-        def today_realized_profit_rate(self):
+        def cumulative_realized_profit_rate(self):
             return 6.7
 
     monkeypatch.setattr(
