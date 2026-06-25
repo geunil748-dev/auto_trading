@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from hashlib import sha256
 from collections.abc import Callable, Mapping
@@ -9,7 +10,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
-from urllib.parse import urlencode
+from urllib.error import HTTPError
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from trading_bot.config import KisSettings
@@ -18,6 +20,44 @@ from trading_bot.retry import NETWORK_RETRY, RetryPolicy, call_with_retry
 JsonObject = dict[str, Any]
 JsonRequest = Callable[[str, str, Mapping[str, str], JsonObject | None], JsonObject]
 DEFAULT_TOKEN_CACHE = Path(".kis-token.json")
+HTTP_ERROR_BODY_PREVIEW_LIMIT = 800
+SENSITIVE_BODY_KEY_PATTERN = re.compile(
+    r'(?i)("?(?:authorization|appkey|appsecret|access_token|token|secret|'
+    r'cano|acnt_prdt_cd|account_no|account|password)"?\s*[:=]\s*)("[^"]*"|[^,\s}]+)'
+)
+
+
+class KisHttpResponseError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        reason: str,
+        method: str,
+        path: str,
+        tr_id: str,
+        body_preview: str,
+    ) -> None:
+        self.status_code = status_code
+        self.reason = reason
+        self.method = method
+        self.path = path
+        self.tr_id = tr_id
+        self.body_preview = body_preview
+        super().__init__(self.safe_summary())
+
+    def safe_summary(self) -> str:
+        parts = [
+            f"KisHttpResponseError {self.status_code}",
+            self.reason,
+            self.method,
+            self.path,
+        ]
+        if self.tr_id:
+            parts.append(f"tr_id={self.tr_id}")
+        if self.body_preview:
+            parts.append(f"body={_redact_sensitive_text(self.body_preview)}")
+        return " ".join(parts)
 
 
 @dataclass(frozen=True)
@@ -267,5 +307,41 @@ def _urllib_json_request(
 ) -> JsonObject:
     payload = None if body is None else json.dumps(body).encode("utf-8")
     request = Request(url, data=payload, headers=dict(headers), method=method)
-    with urlopen(request, timeout=10) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urlopen(request, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise KisHttpResponseError(
+            status_code=int(exc.code),
+            reason=str(exc.reason),
+            method=method,
+            path=urlparse(url).path,
+            tr_id=_header_value(headers, "tr_id"),
+            body_preview=_http_error_body_preview(exc),
+        ) from exc
+
+
+def _header_value(headers: Mapping[str, str], name: str) -> str:
+    target = name.lower()
+    for key, value in headers.items():
+        if str(key).lower() == target:
+            return str(value)
+    return ""
+
+
+def _http_error_body_preview(exc: HTTPError) -> str:
+    try:
+        body = exc.read()
+    except Exception:
+        return ""
+    if not body:
+        return ""
+    text = body.decode("utf-8", errors="replace")
+    text = _redact_sensitive_text(text)
+    if len(text) > HTTP_ERROR_BODY_PREVIEW_LIMIT:
+        return text[:HTTP_ERROR_BODY_PREVIEW_LIMIT] + "..."
+    return text
+
+
+def _redact_sensitive_text(text: str) -> str:
+    return SENSITIVE_BODY_KEY_PATTERN.sub("<redacted>", text)

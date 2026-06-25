@@ -1,15 +1,20 @@
 from datetime import datetime, timezone
+from io import BytesIO
+from urllib.error import HTTPError
 
 import pytest
 
 from trading_bot.adapters.kis_http import (
     AccessToken,
+    KisHttpResponseError,
     KisJsonClient,
     _default_token_cache,
     _token_environment,
+    _urllib_json_request,
 )
 from trading_bot.config import KisSettings
 from trading_bot.retry import RetryPolicy
+from trading_bot.scheduler_logging import safe_exception_summary
 
 
 class MemoryTokenStore:
@@ -270,3 +275,49 @@ def test_token_environment_names_mock_as_test() -> None:
 
     assert _token_environment(mock) == "test"
     assert _token_environment(real) == "real"
+
+
+def test_urllib_json_request_wraps_http_error_with_safe_body_preview(monkeypatch) -> None:
+    body = (
+        b'{"rt_cd":"1","msg_cd":"EGW00123","msg1":"temporary server error",'
+        b'"CANO":"secret-account","token":"secret-token"}'
+    )
+
+    def fail_urlopen(request, timeout):
+        raise HTTPError(
+            request.full_url,
+            500,
+            "Internal Server Error",
+            hdrs=None,
+            fp=BytesIO(body),
+        )
+
+    monkeypatch.setattr("trading_bot.adapters.kis_http.urlopen", fail_urlopen)
+
+    with pytest.raises(KisHttpResponseError) as exc_info:
+        _urllib_json_request(
+            "GET",
+            "https://kis.example/uapi/overseas-stock/v1/trading/inquire-ccnl?CANO=secret-account",
+            {
+                "tr_id": "VTTS3035R",
+                "authorization": "Bearer secret-token",
+                "appkey": "secret-app",
+                "appsecret": "secret-secret",
+            },
+            body=None,
+        )
+
+    summary = safe_exception_summary(exc_info.value)
+    assert "500" in summary
+    assert "Internal Server Error" in summary
+    assert "/uapi/overseas-stock/v1/trading/inquire-ccnl" in summary
+    assert "VTTS3035R" in summary
+    assert "temporary server error" in summary
+    assert "secret-account" not in summary
+    assert "secret-token" not in summary
+    assert "secret-app" not in summary
+    assert "secret-secret" not in summary
+    assert "token" not in summary.lower()
+    assert "CANO=" not in summary
+    assert "CANO" not in summary
+    assert "?" not in summary

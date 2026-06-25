@@ -1,5 +1,6 @@
 from datetime import date
 
+from trading_bot.adapters.kis_http import KisHttpResponseError
 from trading_bot.config import KisSettings, NotificationSettings, TradingSettings
 from trading_bot.models import AccountState, BuyIntent, FillRecord, PositionState, ScoreRecord, SellIntent
 from trading_bot.scheduler_logging import safe_scheduler_log
@@ -215,6 +216,103 @@ def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> N
     assert summary_calls == ["saved"]
     assert notice_calls == ["sent"]
     assert report_calls == [{"orders": [], "fills": [], "holdings": []}]
+
+
+def test_close_session_continues_when_unfilled_cancel_lookup_fails(monkeypatch, tmp_path) -> None:
+    monitor = Monitor()
+    executor = Executor()
+    state = {"orders": [], "fills": [], "holdings": []}
+    calls: dict[str, object] = {}
+    logs = []
+
+    def fail_cancel(kis_settings):
+        raise KisHttpResponseError(
+            status_code=500,
+            reason="Internal Server Error",
+            method="GET",
+            path="/uapi/overseas-stock/v1/trading/inquire-ccnl",
+            tr_id="VTTS3035R",
+            body_preview='{"msg1":"temporary server error"}',
+        )
+
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.cancel_unfilled_orders_for_scheduler",
+        fail_cancel,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_exit_poll",
+        lambda settings, kis_settings: (Accounts(), monitor, "repository"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_mock_sell_executor",
+        lambda kis_settings, repository, settings=None: executor,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._write_live_state",
+        lambda monitor_state, kis_settings: state,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.save_daily_run_summary",
+        lambda settings, eod_sell_count, cancelled_order_count: calls.update(
+            {
+                "summary": (
+                    eod_sell_count,
+                    cancelled_order_count,
+                )
+            }
+        ),
+    )
+
+    def fake_write_daily_report(report_dir, trade_day, report_state, cancelled_orders, eod_sell_count):
+        calls["report"] = (report_state, cancelled_orders, eod_sell_count)
+        return tmp_path / "report.json"
+
+    monkeypatch.setattr("trading_bot.scheduled_tasks.write_daily_report", fake_write_daily_report)
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.save_daily_trade_summary_report",
+        lambda: calls.update({"daily_trade_summary": True}),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_market_close_notice",
+        lambda: calls.update({"notice": True}),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_market_close_report",
+        lambda report_state: calls.update({"market_close_report": report_state}),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.safe_scheduler_log",
+        lambda level, module, message, **kwargs: logs.append((level, module, message, kwargs)),
+    )
+
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+        regular_session=lambda: True,
+    )
+
+    result = tasks.close_session()
+
+    assert "장마감 모의 매도 주문 1건 제출" in result
+    assert "보고서 작성 완료" in result
+    assert monitor.calls == [(["holding"], True)]
+    assert executor.intents == [SellIntent("AAA", 2, 10.5, "EOD")]
+    assert calls["summary"] == (1, 0)
+    assert calls["report"] == (state, [], 1)
+    assert calls["daily_trade_summary"] is True
+    assert calls["notice"] is True
+    assert calls["market_close_report"] == state
+    assert logs[0][0] == "WARNING"
+    assert logs[0][1] == "orders"
+    assert logs[0][3]["reject_reason"] == "MARKET_CLOSE_UNFILLED_CANCEL_FAILED"
+    assert logs[0][2].startswith("MARKET_CLOSE_UNFILLED_CANCEL_FAILED: ")
+    assert "500" in logs[0][2]
+    assert "VTTS3035R" in logs[0][2]
+    assert "secret" not in logs[0][2].lower()
+    assert "token" not in logs[0][2].lower()
+    assert "appsecret" not in logs[0][2].lower()
 
 
 def test_close_session_skips_after_regular_session(monkeypatch, tmp_path) -> None:

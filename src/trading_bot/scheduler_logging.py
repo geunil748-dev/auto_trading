@@ -6,6 +6,12 @@ from trading_bot.repositories import SqlServerDailyRepository
 
 
 def safe_exception_summary(exc: Exception) -> str:
+    safe_summary = getattr(exc, "safe_summary", None)
+    if callable(safe_summary):
+        try:
+            return str(safe_summary())
+        except Exception:
+            return type(exc).__name__
     return type(exc).__name__
 
 

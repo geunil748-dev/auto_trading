@@ -294,7 +294,7 @@ def live_mock_tasks(
         guarded = _guarded_trading_skip(trading_guard)
         if guarded is not None:
             return guarded
-        cancelled = cancel_unfilled_orders_for_scheduler(kis_settings)
+        cancelled = _cancel_unfilled_orders_for_market_close(kis_settings)
         latest.cancelled_orders.extend(cancelled)
         current_settings = _current_settings(settings)
         accounts, monitor, repository = build_live_exit_poll(current_settings, kis_settings)
@@ -375,6 +375,19 @@ def _send_fill_notifications(records: list[FillRecord], holdings: list[object]) 
         )
         # 체결 알림 실패는 주문/DB 저장 흐름과 분리한다.
         return 0
+
+
+def _cancel_unfilled_orders_for_market_close(kis_settings: KisSettings) -> list[dict[str, object]]:
+    try:
+        return cancel_unfilled_orders_for_scheduler(kis_settings)
+    except Exception as exc:
+        safe_scheduler_log(
+            "WARNING",
+            "orders",
+            f"MARKET_CLOSE_UNFILLED_CANCEL_FAILED: {safe_exception_summary(exc)}",
+            reject_reason="MARKET_CLOSE_UNFILLED_CANCEL_FAILED",
+        )
+        return []
 
 
 def _candidate_mode(settings: TradingSettings) -> str:
