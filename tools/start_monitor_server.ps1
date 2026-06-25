@@ -72,7 +72,10 @@ try {
 
             Write-StartupLog "monitor server python: $python"
             Write-StartupLog "monitor server starting"
-            & $python -m trading_bot serve-monitor --host 0.0.0.0 --port 4174 2>&1 |
+            # Mobile/LAN access disabled: Telegram notifications replace remote monitor access.
+            # Keep the old external bind command for rollback, but do not run it by default.
+            # & $python -m trading_bot serve-monitor --host 0.0.0.0 --port 4174 2>&1 |
+            & $python -m trading_bot serve-monitor --host 127.0.0.1 --port 4174 2>&1 |
                 ForEach-Object { Write-StartupLog $_.ToString() }
 
             Write-StartupLog "monitor server exited: $LASTEXITCODE"
