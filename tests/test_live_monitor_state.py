@@ -69,3 +69,8 @@ def test_live_monitor_state_shapes_orders_fills_and_holdings() -> None:
     assert state["fills"][0]["total"] == "$21.00"
     assert state["logs"][0][0] == "230818"
     assert "AAA" in state["logs"][0][2]
+    assert state["dataHealth"] == {
+        "orders": {"ok": True},
+        "account": {"ok": True},
+        "holdings": {"ok": True},
+    }

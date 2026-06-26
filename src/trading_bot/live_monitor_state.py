@@ -18,9 +18,9 @@ def live_kis_monitor_state(
     include_holdings: bool = True,
 ) -> dict[str, object]:
     trade_date = current_us_market_date(now)
-    rows = _safe_order_rows(kis, settings, trade_date, include_orders)
-    account = _safe_account(accounts)
-    holdings = _safe_holdings(accounts) if include_holdings else []
+    rows, orders_ok = _safe_order_rows(kis, settings, trade_date, include_orders)
+    account, account_ok = _safe_account(accounts)
+    holdings, holdings_ok = _safe_holdings(accounts, include_holdings)
     return {
         "account": _account(account),
         "targets": [_target(row) for row in rows],
@@ -36,6 +36,11 @@ def live_kis_monitor_state(
         "logs": [_attempt(row) for row in rows],
         "trades": [],
         "chart": {"closes": [], "movingAverage": []},
+        "dataHealth": {
+            "orders": {"ok": orders_ok},
+            "account": {"ok": account_ok},
+            "holdings": {"ok": holdings_ok},
+        },
     }
 
 
@@ -44,31 +49,36 @@ def _safe_order_rows(
     settings: KisSettings,
     trade_date: date,
     include_orders: bool,
-) -> list[dict[str, object]]:
+) -> tuple[list[dict[str, object]], bool]:
     if not include_orders:
-        return []
+        return [], True
     try:
         return kis.mock_order_history(
             settings.account_no,
             settings.account_product,
             trade_date.strftime("%Y%m%d"),
-        )
+        ), True
     except Exception:
-        return []
+        return [], False
 
 
-def _safe_account(accounts: KisAccountReader) -> AccountState:
+def _safe_account(accounts: KisAccountReader) -> tuple[AccountState, bool]:
     try:
-        return accounts.current_account()
+        return accounts.current_account(), True
     except Exception:
-        return AccountState(0.0, 0.0, 0.0, 0, 0.0)
+        return AccountState(0.0, 0.0, 0.0, 0, 0.0), False
 
 
-def _safe_holdings(accounts: KisAccountReader) -> list[dict[str, str]]:
+def _safe_holdings(
+    accounts: KisAccountReader,
+    include_holdings: bool,
+) -> tuple[list[dict[str, str]], bool]:
+    if not include_holdings:
+        return [], True
     try:
-        return accounts.holdings()
+        return accounts.holdings(), True
     except Exception:
-        return []
+        return [], False
 
 
 def _account(account: AccountState) -> dict[str, str]:

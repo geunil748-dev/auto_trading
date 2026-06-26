@@ -2,7 +2,15 @@ from datetime import date
 
 from trading_bot.adapters.kis_http import KisHttpResponseError
 from trading_bot.config import KisSettings, NotificationSettings, TradingSettings
-from trading_bot.models import AccountState, BuyIntent, FillRecord, PositionState, ScoreRecord, SellIntent
+from trading_bot.models import (
+    AccountState,
+    BuyIntent,
+    FillRecord,
+    PositionState,
+    ScoreRecord,
+    SellIntent,
+    TradeRecord,
+)
 from trading_bot.scheduler_logging import safe_scheduler_log
 from trading_bot.scheduler_market_close import (
     save_daily_run_summary,
@@ -40,6 +48,29 @@ class Executor:
     def execute(self, intents: list[SellIntent]) -> list[object]:
         self.intents = intents
         return [object()]
+
+
+class TradeRecordExecutor:
+    def __init__(self, trades: list[TradeRecord]) -> None:
+        self.intents: list[SellIntent] = []
+        self.trades = trades
+
+    def execute(self, intents: list[SellIntent]) -> list[TradeRecord]:
+        self.intents = intents
+        return self.trades
+
+
+def sell_trade(ticker: str = "TLT", quantity: int = 1) -> TradeRecord:
+    return TradeRecord(
+        trade_date=date(2026, 6, 25),
+        ticker=ticker,
+        order_type="SELL",
+        order_price_usd=87.31,
+        exec_price_usd=None,
+        quantity=quantity,
+        exit_reason="EOD",
+        order_status="SUCCESS",
+    )
 
 
 class IntradayAccounts:
@@ -313,6 +344,321 @@ def test_close_session_continues_when_unfilled_cancel_lookup_fails(monkeypatch, 
     assert "secret" not in logs[0][2].lower()
     assert "token" not in logs[0][2].lower()
     assert "appsecret" not in logs[0][2].lower()
+
+
+def test_close_session_waits_for_eod_fill_before_market_close_report(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class TltMonitor:
+        def poll(self, positions, end_of_day=False):
+            return positions, [SellIntent("TLT", 1, 87.31, "EOD")]
+
+    states = [
+        {
+            "orders": [],
+            "fills": [],
+            "holdings": [{"ticker": "TLT", "quantity": "1"}],
+            "dataHealth": {"orders": {"ok": True}, "holdings": {"ok": True}},
+        },
+        {
+            "orders": [],
+            "fills": [],
+            "holdings": [{"ticker": "TLT", "quantity": "1"}],
+            "dataHealth": {"orders": {"ok": True}, "holdings": {"ok": True}},
+        },
+        {
+            "orders": [],
+            "fills": [],
+            "holdings": [{"ticker": "TLT", "quantity": "1"}],
+            "dataHealth": {"orders": {"ok": True}, "holdings": {"ok": True}},
+        },
+        {
+            "orders": [],
+            "fills": [{"ticker": "TLT", "side": "매도", "quantity": "1"}],
+            "holdings": [],
+            "dataHealth": {"orders": {"ok": True}, "holdings": {"ok": True}},
+        },
+    ]
+    calls = []
+    report_states = []
+    daily_report_states = []
+    executor = TradeRecordExecutor([sell_trade()])
+
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_exit_poll",
+        lambda settings, kis_settings: (IntradayAccounts(), TltMonitor(), "repository"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_mock_sell_executor",
+        lambda kis_settings, repository, settings=None: executor,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.cancel_unfilled_orders_for_scheduler",
+        lambda kis_settings: [],
+    )
+
+    def fake_write_live_state(monitor_state, kis_settings, **kwargs):
+        state = states.pop(0)
+        if state["fills"]:
+            calls.append("fill_notification")
+        else:
+            calls.append("state")
+        return state
+
+    monkeypatch.setattr("trading_bot.scheduled_tasks._write_live_state", fake_write_live_state)
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.save_daily_run_summary",
+        lambda settings, eod_sell_count, cancelled_order_count: calls.append("summary"),
+    )
+
+    def fake_write_daily_report(report_dir, trade_day, state, cancelled_orders, eod_sell_count):
+        daily_report_states.append(state)
+        calls.append("daily_report")
+        return tmp_path / "report.json"
+
+    monkeypatch.setattr("trading_bot.scheduled_tasks.write_daily_report", fake_write_daily_report)
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.save_daily_trade_summary_report",
+        lambda: calls.append("trade_summary"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_market_close_notice",
+        lambda: calls.append("notice"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_market_close_report",
+        lambda state: (report_states.append(state), calls.append("market_close_report")),
+    )
+
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+        regular_session=lambda: True,
+        market_close_fill_confirm_timeout_seconds=6,
+        market_close_fill_confirm_poll_seconds=2,
+        market_close_fill_confirm_sleep=lambda seconds: calls.append(f"sleep:{seconds:g}"),
+    )
+
+    assert "장마감 모의 매도 주문 1건 제출" in tasks.close_session()
+    assert executor.intents == [SellIntent("TLT", 1, 87.31, "EOD")]
+    assert len(states) == 0
+    assert daily_report_states == [report_states[0]]
+    assert report_states[0]["fills"] == [{"ticker": "TLT", "side": "매도", "quantity": "1"}]
+    assert report_states[0]["holdings"] == []
+    assert calls.index("fill_notification") < calls.index("summary")
+    assert calls.index("fill_notification") < calls.index("market_close_report")
+
+
+def test_close_session_does_not_poll_when_no_eod_sell_was_submitted(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class TltMonitor:
+        def poll(self, positions, end_of_day=False):
+            return positions, [SellIntent("TLT", 1, 87.31, "EOD")]
+
+    write_calls = []
+    sleep_calls = []
+    executor = TradeRecordExecutor([])
+    baseline_state = {
+        "orders": [],
+        "fills": [],
+        "holdings": [{"ticker": "TLT", "quantity": "1"}],
+        "dataHealth": {"orders": {"ok": True}, "holdings": {"ok": True}},
+    }
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_exit_poll",
+        lambda settings, kis_settings: (IntradayAccounts(), TltMonitor(), "repository"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_mock_sell_executor",
+        lambda kis_settings, repository, settings=None: executor,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.cancel_unfilled_orders_for_scheduler",
+        lambda kis_settings: [],
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._write_live_state",
+        lambda monitor_state, kis_settings, **kwargs: write_calls.append("write") or baseline_state,
+    )
+    monkeypatch.setattr("trading_bot.scheduled_tasks.write_daily_report", lambda *args: tmp_path / "r.json")
+    monkeypatch.setattr("trading_bot.scheduled_tasks.save_daily_run_summary", lambda *args: None)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.save_daily_trade_summary_report", lambda: None)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.send_market_close_notice", lambda: None)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.send_market_close_report", lambda state: None)
+
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+        regular_session=lambda: True,
+        market_close_fill_confirm_sleep=lambda seconds: sleep_calls.append(seconds),
+    )
+
+    assert "장마감 모의 매도 주문 0건 제출" in tasks.close_session()
+    assert write_calls == ["write"]
+    assert sleep_calls == []
+
+
+def test_close_session_continues_after_fill_confirmation_timeout(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class TltMonitor:
+        def poll(self, positions, end_of_day=False):
+            return positions, [SellIntent("TLT", 1, 87.31, "EOD")]
+
+    state = {
+        "orders": [],
+        "fills": [],
+        "holdings": [{"ticker": "TLT", "quantity": "1"}],
+        "dataHealth": {"orders": {"ok": True}, "holdings": {"ok": True}},
+    }
+    logs = []
+    calls = []
+    report_states = []
+    executor = TradeRecordExecutor([sell_trade()])
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_exit_poll",
+        lambda settings, kis_settings: (IntradayAccounts(), TltMonitor(), "repository"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_mock_sell_executor",
+        lambda kis_settings, repository, settings=None: executor,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.cancel_unfilled_orders_for_scheduler",
+        lambda kis_settings: [],
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._write_live_state",
+        lambda monitor_state, kis_settings, **kwargs: state,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.safe_scheduler_log",
+        lambda level, module, message, **kwargs: logs.append((level, module, message, kwargs)),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.save_daily_run_summary",
+        lambda settings, eod_sell_count, cancelled_order_count: calls.append("summary"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.write_daily_report",
+        lambda report_dir, trade_day, report_state, cancelled_orders, eod_sell_count: (
+            calls.append("report"),
+            report_states.append(report_state),
+            tmp_path / "report.json",
+        )[-1],
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.save_daily_trade_summary_report",
+        lambda: calls.append("trade_summary"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_market_close_notice",
+        lambda: calls.append("notice"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_market_close_report",
+        lambda report_state: (calls.append("market_close_report"), report_states.append(report_state)),
+    )
+
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+        regular_session=lambda: True,
+        market_close_fill_confirm_timeout_seconds=2,
+        market_close_fill_confirm_poll_seconds=1,
+        market_close_fill_confirm_sleep=lambda seconds: None,
+    )
+
+    assert "보고서 작성 완료" in tasks.close_session()
+    assert logs[0][0] == "WARNING"
+    assert logs[0][1] == "orders"
+    assert logs[0][3]["reject_reason"] == "MARKET_CLOSE_FILL_CONFIRMATION_TIMEOUT"
+    assert "pending=TLT:1" in logs[0][2]
+    assert calls == ["summary", "report", "trade_summary", "notice", "market_close_report"]
+    assert report_states[0] is state
+    assert report_states[1] is state
+
+
+def test_close_session_does_not_treat_failed_empty_snapshot_as_filled(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class TltMonitor:
+        def poll(self, positions, end_of_day=False):
+            return positions, [SellIntent("TLT", 1, 87.31, "EOD")]
+
+    states = [
+        {
+            "orders": [],
+            "fills": [],
+            "holdings": [{"ticker": "TLT", "quantity": "1"}],
+            "dataHealth": {"orders": {"ok": True}, "holdings": {"ok": True}},
+        },
+        {
+            "orders": [],
+            "fills": [],
+            "holdings": [],
+            "dataHealth": {"orders": {"ok": False}, "holdings": {"ok": False}},
+        },
+        {
+            "orders": [],
+            "fills": [{"ticker": "TLT", "side": "SELL", "quantity": "1"}],
+            "holdings": [],
+            "dataHealth": {"orders": {"ok": True}, "holdings": {"ok": True}},
+        },
+    ]
+    report_states = []
+    executor = TradeRecordExecutor([sell_trade()])
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_exit_poll",
+        lambda settings, kis_settings: (IntradayAccounts(), TltMonitor(), "repository"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_mock_sell_executor",
+        lambda kis_settings, repository, settings=None: executor,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.cancel_unfilled_orders_for_scheduler",
+        lambda kis_settings: [],
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._write_live_state",
+        lambda monitor_state, kis_settings, **kwargs: states.pop(0),
+    )
+    monkeypatch.setattr("trading_bot.scheduled_tasks.save_daily_run_summary", lambda *args: None)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.write_daily_report", lambda *args: tmp_path / "r.json")
+    monkeypatch.setattr("trading_bot.scheduled_tasks.save_daily_trade_summary_report", lambda: None)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.send_market_close_notice", lambda: None)
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_market_close_report",
+        lambda state: report_states.append(state),
+    )
+
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+        regular_session=lambda: True,
+        market_close_fill_confirm_timeout_seconds=4,
+        market_close_fill_confirm_poll_seconds=2,
+        market_close_fill_confirm_sleep=lambda seconds: None,
+    )
+
+    tasks.close_session()
+
+    assert states == []
+    assert report_states[0]["fills"] == [{"ticker": "TLT", "side": "SELL", "quantity": "1"}]
 
 
 def test_close_session_skips_after_regular_session(monkeypatch, tmp_path) -> None:
@@ -864,6 +1210,166 @@ def test_intraday_watch_skips_when_trading_guard_reports_degraded(
 
     assert tasks.intraday_watch() == "SKIP trading cycle: monitor degraded reason=db_connected=false"
     assert calls == []
+
+
+def test_intraday_watch_skips_while_market_close_is_running(monkeypatch, tmp_path) -> None:
+    class TltMonitor:
+        def poll(self, positions, end_of_day=False):
+            return positions, []
+
+    holder = {}
+    build_calls = []
+    watch_results = []
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_exit_poll",
+        lambda settings, kis_settings: build_calls.append("exit_poll")
+        or (IntradayAccounts(), TltMonitor(), "repository"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_mock_sell_executor",
+        lambda kis_settings, repository, settings=None: TradeRecordExecutor([]),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.cancel_unfilled_orders_for_scheduler",
+        lambda kis_settings: [],
+    )
+
+    def fake_write_live_state(monitor_state, kis_settings, **kwargs):
+        if not watch_results:
+            watch_results.append(holder["tasks"].intraday_watch())
+        return {
+            "orders": [],
+            "fills": [],
+            "holdings": [],
+            "dataHealth": {"orders": {"ok": True}, "holdings": {"ok": True}},
+        }
+
+    monkeypatch.setattr("trading_bot.scheduled_tasks._write_live_state", fake_write_live_state)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.save_daily_run_summary", lambda *args: None)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.write_daily_report", lambda *args: tmp_path / "r.json")
+    monkeypatch.setattr("trading_bot.scheduled_tasks.save_daily_trade_summary_report", lambda: None)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.send_market_close_notice", lambda: None)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.send_market_close_report", lambda state: None)
+
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+        regular_session=lambda: True,
+    )
+    holder["tasks"] = tasks
+
+    tasks.close_session()
+
+    assert watch_results == ["장마감 처리 중이라 1분 감시를 건너뜁니다."]
+    assert build_calls == ["exit_poll"]
+
+
+def test_intraday_recheck_skips_after_market_close_started(monkeypatch, tmp_path) -> None:
+    class TltMonitor:
+        def poll(self, positions, end_of_day=False):
+            return positions, []
+
+    dry_run_calls = []
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_exit_poll",
+        lambda settings, kis_settings: (IntradayAccounts(), TltMonitor(), "repository"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_mock_sell_executor",
+        lambda kis_settings, repository, settings=None: TradeRecordExecutor([]),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_dry_run",
+        lambda settings, kis_settings: dry_run_calls.append("dry_run"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.cancel_unfilled_orders_for_scheduler",
+        lambda kis_settings: [],
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._write_live_state",
+        lambda monitor_state, kis_settings, **kwargs: {
+            "orders": [],
+            "fills": [],
+            "holdings": [],
+            "dataHealth": {"orders": {"ok": True}, "holdings": {"ok": True}},
+        },
+    )
+    monkeypatch.setattr("trading_bot.scheduled_tasks.save_daily_run_summary", lambda *args: None)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.write_daily_report", lambda *args: tmp_path / "r.json")
+    monkeypatch.setattr("trading_bot.scheduled_tasks.save_daily_trade_summary_report", lambda: None)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.send_market_close_notice", lambda: None)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.send_market_close_report", lambda state: None)
+
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+        regular_session=lambda: True,
+    )
+
+    tasks.close_session()
+
+    assert tasks.intraday_recheck() == "오늘 장마감 처리가 시작되어 15분 재평가를 건너뜁니다."
+    assert dry_run_calls == []
+
+
+def test_market_close_lock_resets_or_expires_on_next_trade_date(monkeypatch, tmp_path) -> None:
+    class EmptyMonitor:
+        def poll(self, positions, end_of_day=False, partial_take_profit_tickers=None):
+            return positions, []
+
+    current = {"date": date(2026, 6, 25)}
+    executor = RecordingExecutor()
+    monkeypatch.setattr("trading_bot.scheduled_tasks.current_trade_date", lambda: current["date"])
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_exit_poll",
+        lambda settings, kis_settings: (IntradayAccounts(), EmptyMonitor(), "repository"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_mock_sell_executor",
+        lambda kis_settings, repository, settings=None: executor,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.cancel_unfilled_orders_for_scheduler",
+        lambda kis_settings: [],
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.saved_partial_take_profit_tickers",
+        lambda repository: set(),
+    )
+    monkeypatch.setattr("trading_bot.scheduled_tasks._save_exit_rule_diagnostics", lambda *args: None)
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._write_live_state",
+        lambda monitor_state, kis_settings, **kwargs: {
+            "orders": [],
+            "fills": [],
+            "holdings": [],
+            "dataHealth": {"orders": {"ok": True}, "holdings": {"ok": True}},
+        },
+    )
+    monkeypatch.setattr("trading_bot.scheduled_tasks.save_daily_run_summary", lambda *args: None)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.write_daily_report", lambda *args: tmp_path / "r.json")
+    monkeypatch.setattr("trading_bot.scheduled_tasks.save_daily_trade_summary_report", lambda: None)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.send_market_close_notice", lambda: None)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.send_market_close_report", lambda state: None)
+
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+        regular_session=lambda: True,
+    )
+
+    tasks.close_session()
+    assert tasks.intraday_watch() == "장마감 처리 중이라 1분 감시를 건너뜁니다."
+
+    current["date"] = date(2026, 6, 26)
+    assert tasks.intraday_watch() == "1분 감시 완료: 모의 매도 주문 0건 제출."
 
 
 def test_intraday_recheck_screens_and_limits_additional_buys(monkeypatch, tmp_path) -> None:
