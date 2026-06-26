@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from contextlib import closing
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from threading import Lock
 
 from trading_bot.adapters.kis_http import KisJsonClient
 from trading_bot.composition import (
@@ -74,6 +77,8 @@ from trading_bot.trading_date import current_trade_date
 
 
 NO_ORDER_RISK_GUARD = "NO_ORDER_RISK_GUARD"
+MARKET_CLOSE_FILL_CONFIRM_TIMEOUT_SECONDS = 20.0
+MARKET_CLOSE_FILL_CONFIRM_POLL_SECONDS = 2.0
 
 
 def live_mock_tasks(
@@ -83,9 +88,13 @@ def live_mock_tasks(
     trading_day: Callable[[], bool] = is_current_us_trading_day,
     regular_session: Callable[[], bool] = is_current_us_regular_session,
     trading_guard: Callable[[], str | None] | None = None,
+    market_close_fill_confirm_timeout_seconds: float = MARKET_CLOSE_FILL_CONFIRM_TIMEOUT_SECONDS,
+    market_close_fill_confirm_poll_seconds: float = MARKET_CLOSE_FILL_CONFIRM_POLL_SECONDS,
+    market_close_fill_confirm_sleep: Callable[[float], None] = time.sleep,
 ) -> DailyTasks:
     # 스케줄러 안에서는 가장 최근 수집 결과를 들고 있다가 매수/감시 단계에서 재사용한다.
     latest = _LatestRunState()
+    cycle_lock = Lock()
 
     def prepare_day() -> str:
         KisJsonClient(kis_settings).access_token()
@@ -142,136 +151,158 @@ def live_mock_tasks(
     def intraday_watch() -> str:
         if not regular_session():
             return "미국 정규장 시간이 아니라 1분 감시를 건너뜁니다."
-        guarded = _guarded_trading_skip(trading_guard)
-        if guarded is not None:
-            return guarded
-        current_settings = _current_settings(settings)
-        accounts, monitor, repository = build_live_exit_poll(current_settings, kis_settings)
-        positions = _remembered_highs(accounts.positions(), latest.highs)
-        partial_done = latest.partial_take_profit_tickers | saved_partial_take_profit_tickers(repository)
-        refreshed, exits = monitor.poll(
-            positions,
-            partial_take_profit_tickers=partial_done,
-        )
-        latest.highs.update({item.ticker: item.high_price_usd for item in refreshed})
-        _save_exit_rule_diagnostics(repository, refreshed, current_settings)
-        latest.pending_exits.intersection_update(item.ticker for item in refreshed)
-        # 같은 보유 종목에 미체결 매도 주문을 중복 제출하지 않도록 보호한다.
-        executable = [item for item in exits if item.ticker not in latest.pending_exits]
-        trades = build_mock_sell_executor(kis_settings, repository, current_settings).execute(executable)
-        latest.partial_take_profit_tickers.update(
-            item.ticker for item in executable if item.exit_reason == "PARTIAL_TAKE_PROFIT"
-        )
-        latest.pending_exits.update(
-            item.ticker for item in executable if item.exit_reason != "PARTIAL_TAKE_PROFIT"
-        )
-        retry_state, retry_logs = retry_stale_mock_buy_orders(
-            current_settings,
-            kis_settings,
-            latest,
-            build_live_dry_run_func=build_live_dry_run,
-            build_mock_buy_executor_func=build_mock_buy_executor,
-            apply_stop_loss_entry_guards_func=apply_stop_loss_entry_guards,
-        )
-        _write_live_state(
-            monitor_state,
-            kis_settings,
-            screening_state=retry_state,
-            extra_logs=[
-                log_row(
-                    "1분 감시",
-                    watch_message(refreshed, exits, executable, latest.pending_exits),
-                )
-            ] + retry_logs,
-        )
-        return f"1분 감시 완료: 모의 매도 주문 {len(trades)}건 제출."
+        market_close_skip = _market_close_started_skip(latest, "1분 감시")
+        if market_close_skip is not None:
+            return market_close_skip
+        if not cycle_lock.acquire(blocking=False):
+            return _cycle_lock_busy_skip(latest, "1분 감시")
+        try:
+            market_close_skip = _market_close_started_skip(latest, "1분 감시")
+            if market_close_skip is not None:
+                return market_close_skip
+            guarded = _guarded_trading_skip(trading_guard)
+            if guarded is not None:
+                return guarded
+            current_settings = _current_settings(settings)
+            accounts, monitor, repository = build_live_exit_poll(current_settings, kis_settings)
+            positions = _remembered_highs(accounts.positions(), latest.highs)
+            partial_done = latest.partial_take_profit_tickers | saved_partial_take_profit_tickers(repository)
+            refreshed, exits = monitor.poll(
+                positions,
+                partial_take_profit_tickers=partial_done,
+            )
+            latest.highs.update({item.ticker: item.high_price_usd for item in refreshed})
+            _save_exit_rule_diagnostics(repository, refreshed, current_settings)
+            latest.pending_exits.intersection_update(item.ticker for item in refreshed)
+            # 같은 보유 종목에 미체결 매도 주문을 중복 제출하지 않도록 보호한다.
+            executable = [item for item in exits if item.ticker not in latest.pending_exits]
+            trades = build_mock_sell_executor(kis_settings, repository, current_settings).execute(executable)
+            latest.partial_take_profit_tickers.update(
+                item.ticker for item in executable if item.exit_reason == "PARTIAL_TAKE_PROFIT"
+            )
+            latest.pending_exits.update(
+                item.ticker for item in executable if item.exit_reason != "PARTIAL_TAKE_PROFIT"
+            )
+            retry_state, retry_logs = retry_stale_mock_buy_orders(
+                current_settings,
+                kis_settings,
+                latest,
+                build_live_dry_run_func=build_live_dry_run,
+                build_mock_buy_executor_func=build_mock_buy_executor,
+                apply_stop_loss_entry_guards_func=apply_stop_loss_entry_guards,
+            )
+            _write_live_state(
+                monitor_state,
+                kis_settings,
+                screening_state=retry_state,
+                extra_logs=[
+                    log_row(
+                        "1분 감시",
+                        watch_message(refreshed, exits, executable, latest.pending_exits),
+                    )
+                ] + retry_logs,
+            )
+            return f"1분 감시 완료: 모의 매도 주문 {len(trades)}건 제출."
+        finally:
+            cycle_lock.release()
 
     def intraday_recheck() -> str:
         if not regular_session():
             return "미국 정규장 시간이 아니라 15분 재평가를 건너뜁니다."
-        guarded = _guarded_trading_skip(trading_guard)
-        if guarded is not None:
-            return guarded
-        current_settings = _current_settings(settings)
-        runtime, repository = build_live_dry_run(current_settings, kis_settings)
-        fixed_opening = fixed_opening_result(latest, current_settings)
-        mode = _candidate_mode(current_settings)
-        if mode == "fixed" and fixed_opening is not None:
-            # 장초반 고정 모드에서는 기존 후보만 최신 가격 기준으로 재평가한다.
-            latest.result = recheck_fixed_watchlist(
-                runtime,
-                fixed_opening,
-                current_settings,
-                repository,
-            )
-        elif mode == "hybrid" and fixed_opening is not None:
-            # 하이브리드는 장초반 고정 후보와 15분 신규 후보 상위권을 합쳐 감시한다.
-            latest.result = hybrid_recheck(runtime, fixed_opening, current_settings, repository)
-        else:
-            # 15분 재수집 모드에서는 매번 새 후보를 수집해 점수를 다시 계산한다.
-            latest.result = runtime.run()
-        latest.repository = repository
-        positions = runtime.accounts.positions()
-        cancelled = cancel_stale_mock_buy_orders(
-            kis_settings,
-            current_settings.mock_unfilled_reorder_minutes,
-            latest.retried_buy_tickers,
-            current_settings.mock_unfilled_reorder_limit,
-            unfilled_cancel_seconds(current_settings),
-        )
-        latest.cancelled_orders.extend(cancelled)
-        release_cancelled_buy_tickers(latest, cancelled)
-        unfilled = unfilled_order_tickers(kis_settings) - {
-            ticker(str(item.get("ticker", ""))) for item in cancelled
-        }
-        # 재평가 매수는 미체결/이미 진입한 종목/일일 라운드 제한을 한 번 더 통과해야 한다.
-        intents, no_order_diagnostics = limited_intraday_buy_intents_with_diagnostics(
-            latest.result.buy_intents,
-            positions,
-            latest.buy_tickers,
-            latest.add_on_tickers,
-            unfilled,
-            latest.intraday_entry_rounds,
-            current_settings,
-        )
-        _mark_candidate_no_order_diagnostics(repository, no_order_diagnostics)
-        intents = tag_mode_intents(intents, mode)
-        pre_risk_intents = intents
-        intents = apply_stop_loss_entry_guards(intents, repository, current_settings)
-        _mark_candidate_no_order_diagnostics(
-            repository,
-            _risk_guard_no_order_diagnostics(pre_risk_intents, intents),
-        )
-        trades = build_mock_buy_executor(kis_settings, repository, current_settings).execute(intents)
-        if trades:
-            latest.intraday_entry_rounds += 1
-            latest.buy_tickers.update(item.ticker for item in intents)
-            held = {ticker(position.ticker) for position in positions}
-            latest.add_on_tickers.update(
-                item.ticker for item in intents if ticker(item.ticker) in held
-            )
-        _write_live_state(
-            monitor_state,
-            kis_settings,
-            screening_state=state_from_dry_run(latest.result),
-            extra_logs=[
-                log_row(
-                    "15분 재평가",
-                    recheck_message(
-                        latest.result.buy_intents,
-                        intents,
-                        positions,
-                        unfilled,
-                        latest.intraday_entry_rounds,
-                        current_settings,
-                    ),
+        market_close_skip = _market_close_started_skip(latest, "15분 재평가")
+        if market_close_skip is not None:
+            return market_close_skip
+        if not cycle_lock.acquire(blocking=False):
+            return _cycle_lock_busy_skip(latest, "15분 재평가")
+        try:
+            market_close_skip = _market_close_started_skip(latest, "15분 재평가")
+            if market_close_skip is not None:
+                return market_close_skip
+            guarded = _guarded_trading_skip(trading_guard)
+            if guarded is not None:
+                return guarded
+            current_settings = _current_settings(settings)
+            runtime, repository = build_live_dry_run(current_settings, kis_settings)
+            fixed_opening = fixed_opening_result(latest, current_settings)
+            mode = _candidate_mode(current_settings)
+            if mode == "fixed" and fixed_opening is not None:
+                # 장초반 고정 모드에서는 기존 후보만 최신 가격 기준으로 재평가한다.
+                latest.result = recheck_fixed_watchlist(
+                    runtime,
+                    fixed_opening,
+                    current_settings,
+                    repository,
                 )
-            ] + cancel_logs(cancelled, current_settings.mock_unfilled_reorder_minutes),
-        )
-        return (
-            f"15분 재평가 완료: 선정 점수 {len(latest.result.scoring.selected)}건, "
-            f"모의 매수 주문 {len(trades)}건 제출."
-        )
+            elif mode == "hybrid" and fixed_opening is not None:
+                # 하이브리드는 장초반 고정 후보와 15분 신규 후보 상위권을 합쳐 감시한다.
+                latest.result = hybrid_recheck(runtime, fixed_opening, current_settings, repository)
+            else:
+                # 15분 재수집 모드에서는 매번 새 후보를 수집해 점수를 다시 계산한다.
+                latest.result = runtime.run()
+            latest.repository = repository
+            positions = runtime.accounts.positions()
+            cancelled = cancel_stale_mock_buy_orders(
+                kis_settings,
+                current_settings.mock_unfilled_reorder_minutes,
+                latest.retried_buy_tickers,
+                current_settings.mock_unfilled_reorder_limit,
+                unfilled_cancel_seconds(current_settings),
+            )
+            latest.cancelled_orders.extend(cancelled)
+            release_cancelled_buy_tickers(latest, cancelled)
+            unfilled = unfilled_order_tickers(kis_settings) - {
+                ticker(str(item.get("ticker", ""))) for item in cancelled
+            }
+            # 재평가 매수는 미체결/이미 진입한 종목/일일 라운드 제한을 한 번 더 통과해야 한다.
+            intents, no_order_diagnostics = limited_intraday_buy_intents_with_diagnostics(
+                latest.result.buy_intents,
+                positions,
+                latest.buy_tickers,
+                latest.add_on_tickers,
+                unfilled,
+                latest.intraday_entry_rounds,
+                current_settings,
+            )
+            _mark_candidate_no_order_diagnostics(repository, no_order_diagnostics)
+            intents = tag_mode_intents(intents, mode)
+            pre_risk_intents = intents
+            intents = apply_stop_loss_entry_guards(intents, repository, current_settings)
+            _mark_candidate_no_order_diagnostics(
+                repository,
+                _risk_guard_no_order_diagnostics(pre_risk_intents, intents),
+            )
+            trades = build_mock_buy_executor(kis_settings, repository, current_settings).execute(intents)
+            if trades:
+                latest.intraday_entry_rounds += 1
+                latest.buy_tickers.update(item.ticker for item in intents)
+                held = {ticker(position.ticker) for position in positions}
+                latest.add_on_tickers.update(
+                    item.ticker for item in intents if ticker(item.ticker) in held
+                )
+            _write_live_state(
+                monitor_state,
+                kis_settings,
+                screening_state=state_from_dry_run(latest.result),
+                extra_logs=[
+                    log_row(
+                        "15분 재평가",
+                        recheck_message(
+                            latest.result.buy_intents,
+                            intents,
+                            positions,
+                            unfilled,
+                            latest.intraday_entry_rounds,
+                            current_settings,
+                        ),
+                    )
+                ] + cancel_logs(cancelled, current_settings.mock_unfilled_reorder_minutes),
+            )
+            return (
+                f"15분 재평가 완료: 선정 점수 {len(latest.result.scoring.selected)}건, "
+                f"모의 매수 주문 {len(trades)}건 제출."
+            )
+        finally:
+            cycle_lock.release()
 
     def cancel_unfilled() -> str:
         if not trading_day():
@@ -294,32 +325,43 @@ def live_mock_tasks(
         guarded = _guarded_trading_skip(trading_guard)
         if guarded is not None:
             return guarded
-        cancelled = _cancel_unfilled_orders_for_market_close(kis_settings)
-        latest.cancelled_orders.extend(cancelled)
-        current_settings = _current_settings(settings)
-        accounts, monitor, repository = build_live_exit_poll(current_settings, kis_settings)
-        _, exits = monitor.poll(accounts.positions(), end_of_day=True)
-        trades = build_mock_sell_executor(kis_settings, repository, current_settings).execute(exits)
-        state = _write_live_state(monitor_state, kis_settings)
-        save_daily_run_summary(
-            current_settings,
-            len(trades),
-            len(latest.cancelled_orders),
-        )
-        report_path = write_daily_report(
-            monitor_state.parent / "reports",
-            current_us_market_date().strftime("%Y%m%d"),
-            state,
-            latest.cancelled_orders,
-            len(trades),
-        )
-        save_daily_trade_summary_report()
-        send_market_close_notice()
-        send_market_close_report(state)
-        return (
-            f"장마감 모의 매도 주문 {len(trades)}건 제출 및 "
-            f"보고서 작성 완료: {report_path}"
-        )
+        latest.market_close_trade_date = current_trade_date()
+        with cycle_lock:
+            cancelled = _cancel_unfilled_orders_for_market_close(kis_settings)
+            latest.cancelled_orders.extend(cancelled)
+            current_settings = _current_settings(settings)
+            accounts, monitor, repository = build_live_exit_poll(current_settings, kis_settings)
+            baseline_state = _write_live_state(monitor_state, kis_settings)
+            _, exits = monitor.poll(accounts.positions(), end_of_day=True)
+            trades = build_mock_sell_executor(kis_settings, repository, current_settings).execute(exits)
+            state = _wait_for_market_close_settlement(
+                monitor_state,
+                kis_settings,
+                trades,
+                baseline_state,
+                timeout_seconds=market_close_fill_confirm_timeout_seconds,
+                poll_seconds=market_close_fill_confirm_poll_seconds,
+                sleep=market_close_fill_confirm_sleep,
+            )
+            save_daily_run_summary(
+                current_settings,
+                len(trades),
+                len(latest.cancelled_orders),
+            )
+            report_path = write_daily_report(
+                monitor_state.parent / "reports",
+                current_us_market_date().strftime("%Y%m%d"),
+                state,
+                latest.cancelled_orders,
+                len(trades),
+            )
+            save_daily_trade_summary_report()
+            send_market_close_notice()
+            send_market_close_report(state)
+            return (
+                f"장마감 모의 매도 주문 {len(trades)}건 제출 및 "
+                f"보고서 작성 완료: {report_path}"
+            )
 
     return DailyTasks(
         prepare_day,
@@ -390,6 +432,228 @@ def _cancel_unfilled_orders_for_market_close(kis_settings: KisSettings) -> list[
         return []
 
 
+@dataclass(frozen=True)
+class _MarketCloseExpectation:
+    ticker: str
+    quantity: int
+    baseline_sell_quantity: int
+    baseline_holding_quantity: int
+
+
+@dataclass(frozen=True)
+class _MarketCloseSettlementStatus:
+    completed: bool
+    pending_quantities: dict[str, int]
+    sources_ready: bool
+
+
+def _wait_for_market_close_settlement(
+    monitor_state: Path,
+    kis_settings: KisSettings,
+    trades: list[object],
+    baseline_state: dict[str, object],
+    *,
+    timeout_seconds: float,
+    poll_seconds: float,
+    sleep: Callable[[float], None],
+) -> dict[str, object]:
+    expectations = _market_close_expectations(trades, baseline_state)
+    if not expectations:
+        return baseline_state
+    attempts = _market_close_poll_attempts(timeout_seconds, poll_seconds)
+    baseline_sources_ready = _state_sources_ready(baseline_state)
+    last_state = baseline_state
+    last_status = _market_close_settlement_status(
+        last_state,
+        expectations,
+        baseline_sources_ready=baseline_sources_ready,
+    )
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            state = _write_live_state(monitor_state, kis_settings)
+        except Exception as exc:
+            last_error = exc
+        else:
+            last_state = state
+            last_status = _market_close_settlement_status(
+                state,
+                expectations,
+                baseline_sources_ready=baseline_sources_ready,
+            )
+            if last_status.completed:
+                return state
+        if attempt < attempts:
+            sleep(max(0.0, poll_seconds))
+    _log_market_close_confirmation_timeout(last_status, attempts, last_error)
+    return last_state
+
+
+def _market_close_expectations(
+    trades: list[object],
+    baseline_state: dict[str, object],
+) -> list[_MarketCloseExpectation]:
+    submitted = _submitted_sell_quantities(trades)
+    if not submitted:
+        return []
+    baseline_sells = _sell_fill_quantities(baseline_state)
+    baseline_holdings = _holding_quantities(baseline_state)
+    return [
+        _MarketCloseExpectation(
+            ticker=symbol,
+            quantity=quantity,
+            baseline_sell_quantity=baseline_sells.get(symbol, 0),
+            baseline_holding_quantity=baseline_holdings.get(symbol, 0),
+        )
+        for symbol, quantity in sorted(submitted.items())
+        if quantity > 0
+    ]
+
+
+def _submitted_sell_quantities(trades: list[object]) -> dict[str, int]:
+    quantities: dict[str, int] = {}
+    for trade in trades:
+        symbol = ticker(str(getattr(trade, "ticker", "")))
+        quantity = _safe_int(getattr(trade, "quantity", 0))
+        if symbol and quantity > 0:
+            quantities[symbol] = quantities.get(symbol, 0) + quantity
+    return quantities
+
+
+def _market_close_settlement_status(
+    state: dict[str, object],
+    expectations: list[_MarketCloseExpectation],
+    *,
+    baseline_sources_ready: bool,
+) -> _MarketCloseSettlementStatus:
+    sources_ready = baseline_sources_ready and _state_sources_ready(state)
+    if not sources_ready:
+        return _MarketCloseSettlementStatus(
+            completed=False,
+            pending_quantities={item.ticker: item.quantity for item in expectations},
+            sources_ready=False,
+        )
+    sells = _sell_fill_quantities(state)
+    holdings = _holding_quantities(state)
+    pending: dict[str, int] = {}
+    for item in expectations:
+        sell_delta = max(0, sells.get(item.ticker, 0) - item.baseline_sell_quantity)
+        expected_holding = max(0, item.baseline_holding_quantity - item.quantity)
+        current_holding = holdings.get(item.ticker, 0)
+        if sell_delta < item.quantity or current_holding > expected_holding:
+            pending[item.ticker] = max(item.quantity - sell_delta, 0)
+    return _MarketCloseSettlementStatus(
+        completed=not pending,
+        pending_quantities=pending,
+        sources_ready=True,
+    )
+
+
+def _market_close_poll_attempts(timeout_seconds: float, poll_seconds: float) -> int:
+    if timeout_seconds <= 0 or poll_seconds <= 0:
+        return 1
+    return max(1, int(timeout_seconds / poll_seconds) + 1)
+
+
+def _state_sources_ready(state: dict[str, object]) -> bool:
+    health = state.get("dataHealth")
+    if not isinstance(health, dict):
+        return True
+    return _source_ok(health.get("orders")) and _source_ok(health.get("holdings"))
+
+
+def _source_ok(value: object) -> bool:
+    if isinstance(value, dict):
+        return bool(value.get("ok"))
+    if isinstance(value, bool):
+        return value
+    return False
+
+
+def _sell_fill_quantities(state: dict[str, object]) -> dict[str, int]:
+    quantities: dict[str, int] = {}
+    fills = state.get("fills", [])
+    if not isinstance(fills, list):
+        return quantities
+    for item in fills:
+        if not isinstance(item, dict) or not _is_sell_side(item.get("side")):
+            continue
+        symbol = ticker(str(item.get("ticker", "")))
+        quantity = _safe_int(item.get("quantity"))
+        if symbol and quantity > 0:
+            quantities[symbol] = quantities.get(symbol, 0) + quantity
+    return quantities
+
+
+def _holding_quantities(state: dict[str, object]) -> dict[str, int]:
+    quantities: dict[str, int] = {}
+    holdings = state.get("holdings", [])
+    if not isinstance(holdings, list):
+        return quantities
+    for item in holdings:
+        if not isinstance(item, dict):
+            continue
+        symbol = ticker(str(item.get("ticker", "")))
+        quantity = _safe_int(item.get("quantity"))
+        if symbol:
+            quantities[symbol] = quantity
+    return quantities
+
+
+def _is_sell_side(value: object) -> bool:
+    side = str(value or "").strip().upper()
+    return side in {"SELL", "SLL", "매도"} or "SELL" in side or "매도" in side
+
+
+def _safe_int(value: object) -> int:
+    try:
+        return int(float(str(value or "0").replace(",", "").replace("주", "").strip() or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _log_market_close_confirmation_timeout(
+    status: _MarketCloseSettlementStatus,
+    attempts: int,
+    error: Exception | None,
+) -> None:
+    pending = _pending_summary(status.pending_quantities)
+    suffix = ""
+    if error is not None:
+        suffix = f" last_error={safe_exception_summary(error)}"
+    safe_scheduler_log(
+        "WARNING",
+        "orders",
+        (
+            "MARKET_CLOSE_FILL_CONFIRMATION_TIMEOUT: "
+            f"pending={pending} attempts={attempts} sources_ready={status.sources_ready}{suffix}"
+        ),
+        reject_reason="MARKET_CLOSE_FILL_CONFIRMATION_TIMEOUT",
+        actual_value=float(sum(status.pending_quantities.values())),
+        threshold_value=0.0,
+    )
+
+
+def _pending_summary(pending_quantities: dict[str, int]) -> str:
+    if not pending_quantities:
+        return "-"
+    return ",".join(f"{symbol}:{quantity}" for symbol, quantity in sorted(pending_quantities.items()))
+
+
+def _market_close_started_skip(latest: "_LatestRunState", job_label: str) -> str | None:
+    if latest.market_close_trade_date != current_trade_date():
+        return None
+    if job_label == "1분 감시":
+        return "장마감 처리 중이라 1분 감시를 건너뜁니다."
+    return f"오늘 장마감 처리가 시작되어 {job_label}를 건너뜁니다."
+
+
+def _cycle_lock_busy_skip(latest: "_LatestRunState", job_label: str) -> str:
+    if latest.market_close_trade_date == current_trade_date():
+        return f"장마감 처리 중이라 {job_label}를 건너뜁니다."
+    return f"다른 거래 작업 실행 중이라 {job_label}를 건너뜁니다."
+
+
 def _candidate_mode(settings: TradingSettings) -> str:
     if settings.candidate_selection_mode != "refresh":
         return settings.candidate_selection_mode
@@ -412,6 +676,7 @@ class _LatestRunState:
         self.opening_trade_date = None
         self.opening_fixed_mode = False
         self.candidate_notification_dates: set[object] = set()
+        self.market_close_trade_date = None
 
 
 def _daily_candidate_notification_sender(latest: _LatestRunState):
