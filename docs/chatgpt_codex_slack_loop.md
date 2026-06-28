@@ -2,26 +2,27 @@
 
 ## Purpose
 
-The Slack loop turns the daily operations report into a safe action queue. ChatGPT may propose LOW and MEDIUM risk work through Slack `@Codex`, but Codex must only create a branch and pull request. Humans remain responsible for approval, merge, and production rollout.
+The Slack loop turns Daily Ops and Source Triage messages into a safe manual handoff queue. In `SAFE_MANUAL_HANDOFF` mode, scheduled messages must not auto-trigger Codex. They may summarize findings and provide bounded LOW-risk prompts, but those prompts remain inert until a human reviews them and manually mentions Codex in the relevant Slack thread.
 
-Note: Slack mention ID `&lt;@U0BC29CQUBD&gt;` read-only integration was verified before enabling automated task prompts.
+Codex is branch-and-PR-only. Humans remain responsible for deciding whether to start Codex, reviewing the draft PR, approving the work, merging, and any production rollout.
 
 ## Risk Classification
 
-| Risk | Definition | Automation Rule |
+| Risk | Definition | SAFE_MANUAL_HANDOFF rule |
 | --- | --- | --- |
-| LOW | Documentation, formatting, report wording, read-only analysis notes, test naming, or other changes with no runtime behavior impact. | May be proposed automatically through Slack `@Codex`. Codex may prepare a branch and PR only. |
-| MEDIUM | Bounded changes to tests, read-only reporting code, non-trading UI, logs, or developer tooling where production trading behavior is not changed. | May be proposed automatically through Slack `@Codex`. Codex may prepare a branch and PR only with validation. |
+| LOW | Documentation, formatting, report wording, read-only analysis notes, test naming, or other changes with no runtime behavior impact. | May be listed as a copy-paste handoff prompt. Codex starts only after a human manually mentions Codex in a thread and pastes the prompt. |
+| MEDIUM | Bounded changes to tests, read-only reporting code, non-trading UI, logs, or developer tooling where production trading behavior is not changed. | May be listed for human review, but should not be converted into a Codex prompt unless a human explicitly approves the scope. |
 | HIGH | Any change touching trading decisions, KIS API, order submission, scheduler timing, DB schema, credentials, account handling, live API calls, money movement, deployment, or merge/release actions. | Requires explicit human approval before implementation and must not be auto-executed. |
 
 HIGH risk work may be discussed, but Slack automation must stop at a recommendation until a human explicitly approves the exact scope.
 
-## Daily Slack Report Format
+## Daily Ops / Source Triage Slack Format
 
-Use this format for the daily report:
+Use this structure for scheduled Daily Ops or Source Triage messages. The message must be an execution record and review queue, not a direct Codex command.
 
-```text
+````text
 [Auto Trading Daily Ops] YYYY-MM-DD KST
+Mode: SAFE_MANUAL_HANDOFF
 Status: PASS | WARN | FAIL
 Progress: NN.N% (delta: +N.N | -N.N | N/A)
 Analysis period: YYYY-MM-DD to YYYY-MM-DD
@@ -37,20 +38,63 @@ Runner / noisy universe:
 - Noisy universe finding: ...
 
 Risk queue:
-- LOW: ...
-- MEDIUM: ...
-- HIGH: ...
+1. LOW: ...
+2. MEDIUM: ...
+3. HIGH: ...
 
-Recommended @Codex proposals:
-- LOW: @Codex create a branch and PR for ...
-- MEDIUM: @Codex create a branch and PR for ...
+Selected LOW candidate:
+- Selected: yes | no
+- Title: ...
+- Why selected: ...
+- Expected PR type: draft PR
+- Human action required: open this message thread, manually mention Codex, then paste the handoff prompt below.
+
+Manual Codex handoff prompt:
+Note: This prompt is not executed by the scheduled task. It starts only when a human manually mentions Codex in the Slack thread and pastes the prompt text.
+
+```handoff-prompt
+[MANUAL_CODEX_MENTION_PLACEHOLDER]
+Use the Codex cloud environment named auto_trading.
+
+Repository: geunil748-dev/auto_trading
+Base branch: main
+
+Selected candidate:
+- Risk: LOW
+- Title: ...
+
+Task:
+Create a new branch from main and implement only the selected LOW candidate.
+
+Scope:
+- Update only the named files.
+
+Constraints:
+- Do not modify trading logic, KIS API code, order code, scheduler timing, risk logic, DB schema, credentials, or reports/analysis outputs.
+- Do not call KIS/order/Telegram/Slack/broker APIs.
+- Open a draft PR only. Do not merge. Do not push directly to main.
+
+Validation:
+- Run git diff --check.
+- No runtime tests are required for docs-only changes unless code is modified.
+
+Summarize:
+- changed files
+- risk level
+- checks run
+- PR link
+- follow-up tasks
+```
+
+Safety notes:
+- DB/API/credential access: not performed by the scheduled task.
+- Codex auto-execution: disabled.
+- Source edits by ChatGPT: none.
 
 Human approval needed:
-- HIGH: ...
-
-Follow-ups:
-- ...
-```
+- MEDIUM items require human review before execution.
+- HIGH items require explicit human approval before implementation.
+````
 
 ## Manual DRY_RUN Slack Review Checklist
 
@@ -67,9 +111,10 @@ When a Daily Ops message is posted in `placeholder-report dry-run`, `missing-rep
    - Compare `Expected completed trade_date`, `Latest report date found`, `Freshness status`, and the analysis period.
    - If freshness is `placeholder`, `unknown`, `stale`, or date-mismatched, require a newly generated `daily_ops_summary_YYYY-MM-DD.md` and `daily_ops_metrics_YYYY-MM-DD.json` before making trading conclusions.
 4. Separate Codex candidates from approval-required work.
-   - LOW/MEDIUM items labeled `[Codex 실행 후보]` are review candidates only. They may be turned into a Codex request only after a human manually mentions Codex in a Slack thread with the exact bounded scope.
-   - HIGH items labeled `[승인 필요]` require explicit human approval before implementation and must not be converted into an automated Codex request by the Scheduled Task.
-   - The Scheduled Task must not include a real `<@U0BC29CQUBD>` mention or direct `@Codex` execution phrase in DRY_RUN candidate text.
+   - LOW items labeled as Codex candidates are review candidates only. They may be converted into copy-paste handoff prompts, but they must not execute until a human manually mentions Codex in a Slack thread with the exact bounded scope.
+   - MEDIUM items require human review before execution and should not be included as ready-to-run prompts by default.
+   - HIGH items labeled `[승인 필요]` require explicit human approval before implementation and must not be converted into an automated Codex request by the scheduled task.
+   - The scheduled task must not include a real Slack app mention, raw mention ID, or direct execution phrase in candidate text.
 5. Confirm execution boundaries before mentioning Codex.
    - No real Codex execution happens unless the human operator manually mentions Codex in a thread.
    - The manual Codex request must restate the allowed scope, non-goals, validation, and PR summary requirements.
@@ -81,24 +126,44 @@ When a Daily Ops message is posted in `placeholder-report dry-run`, `missing-rep
    - `reports/analysis/` may contain generated summaries, metrics, Excel files, runner profiles, or CSVs, but those files must not be included in a Codex commit or PR.
    - If the follow-up is to generate or upload reports, keep that as a human/local reporting step rather than a repository change.
 
-A safe human follow-up for a LOW docs candidate should look like: "Codex, create a branch from `main`, update only the named docs, do not touch trading/runtime code, run `git diff --check`, commit the docs-only change, and open a draft PR."
+A safe human follow-up for a LOW docs candidate should ask Codex to create a branch from `main`, update only the named docs, avoid trading/runtime code, run `git diff --check`, commit the docs-only change, and open a draft PR.
 
-## `@Codex` Proposal Rules
+## Manual Codex Handoff Rules
 
-LOW and MEDIUM tasks may be proposed automatically through Slack `@Codex` when the proposed scope is specific and bounded.
+Daily Ops and Source Triage messages must not contain real Slack mention IDs or direct Codex execution examples. Use a neutral placeholder in prompt blocks and make the required human action explicit.
 
-Each proposal must state:
+Each handoff prompt must state:
 
 - Risk level.
 - Files or areas expected to change.
 - Explicit non-goals.
 - Validation expected.
+- Draft PR requirement.
 - PR summary requirements.
 
-Example:
+Recommended placeholder pattern:
 
 ```text
-@Codex Risk: LOW. Create a branch and PR that updates docs/progress_rules.md to clarify progress delta handling. Do not modify trading logic, KIS code, order code, scheduler timing, DB schema, credentials, or generated reports. Run docs-only validation and summarize changed files, risk, tests, and follow-ups.
+[MANUAL_CODEX_MENTION_PLACEHOLDER]
+Use the Codex cloud environment named auto_trading.
+
+Selected candidate:
+- Risk: LOW
+- Title: <bounded docs-only task>
+
+Task:
+Create a new branch from main and implement only this selected LOW candidate.
+
+Scope:
+- Update only <specific file or files>.
+
+Constraints:
+- Do not modify trading logic, KIS API code, order code, scheduler timing, risk logic, DB schema, credentials, or reports/analysis outputs.
+- Do not call KIS/order/Telegram/Slack/broker APIs.
+- Open a draft PR only. Do not merge. Do not push directly to main.
+
+Validation:
+- Run git diff --check.
 ```
 
 ## Codex Execution Boundaries
@@ -106,15 +171,16 @@ Example:
 Codex must:
 
 - Create or use a feature branch.
-- Prefer `codex/<short-description>` branch names for new automation branches.
-- Keep changes scoped to the approved LOW or MEDIUM task.
+- Prefer `codex/<short-description>` or `docs/<short-description>` branch names for new automation branches.
+- Keep changes scoped to the human-approved LOW or MEDIUM task.
 - Commit only intended files.
-- Push the feature branch.
-- Open a pull request.
+- Push the feature branch when a remote is available.
+- Open a draft pull request.
 - Include changed files, risk level, tests run, and follow-up tasks in the PR summary.
 
 Codex must not:
 
+- Start from a scheduled Daily Ops or Source Triage message alone.
 - Push directly to `main`.
 - Merge pull requests.
 - Auto-execute HIGH risk tasks.
