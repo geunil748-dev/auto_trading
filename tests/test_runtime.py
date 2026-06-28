@@ -62,7 +62,7 @@ class BypassPipeline(Pipeline):
 
 class Accounts:
     def current_account(self) -> AccountState:
-        return AccountState(5000, 10000, 3000, 1, 0)
+        return AccountState(5000, 10000, 1000, 1, 0)
 
 
 class Breakout:
