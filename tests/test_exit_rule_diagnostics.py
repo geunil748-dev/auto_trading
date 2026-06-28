@@ -21,6 +21,8 @@ def test_profit_protection_diagnostic_is_log_only() -> None:
         TradingSettings(
             early_exit_diagnostics_enabled=True,
             profit_protection_exit_enabled=True,
+            early_negative_exit_enabled=False,
+            time_stop_exit_enabled=False,
         ),
     )
 
@@ -37,6 +39,7 @@ def test_time_based_diagnostic_does_not_claim_exit_without_holding_minutes() -> 
         [PositionState("CRDO", 10.0, 1, 9.9, 10.0)],
         TradingSettings(
             early_exit_diagnostics_enabled=True,
+            profit_protection_exit_enabled=False,
             early_negative_exit_enabled=True,
             time_stop_exit_enabled=True,
             low_profit_60m_exit_enabled=True,
@@ -70,6 +73,8 @@ def test_save_exit_rule_diagnostics_failure_does_not_raise(monkeypatch) -> None:
         TradingSettings(
             early_exit_diagnostics_enabled=True,
             profit_protection_exit_enabled=True,
+            early_negative_exit_enabled=False,
+            time_stop_exit_enabled=False,
         ),
     )
 

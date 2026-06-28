@@ -110,6 +110,25 @@ class FakeTradeSummarySource:
             )
         ]
 
+    def candidate_performance_rows(
+        self,
+        trade_date: date,
+        is_mock: bool,
+    ) -> list[tuple[object, ...]]:
+        if not self.with_fills:
+            return []
+        return [
+            (
+                "AAA",
+                5.0,
+                0.25,
+                "OPENING_BREAKOUT",
+                "",
+                "fixed_recheck",
+                65.0,
+            )
+        ]
+
 
 class FakeSummaryRepository:
     def __init__(self) -> None:
@@ -150,7 +169,14 @@ def test_generate_daily_summary_saves_row_for_day_with_trades() -> None:
     assert payload["selectedCandidateCount"] == 2
     assert payload["tradedSymbolCount"] == 1
     assert payload["candidateSummary"]["candidateCount"] == 5
+    assert payload["performanceMetrics"]["expectancyPerTrade"] == 5.0
+    assert payload["performanceMetrics"]["profitFactor"] is None
+    assert payload["performanceMetrics"]["breakevenWinRate"] == 0.0
+    assert payload["performanceMetrics"]["netTotalProfitUsd"] == 5.0
+    assert payload["sourceStats"][0]["source"] == "fixed_recheck"
+    assert payload["scoreBucketStats"][0]["scoreBucket"] == "60_70"
     assert "모의투자 일일 요약" in report.summary_text
+    assert "기대값/거래: $5.00" in report.summary_text
 
 
 def test_generate_daily_summary_keeps_candidate_row_and_symbol_counts() -> None:

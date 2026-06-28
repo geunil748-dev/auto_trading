@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -85,14 +86,26 @@ def build_daily_trade_summary_payload(
     snapshots = data_source.entry_profit_snapshots(trade_date)
     logs = data_source.log_rows(trade_date)
     candidate_counts = data_source.candidate_counts(trade_date)
+    candidate_performance_rows, candidate_performance_warning = _candidate_performance_rows(
+        data_source,
+        trade_date,
+        is_mock,
+    )
     candidate_summary = _candidate_summary(candidate_counts)
     enriched_sells = _enriched_sell_fills(fills, trades)
     exit_stats = _group_stats(enriched_sells, key_index="exit_reason")
     strategy_stats = _group_stats(enriched_sells, key_index="strategy_version")
     snapshot_stats = _entry_profit_snapshot_stats(snapshots)
+    performance_metrics = _performance_metrics(enriched_sells)
+    candidate_performance = _candidate_performance_stats(
+        candidate_performance_rows,
+        enriched_sells,
+    )
     warnings = []
     if not snapshot_stats["sampleSufficient"]:
         warnings.append("표본 부족: 전략 판단 금지")
+    if candidate_performance_warning:
+        warnings.append(candidate_performance_warning)
     total_profit = sum(item["profitUsd"] for item in enriched_sells)
     cost_basis = sum(
         max(item["fillAmount"] - item["profitUsd"], 0.0) for item in enriched_sells
@@ -117,6 +130,9 @@ def build_daily_trade_summary_payload(
         "winRate": round(win_rate, 4),
         "exitReasonStats": exit_stats,
         "strategyStats": strategy_stats,
+        "performanceMetrics": performance_metrics,
+        "scoreBucketStats": candidate_performance["scoreBucketStats"],
+        "sourceStats": candidate_performance["sourceStats"],
         "entryProfitSnapshotStats": snapshot_stats,
         "candidateCount": candidate_summary["candidateSymbolCount"],
         "candidateRowCount": candidate_summary["candidateCount"],
@@ -146,6 +162,19 @@ def build_summary_text(payload: dict[str, Any], generated_at: datetime) -> str:
         f"거래 수: {payload['tradeCount']}",
         f"매수/매도 체결 수: {payload['buyCount']} / {payload['sellCount']}",
         f"승률: {_percent(float(payload['winRate']))}",
+        f"기대값/거래: {_money(float(payload['performanceMetrics']['expectancyPerTrade']))}",
+        f"Profit factor: {_ratio(payload['performanceMetrics']['profitFactor'])}",
+        (
+            "평균 이익/손실: "
+            f"{_money(float(payload['performanceMetrics']['averageWin']))} / "
+            f"{_money(float(payload['performanceMetrics']['averageLoss']))}"
+        ),
+        f"손익분기 승률: {_percent(float(payload['performanceMetrics']['breakevenWinRate']))}",
+        (
+            "추정비용 반영 순손익: "
+            f"{_money(float(payload['performanceMetrics']['netTotalProfitUsd']))}"
+        ),
+        f"최대 일중 drawdown: {_money(float(payload['performanceMetrics']['maxDailyDrawdown']))}",
         "",
         "청산 사유:",
     ]
@@ -196,9 +225,25 @@ def _enriched_sell_fills(
                 "profitUsd": _number(_value(row, 8)),
                 "profitRate": _number(_value(row, 9)),
                 "fillAmount": _number(_value(row, 7)),
+                "entryReason": _text(_value(row, 10)),
+                "entryReasonDetail": _text(_value(row, 11)),
             }
         )
     return rows
+
+
+def _candidate_performance_rows(
+    data_source: TradeSummaryDataSource,
+    trade_date: date,
+    is_mock: bool,
+) -> tuple[list[tuple[Any, ...]], str]:
+    getter = getattr(data_source, "candidate_performance_rows", None)
+    if getter is None:
+        return [], ""
+    try:
+        return list(getter(trade_date, is_mock)), ""
+    except Exception as exc:
+        return [], f"후보 성과 상세 조회 실패: {type(exc).__name__}"
 
 
 def _traded_symbol_count(fills: list[tuple[Any, ...]]) -> int:
@@ -241,6 +286,169 @@ def _group_stats(rows: list[dict[str, Any]], key_index: str) -> list[dict[str, A
         }
         for key in keys
     ]
+
+
+def _performance_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    profits = [float(item["profitUsd"]) for item in rows]
+    trade_count = len(profits)
+    wins = [value for value in profits if value > 0]
+    losses = [value for value in profits if value < 0]
+    average_win = _average(wins)
+    average_loss = _average(losses)
+    total_win = sum(wins)
+    total_loss_abs = abs(sum(losses))
+    profit_factor = (
+        total_win / total_loss_abs
+        if total_loss_abs > 0
+        else None if total_win > 0 else 0.0
+    )
+    loss_abs = abs(average_loss)
+    breakeven_win_rate = (
+        loss_abs / (average_win + loss_abs) * 100 if average_win > 0 and loss_abs > 0 else 0.0
+    )
+    estimated_cost_rate = _estimated_cost_rate()
+    estimated_cost = sum(_estimated_round_trip_value(item) for item in rows) * estimated_cost_rate
+    gross_total = sum(profits)
+    net_total = gross_total - estimated_cost
+    return {
+        "tradeCount": trade_count,
+        "grossTotalProfitUsd": round(gross_total, 2),
+        "expectancyPerTrade": round(gross_total / trade_count, 2) if trade_count else 0.0,
+        "profitFactor": round(profit_factor, 4) if profit_factor is not None else None,
+        "averageWin": round(average_win, 2),
+        "averageLoss": round(average_loss, 2),
+        "breakevenWinRate": round(breakeven_win_rate, 4),
+        "actualWinRate": round(_win_rate(profits), 4),
+        "maxDailyDrawdown": round(_max_drawdown_usd(profits), 2),
+        "estimatedCostRate": estimated_cost_rate,
+        "estimatedCostUsd": round(estimated_cost, 2),
+        "netTotalProfitUsd": round(net_total, 2),
+        "netExpectancyPerTrade": round(net_total / trade_count, 2) if trade_count else 0.0,
+    }
+
+
+def _candidate_performance_stats(
+    candidate_rows: list[tuple[Any, ...]],
+    fallback_rows: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    rows = [
+        {
+            "profitUsd": _number(_value(row, 1)),
+            "profitRate": _number(_value(row, 2)),
+            "source": _source_bucket(_value(row, 5), _value(row, 3), _value(row, 4)),
+            "scoreBucket": _score_bucket(_value(row, 6)),
+        }
+        for row in candidate_rows
+    ]
+    if not rows:
+        rows = [
+            {
+                "profitUsd": float(row["profitUsd"]),
+                "profitRate": float(row["profitRate"]),
+                "source": _source_bucket(None, row["entryReason"], row["entryReasonDetail"]),
+                "scoreBucket": "unknown",
+            }
+            for row in fallback_rows
+        ]
+    return {
+        "scoreBucketStats": _bucket_stats(rows, "scoreBucket", "scoreBucket"),
+        "sourceStats": _bucket_stats(rows, "source", "source"),
+    }
+
+
+def _bucket_stats(
+    rows: list[dict[str, Any]],
+    field_name: str,
+    output_name: str,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, float]] = {}
+    for row in rows:
+        key = _text(row.get(field_name)) or "unknown"
+        item = grouped.setdefault(key, {"count": 0.0, "profit": 0.0, "rate": 0.0, "wins": 0.0})
+        profit = float(row.get("profitUsd", 0.0))
+        item["count"] += 1
+        item["profit"] += profit
+        item["rate"] += float(row.get("profitRate", 0.0))
+        if profit > 0:
+            item["wins"] += 1
+    return [
+        {
+            output_name: key,
+            "count": int(item["count"]),
+            "totalProfitUsd": round(item["profit"], 2),
+            "expectancyPerTrade": round(item["profit"] / item["count"], 2) if item["count"] else 0.0,
+            "averageProfitRate": round(item["rate"] / item["count"], 6) if item["count"] else 0.0,
+            "winRate": round(item["wins"] / item["count"] * 100, 4) if item["count"] else 0.0,
+        }
+        for key, item in sorted(grouped.items())
+    ]
+
+
+def _estimated_cost_rate() -> float:
+    return max(_number(os.getenv("TRADE_SUMMARY_ESTIMATED_COST_RATE", "0")), 0.0)
+
+
+def _estimated_round_trip_value(row: dict[str, Any]) -> float:
+    sell_amount = max(float(row["fillAmount"]), 0.0)
+    buy_amount = max(sell_amount - float(row["profitUsd"]), 0.0)
+    return sell_amount + buy_amount
+
+
+def _max_drawdown_usd(profits: list[float]) -> float:
+    equity = 0.0
+    peak = 0.0
+    worst = 0.0
+    for profit in profits:
+        equity += profit
+        peak = max(peak, equity)
+        worst = min(worst, equity - peak)
+    return worst
+
+
+def _source_bucket(source: Any, entry_reason: Any, entry_reason_detail: Any) -> str:
+    source_text = _text(source).lower()
+    if source_text:
+        if source_text in {"manual_buy_list", "manual"}:
+            return "manual_buy_list"
+        if "hybrid" in source_text:
+            return "hybrid"
+        if "refresh" in source_text:
+            return "refresh_recheck"
+        if "recheck" in source_text or "fixed" in source_text:
+            return "fixed_recheck"
+        if "dry" in source_text:
+            return "dry_run"
+        if source_text in {"auto", "entry_planner", "pipeline"}:
+            return "auto"
+    combined = f"{_text(entry_reason)} {_text(entry_reason_detail)}".upper()
+    if "MANUAL_WATCHLIST" in combined or "MANUAL_BUY_LIST" in combined:
+        return "manual_buy_list"
+    if "HYBRID" in combined:
+        return "hybrid"
+    if "REFRESH" in combined:
+        return "refresh_recheck"
+    if "INTRADAY_RECHECK" in combined or "FIXED_RECHECK" in combined:
+        return "fixed_recheck"
+    if "DRY_RUN" in combined:
+        return "dry_run"
+    if "OPENING_BREAKOUT" in combined or "RANKED_LIST" in combined:
+        return "auto"
+    return "unknown"
+
+
+def _score_bucket(value: Any) -> str:
+    if value is None or _text(value) == "":
+        return "unknown"
+    score = _number(value)
+    if score < 40:
+        return "under_40"
+    if score < 60:
+        return "40_60"
+    if score < 70:
+        return "60_70"
+    if score < 80:
+        return "70_80"
+    return "80_plus"
 
 
 def _entry_profit_snapshot_stats(rows: list[tuple[Any, ...]]) -> dict[str, Any]:
@@ -390,6 +598,11 @@ def _win_rate(values: Any) -> float:
     return sum(1 for item in items if item > 0) / len(items) * 100
 
 
+def _average(values: Any) -> float:
+    items = [float(item) for item in values]
+    return sum(items) / len(items) if items else 0.0
+
+
 def _average_rate(item: dict[str, float]) -> float:
     count = item.get("count", 0.0)
     return item.get("rate", 0.0) / count if count else 0.0
@@ -398,3 +611,9 @@ def _average_rate(item: dict[str, float]) -> float:
 def _stat_win_rate(item: dict[str, float]) -> float:
     count = item.get("count", 0.0)
     return item.get("wins", 0.0) / count * 100 if count else 0.0
+
+
+def _ratio(value: Any) -> str:
+    if value is None:
+        return "-"
+    return f"{float(value):.2f}"

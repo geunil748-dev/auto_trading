@@ -44,6 +44,30 @@ def apply_stop_loss_entry_guards(
     allowed: list[BuyIntent] = []
     for intent in intents:
         last_stop_loss = last_stop_loss_at(repository, intent.ticker)
+        if last_stop_loss is not None:
+            repository.save_log(
+                BotLog(
+                    "WARNING",
+                    "risk",
+                    f"당일 손절 발생 종목이라 신규 매수를 차단했습니다: {intent.ticker}",
+                    symbol=intent.ticker,
+                    reject_reason="NO_ORDER_RECENT_STOP_LOSS",
+                    actual_value=1.0,
+                    threshold_value=0.0,
+                )
+            )
+            record_buy_not_submitted(
+                repository,
+                ticker=intent.ticker,
+                trade_date=current_trade_date(),
+                reason_code="NO_ORDER_RECENT_STOP_LOSS",
+                stage="RISK_GUARD",
+                actual_value=1.0,
+                threshold_value=0.0,
+                details={"guard": "same_day_stop_loss_reentry"},
+                fallback_bot_log=False,
+            )
+            continue
         if cooldown_active(last_stop_loss, settings.stop_loss_cooldown_minutes):
             repository.save_log(
                 BotLog(
