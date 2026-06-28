@@ -11,10 +11,7 @@ from trading_bot.adapters.kis_http import KisJsonClient
 from trading_bot.adapters.kis_overseas import KisOverseasClient
 from trading_bot.config import KisSettings, load_settings
 from trading_bot.database import pyodbc_connect_factory
-from trading_bot.fill_persistence import (
-    fill_records_from_monitor_rows,
-    valid_fill_monitor_row_count,
-)
+from trading_bot.fill_persistence import fill_records_from_monitor_rows
 from trading_bot.live_monitor_state import live_kis_monitor_state
 from trading_bot.models import EntryProfitSnapshot, FillRecord
 from trading_bot.repositories import SqlServerDailyRepository
@@ -81,20 +78,13 @@ def persist_live_snapshot(
             settings = load_settings()
             entry_prices = repository.sell_entry_prices(trade_date)
             entry_reasons = repository.entry_reasons(trade_date)
-            existing_cumulative_quantities = (
-                repository.fill_cumulative_quantities(trade_date)
-                if hasattr(repository, "fill_cumulative_quantities")
-                else {}
-            )
             records = fill_records_from_monitor_rows(
                 fills,
                 entry_prices,
                 entry_reasons,
                 settings=settings,
-                existing_cumulative_quantities=existing_cumulative_quantities,
             )
-            valid_fill_count = valid_fill_monitor_row_count(fills)
-            if valid_fill_count != len(fills):
+            if len(records) != len(fills):
                 record_data_quality_event(
                     repository,
                     reason_code="FILL_MONITOR_ROWS_SKIPPED",
@@ -103,8 +93,8 @@ def persist_live_snapshot(
                     message="fill_monitor_rows_skipped",
                     details={
                         "raw_fill_count": len(fills),
-                        "valid_fill_count": valid_fill_count,
-                        "skipped_count": len(fills) - valid_fill_count,
+                        "saved_fill_count": len(records),
+                        "skipped_count": len(fills) - len(records),
                     },
                     fallback_bot_log=False,
                 )

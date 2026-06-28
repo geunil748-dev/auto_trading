@@ -19,7 +19,6 @@ class SnapshotRepository:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.fills: list[FillRecord] = []
-        self.cumulative_quantities = {}
         self.pending_fills: list[FillRecord] | None = None
         self.notification_sent: list[FillRecord] = []
         self.entry_snapshots = []
@@ -47,10 +46,6 @@ class SnapshotRepository:
     def history_fills(self, trade_date, limit=200):
         self.calls.append("history_fills")
         return []
-
-    def fill_cumulative_quantities(self, trade_date, is_mock=True):
-        self.calls.append("fill_cumulative_quantities")
-        return dict(self.cumulative_quantities)
 
     def save_fills(self, fills):
         self.calls.append("fills")
@@ -202,7 +197,6 @@ def test_persist_live_snapshot_keeps_save_order_and_fill_callback(monkeypatch) -
         "holdings",
         "entry_prices",
         "entry_reasons",
-        "fill_cumulative_quantities",
         "fills",
         "entry_snapshots",
         "pending_notifications",
@@ -286,19 +280,7 @@ def test_persist_live_snapshot_records_fill_data_quality_event(monkeypatch) -> N
             "account": {},
             "orders": [],
             "holdings": [],
-            "fills": [
-                {
-                    "date": "2026-06-05",
-                    "time": "22:35:00",
-                    "ticker": "AAA",
-                    "side": "매수",
-                    "quantity": "3",
-                    "price": "$10.50",
-                    "total": "$31.50",
-                    "orderNo": "1",
-                },
-                {"ticker": ""},
-            ],
+            "fills": [{"ticker": "AAA"}, {"ticker": ""}],
         },
         send_fill_notifications_func=lambda records, holdings: len(records),
     )
@@ -310,53 +292,7 @@ def test_persist_live_snapshot_records_fill_data_quality_event(monkeypatch) -> N
         if item.reason_code == "FILL_MONITOR_ROWS_SKIPPED"
     )
     assert event.details_json["raw_fill_count"] == 2
-    assert event.details_json["valid_fill_count"] == 1
-
-
-def test_persist_live_snapshot_skips_repeated_cumulative_fill_without_events(
-    monkeypatch,
-) -> None:
-    from trading_bot.fill_persistence import fill_cumulative_key
-
-    repository = SnapshotRepository()
-    repository.cumulative_quantities = {
-        fill_cumulative_key("43137", "AAA", "매수"): 100
-    }
-
-    monkeypatch.setattr("trading_bot.scheduler_state.SqlServerDailyRepository", lambda connect: repository)
-    monkeypatch.setattr("trading_bot.scheduler_state.pyodbc_connect_factory", lambda: object)
-    monkeypatch.setattr("trading_bot.scheduler_state.current_trade_date", lambda: date(2026, 6, 5))
-    monkeypatch.setattr("trading_bot.scheduler_state.load_settings", lambda: TradingSettings())
-
-    error = persist_live_snapshot(
-        {
-            "account": {},
-            "orders": [],
-            "holdings": [],
-            "fills": [
-                {
-                    "date": "2026-06-05",
-                    "time": "22:35:00",
-                    "ticker": "AAA",
-                    "name": "Alpha",
-                    "side": "매수",
-                    "quantity": "100",
-                    "price": "$10.00",
-                    "total": "$1,000.00",
-                    "orderNo": "43137",
-                }
-            ],
-        },
-        send_fill_notifications_func=lambda records, holdings: len(records),
-    )
-
-    assert error == ""
-    assert repository.fills == []
-    assert not any(event.event_type == "FILL_SAVED" for event in repository.trading_events)
-    assert not any(
-        event.event_type == "FILL_NOTIFICATION_SKIPPED_DUPLICATE"
-        for event in repository.trading_events
-    )
+    assert event.details_json["saved_fill_count"] == 1
 
 
 def test_persist_live_snapshot_records_fill_notification_no_sender(monkeypatch) -> None:

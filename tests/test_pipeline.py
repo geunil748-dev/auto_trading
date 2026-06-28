@@ -265,7 +265,7 @@ def account() -> AccountState:
     return AccountState(
         cash_usd=4000,
         equity_usd=10000,
-        invested_usd=1000,
+        invested_usd=3000,
         open_positions=1,
         daily_profit_rate=0,
     )

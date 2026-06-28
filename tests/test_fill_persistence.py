@@ -1,9 +1,6 @@
 from datetime import date
 
-from trading_bot.fill_persistence import (
-    fill_cumulative_key,
-    fill_records_from_monitor_rows,
-)
+from trading_bot.fill_persistence import fill_records_from_monitor_rows
 
 
 def test_fill_records_from_monitor_rows_normalizes_monitor_fill() -> None:
@@ -132,72 +129,3 @@ def test_fill_records_from_monitor_rows_sorts_after_midnight_as_same_session_lat
 
     assert sell.profit_usd == 25.0
     assert sell.profit_rate == 1.25
-
-
-def _row(quantity: int, *, order_no: str = "43137") -> dict[str, str]:
-    return {
-        "date": "2026-06-26",
-        "time": "03:45:19",
-        "ticker": "TLT",
-        "name": "ISHARES 20+Y TREASURY BOND",
-        "side": "매도",
-        "quantity": str(quantity),
-        "price": "$87.31",
-        "total": f"${87.31 * quantity:,.2f}",
-        "orderNo": order_no,
-    }
-
-
-def test_cumulative_kis_fill_row_repeated_quantity_creates_no_new_record() -> None:
-    existing = {fill_cumulative_key("43137", "TLT", "매도"): 100}
-
-    records = fill_records_from_monitor_rows(
-        [_row(100)],
-        entry_prices={"TLT": 88.0},
-        existing_cumulative_quantities=existing,
-    )
-
-    assert records == []
-
-
-def test_cumulative_kis_fill_row_increased_quantity_creates_delta_record() -> None:
-    existing = {fill_cumulative_key("43137", "TLT", "매도"): 100}
-
-    records = fill_records_from_monitor_rows(
-        [_row(150)],
-        entry_prices={"TLT": 88.0},
-        existing_cumulative_quantities=existing,
-    )
-
-    assert len(records) == 1
-    record = records[0]
-    assert record.trade_date == date(2026, 6, 26)
-    assert record.ticker == "TLT"
-    assert record.order_no == "43137"
-    assert record.quantity == 50
-    assert record.fill_amount_usd == 87.31 * 50
-    assert record.profit_usd == (87.31 - 88.0) * 50
-
-
-def test_multiple_cumulative_rows_in_one_poll_emit_only_incremental_deltas() -> None:
-    records = fill_records_from_monitor_rows(
-        [_row(100), _row(100), _row(150)],
-        entry_prices={"TLT": 88.0},
-    )
-
-    assert [item.quantity for item in records] == [100, 50]
-    assert sum(item.quantity for item in records) == 150
-
-
-def test_missing_order_no_keeps_legacy_identity_fallback() -> None:
-    existing = {fill_cumulative_key("43137", "TLT", "매도"): 100}
-
-    records = fill_records_from_monitor_rows(
-        [_row(100, order_no="")],
-        entry_prices={"TLT": 88.0},
-        existing_cumulative_quantities=existing,
-    )
-
-    assert len(records) == 1
-    assert records[0].quantity == 100
-    assert records[0].order_no == ""

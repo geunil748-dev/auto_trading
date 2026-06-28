@@ -165,10 +165,7 @@ def live_mock_tasks(
                 return guarded
             current_settings = _current_settings(settings)
             accounts, monitor, repository = build_live_exit_poll(current_settings, kis_settings)
-            positions = _with_entry_times(
-                _remembered_highs(accounts.positions(), latest.highs),
-                repository,
-            )
+            positions = _remembered_highs(accounts.positions(), latest.highs)
             partial_done = latest.partial_take_profit_tickers | saved_partial_take_profit_tickers(repository)
             refreshed, exits = monitor.poll(
                 positions,
@@ -767,32 +764,6 @@ def _remembered_highs(
             item.quantity,
             item.last_price_usd,
             max(item.high_price_usd, highs.get(item.ticker, item.high_price_usd)),
-            item.entry_time,
-        )
-        for item in positions
-    ]
-
-
-def _with_entry_times(
-    positions: list[PositionState],
-    repository: object,
-) -> list[PositionState]:
-    if not hasattr(repository, "position_entry_times"):
-        return positions
-    try:
-        entry_times = repository.position_entry_times(current_trade_date())
-    except Exception:
-        return positions
-    if not entry_times:
-        return positions
-    return [
-        PositionState(
-            item.ticker,
-            item.entry_price_usd,
-            item.quantity,
-            item.last_price_usd,
-            item.high_price_usd,
-            item.entry_time or entry_times.get(ticker(item.ticker)),
         )
         for item in positions
     ]

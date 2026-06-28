@@ -15,9 +15,6 @@ DEFAULT_TRADE_SUMMARY_OUTPUT_DIR = Path("monitor/reports")
 ENTRY_PROFIT_SAMPLE_MINIMUM = 30
 EXIT_REASON_ORDER = (
     "STOP_LOSS",
-    "PROFIT_PROTECTION",
-    "EARLY_NEGATIVE_EXIT",
-    "TIME_STOP_EXIT",
     "TAKE_PROFIT",
     "TRAILING_STOP",
     "PARTIAL_TAKE_PROFIT",
@@ -172,38 +169,6 @@ class SqlTradeSummaryDataSource:
             (trade_date,),
         )
 
-    def candidate_performance_rows(
-        self,
-        trade_date: date,
-        is_mock: bool,
-    ) -> list[tuple[Any, ...]]:
-        try:
-            return self._query(
-                """
-                SELECT f.ticker, f.profit_usd, f.profit_rate,
-                       f.entry_reason, f.entry_reason_detail,
-                       ce.source, ce.final_score
-                FROM fill_history AS f
-                OUTER APPLY (
-                    SELECT TOP (1) source, final_score
-                    FROM candidate_evaluations AS ce
-                    WHERE ce.trading_date = f.trade_date
-                      AND ce.symbol = f.ticker
-                    ORDER BY ce.evaluation_time DESC, ce.id DESC
-                ) AS ce
-                WHERE f.trade_date = ?
-                  AND f.is_mock = ?
-                  AND (
-                    UPPER(ISNULL(f.side, '')) IN ('SELL', 'S')
-                    OR ISNULL(f.side, '') LIKE N'%매도%'
-                  )
-                ORDER BY f.fill_date ASC, f.fill_time ASC, f.created_at ASC, f.id ASC
-                """,
-                (trade_date, is_mock),
-            )
-        except Exception:
-            return []
-
     def _query(self, sql: str, params: tuple[Any, ...]) -> list[tuple[Any, ...]]:
         with closing(self.connect()) as connection:
             cursor = connection.cursor()
@@ -324,7 +289,6 @@ def _fill_sections(
     realized_profit = sum(_number(_value(row, 8)) for row in sell_rows)
     average_return = _average(_number(_value(row, 9)) for row in sell_profit_rows)
     win_rate = _win_rate(_number(_value(row, 8)) for row in sell_profit_rows)
-    performance_lines = _performance_metric_lines(sell_profit_rows)
     stats = [
         f"- 매수 체결 수: {len(buy_rows)}",
         f"- 매도 체결 수: {len(sell_rows)}",
@@ -334,7 +298,6 @@ def _fill_sections(
         f"- 실현 손익: {_money(realized_profit)}",
         f"- 평균 수익률: {_percent_from_fraction(average_return)}",
         f"- 승률: {_percent(win_rate)}",
-        *performance_lines,
     ]
     if not enriched:
         return ["- 체결 없음"], stats, _default_exit_stats(), {}
@@ -410,52 +373,6 @@ def _entry_profit_snapshot_lines(rows: list[tuple[Any, ...]]) -> list[str]:
         win_rate = _win_rate(_number(_value(row, 8)) for row in final_rows)
         lines.append(f"- {label} 후 음수 거래 최종 승률: {_percent(win_rate)}")
     return lines
-
-
-def _performance_metric_lines(rows: list[tuple[Any, ...]]) -> list[str]:
-    profits = [_number(_value(row, 8)) for row in rows]
-    if not profits:
-        return [
-            "- 기대값/거래: $0.00",
-            "- Profit factor: 0.00",
-            "- 평균 이익/손실: $0.00 / $0.00",
-            "- 손익분기 승률: 0.00%",
-            "- 최대 일중 drawdown: $0.00",
-        ]
-    wins = [value for value in profits if value > 0]
-    losses = [value for value in profits if value < 0]
-    average_win = _average(wins)
-    average_loss = _average(losses)
-    total_win = sum(wins)
-    total_loss_abs = abs(sum(losses))
-    profit_factor = (
-        total_win / total_loss_abs
-        if total_loss_abs > 0
-        else None if total_win > 0 else 0.0
-    )
-    profit_factor_text = "-" if profit_factor is None else f"{profit_factor:.2f}"
-    loss_abs = abs(average_loss)
-    breakeven_win_rate = (
-        loss_abs / (average_win + loss_abs) * 100 if average_win > 0 and loss_abs > 0 else 0.0
-    )
-    return [
-        f"- 기대값/거래: {_money(sum(profits) / len(profits))}",
-        f"- Profit factor: {profit_factor_text}",
-        f"- 평균 이익/손실: {_money(average_win)} / {_money(average_loss)}",
-        f"- 손익분기 승률: {_percent(breakeven_win_rate)}",
-        f"- 최대 일중 drawdown: {_money(_max_drawdown_usd(profits))}",
-    ]
-
-
-def _max_drawdown_usd(profits: list[float]) -> float:
-    equity = 0.0
-    peak = 0.0
-    worst = 0.0
-    for profit in profits:
-        equity += profit
-        peak = max(peak, equity)
-        worst = min(worst, equity - peak)
-    return worst
 
 
 def _negative_snapshot_rows(rows: list[tuple[Any, ...]], index: int) -> list[tuple[Any, ...]]:

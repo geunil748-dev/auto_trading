@@ -64,7 +64,7 @@ def account(**changes: float) -> AccountState:
     values = {
         "cash_usd": 3000.0,
         "equity_usd": 10000.0,
-        "invested_usd": 1000.0,
+        "invested_usd": 6000.0,
         "open_positions": 2,
         "daily_profit_rate": 0.0,
     }
@@ -374,12 +374,12 @@ def test_entry_planner_requires_breakout_and_reserves_exposure() -> None:
             "NOPE": (9, 9, 10, 8),
             "NEXT": (20, 19, 20, 18),
         },
-        account(cash_usd=5000, invested_usd=1000),
+        account(cash_usd=5000, invested_usd=5000),
         SETTINGS,
     )
 
-    assert [(item.ticker, item.quantity) for item in intents] == [("NEXT", 50)]
-    assert [item.order_value_usd for item in intents] == [1000]
+    assert [(item.ticker, item.quantity) for item in intents] == [("TOP", 200), ("NEXT", 50)]
+    assert [item.order_value_usd for item in intents] == [2000, 1000]
 
 
 def test_entry_planner_blocks_overheated_intraday_entry() -> None:
@@ -976,7 +976,7 @@ def test_exit_planner_prioritizes_eod_hard_stop_partial_profit_and_trailing_stop
         PositionState("LOSS", 10, 2, 9.4, 11),
         PositionState("PROFIT", 10, 2, 11.0, 11.0),
         PositionState("TRAIL", 10, 3, 10.27, 10.6),
-        PositionState("HOLD", 10, 1, 10.39, 10.4),
+        PositionState("HOLD", 10, 1, 10.4, 10.6),
     ]
 
     regular = plan_position_exits(positions, SETTINGS)

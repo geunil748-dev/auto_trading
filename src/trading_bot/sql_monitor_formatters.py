@@ -1074,9 +1074,6 @@ _REASON_TEXT = {
     "QUOTE_LOOKUP_FAILED": "호가 조회 실패",
     "STRICT_FILTER_NO_CANDIDATES": "엄격 필터 후보 부족",
     "STOP_LOSS": "손절",
-    "PROFIT_PROTECTION": "수익 보호",
-    "EARLY_NEGATIVE_EXIT": "초기 손실 청산",
-    "TIME_STOP_EXIT": "시간 손절",
     "TAKE_PROFIT": "익절",
     "TRAILING_STOP": "트레일링 스탑",
 }

@@ -8,8 +8,6 @@ from trading_bot.config import TradingSettings
 from trading_bot.models import FillRecord
 from trading_bot.strategy_metadata import strategy_metadata_from_settings
 
-FillCumulativeKey = tuple[str, str, str, bool]
-
 
 def fill_records_from_monitor_rows(
     fills: Iterable[Mapping[str, Any]],
@@ -17,13 +15,11 @@ def fill_records_from_monitor_rows(
     entry_reasons: Mapping[str, tuple[str, str]] | None = None,
     is_mock: bool = True,
     settings: TradingSettings | None = None,
-    existing_cumulative_quantities: Mapping[FillCumulativeKey, int] | None = None,
 ) -> list[FillRecord]:
     records: list[FillRecord] = []
     strategy_metadata = strategy_metadata_from_settings(settings) if settings is not None else None
     entries = {key.upper(): (0, value) for key, value in (entry_prices or {}).items()}
     reasons = {key.upper(): value for key, value in (entry_reasons or {}).items()}
-    cumulative_quantities = dict(existing_cumulative_quantities or {})
     rows = sorted(fills, key=_sort_key)
     for row in rows:
         ticker = _text(row.get("ticker")).upper()
@@ -33,18 +29,6 @@ def fill_records_from_monitor_rows(
             continue
         side = _text(row.get("side"))
         fill_price = _number(row.get("price"))
-        order_no = _text(row.get("orderNo"))
-        if order_no:
-            key = fill_cumulative_key(order_no, ticker, side, is_mock)
-            saved_quantity = cumulative_quantities.get(key, 0)
-            delta_quantity = quantity - saved_quantity
-            cumulative_quantities[key] = max(saved_quantity, quantity)
-            if delta_quantity <= 0:
-                continue
-            quantity = delta_quantity
-            fill_amount = fill_price * quantity
-        else:
-            fill_amount = _number(row.get("total"))
         if _is_buy(side):
             entries[ticker] = _next_entry(entries.get(ticker), quantity, fill_price)
         entry_price = entries.get(ticker, (0, None))[1]
@@ -61,8 +45,8 @@ def fill_records_from_monitor_rows(
                 side=side,
                 quantity=quantity,
                 fill_price_usd=fill_price,
-                fill_amount_usd=fill_amount,
-                order_no=order_no,
+                fill_amount_usd=_number(row.get("total")),
+                order_no=_text(row.get("orderNo")),
                 profit_usd=profit_usd,
                 profit_rate=profit_rate,
                 entry_reason=entry_reason,
@@ -74,26 +58,6 @@ def fill_records_from_monitor_rows(
             )
         )
     return records
-
-
-def valid_fill_monitor_row_count(fills: Iterable[Mapping[str, Any]]) -> int:
-    count = 0
-    for row in fills:
-        ticker = _text(row.get("ticker")).upper()
-        quantity = _int(row.get("quantity"))
-        trade_date = _date(row.get("date"))
-        if ticker and quantity > 0 and trade_date is not None:
-            count += 1
-    return count
-
-
-def fill_cumulative_key(
-    order_no: str,
-    ticker: str,
-    side: str,
-    is_mock: bool = True,
-) -> FillCumulativeKey:
-    return (_text(order_no), _text(ticker).upper(), _normalized_side(side), bool(is_mock))
 
 
 def _sort_key(row: Mapping[str, Any]) -> tuple[str, int, str]:
@@ -162,14 +126,6 @@ def _int(value: Any) -> int:
 
 def _text(value: Any) -> str:
     return "" if value is None else str(value).strip()
-
-
-def _normalized_side(side: str) -> str:
-    if _is_buy(side):
-        return "BUY"
-    if _is_sell(side):
-        return "SELL"
-    return _text(side).upper()
 
 
 def _realized_profit(

@@ -136,27 +136,27 @@ class TradingSettings:
     manual_buy_list_path: str = DEFAULT_MANUAL_BUY_LIST_PATH
     max_manual_buy_tickers: int = 20
     max_manual_selected_candidates: int = 20
-    max_open_positions: int = 3
+    max_open_positions: int = 5
     min_selected_candidates: int = 3
     max_selected_candidates: int = 5
-    max_account_exposure: float = 0.30
+    max_account_exposure: float = 0.80
     max_position_exposure: float = 0.20
-    max_position_loss: float = -0.03
-    take_profit_rate: float = 0.04
+    max_position_loss: float = -0.05
+    take_profit_rate: float = 0.10
     strategy_preset: str = STRATEGY_PRESET_CURRENT
     allow_relaxed_candidate_filter: bool = True
     relax_opening_change_only: bool = False
     enable_pyramiding: bool = False
     partial_take_profit_enabled: bool = True
-    trailing_stop_activation_rate: float = 0.02
+    trailing_stop_activation_rate: float = 0.03
     max_daily_account_loss: float = -0.03
     max_fx_change: float = 0.02
     allow_market_below_ma20_bypass: bool = False
     max_opening_gap: float = 0.30
     min_opening_price_change: float = 0.0
     min_volume_ratio: float = 1.00
-    min_total_score: float = 60.0
-    trailing_stop_drop: float = 0.015
+    min_total_score: float = 35.0
+    trailing_stop_drop: float = 0.03
     breakout_k: float = 0.50
     max_intraday_entry_rounds: int = 2
     max_intraday_buy_intents_per_round: int = 1
@@ -166,7 +166,7 @@ class TradingSettings:
     intraday_refresh_candidate_limit: int = 3
     hybrid_candidate_limit: int = 8
     min_pyramiding_profit_rate: float = 0.03
-    max_entry_price_change: float = 0.10
+    max_entry_price_change: float = 0.15
     overheat_limit_condition_mode: str = CONDITION_MODE_HARD_FILTER
     breakout_hold_minutes: float = 1.0
     require_5m_close_above_breakout: bool = True
@@ -196,15 +196,15 @@ class TradingSettings:
     real_max_daily_order_krw: int = 300000
     real_emergency_stop: bool = True
     early_exit_diagnostics_enabled: bool = False
-    profit_protection_exit_enabled: bool = True
+    profit_protection_exit_enabled: bool = False
     profit_protection_trigger_rate: float = 0.02
     profit_protection_floor_rate: float = -0.003
-    time_stop_exit_enabled: bool = True
+    time_stop_exit_enabled: bool = False
     time_stop_minutes: int = 30
     time_stop_min_profit_rate: float = 0.0
-    early_negative_exit_enabled: bool = True
+    early_negative_exit_enabled: bool = False
     early_negative_exit_minutes: int = 10
-    early_negative_exit_rate: float = -0.015
+    early_negative_exit_rate: float = 0.0
     low_profit_60m_exit_enabled: bool = False
     low_profit_60m_minutes: int = 60
     low_profit_60m_min_profit_rate: float = 0.01
@@ -294,15 +294,14 @@ def load_settings() -> TradingSettings:
             "MAX_MANUAL_SELECTED_CANDIDATES",
             20,
         ),
-        max_open_positions=_int_env("MAX_OPEN_POSITIONS", 3),
+        max_open_positions=_int_env("MAX_OPEN_POSITIONS", 5),
         max_selected_candidates=max_selected_candidates,
-        max_account_exposure=_float_env("MAX_ACCOUNT_EXPOSURE", 0.30),
+        max_account_exposure=_float_env("MAX_ACCOUNT_EXPOSURE", 0.80),
         max_position_exposure=_float_env("MAX_POSITION_EXPOSURE", 0.20),
-        max_position_loss=_float_env("MAX_POSITION_LOSS", -0.03),
         max_opening_gap=_float_env("MAX_OPENING_GAP", 0.30),
         min_opening_price_change=_float_env("MIN_OPENING_PRICE_CHANGE", 0.0),
         min_volume_ratio=_float_env("MIN_VOLUME_RATIO", 1.00),
-        min_total_score=_float_env("MIN_TOTAL_SCORE", 60.0),
+        min_total_score=_float_env("MIN_TOTAL_SCORE", 35.0),
         allow_market_below_ma20_bypass=(
             market_below_ma20_bypass_requested
             if app_mode == APP_MODE_TEST and mock_trading
@@ -319,7 +318,7 @@ def load_settings() -> TradingSettings:
         intraday_refresh_candidate_limit=_int_env("INTRADAY_REFRESH_CANDIDATE_LIMIT", 3),
         hybrid_candidate_limit=_int_env("HYBRID_CANDIDATE_LIMIT", 8),
         min_pyramiding_profit_rate=_float_env("MIN_PYRAMIDING_PROFIT_RATE", 0.03),
-        max_entry_price_change=_float_env("MAX_ENTRY_PRICE_CHANGE", 0.10),
+        max_entry_price_change=_float_env("MAX_ENTRY_PRICE_CHANGE", 0.15),
         overheat_limit_condition_mode=_condition_mode_env(
             "OVERHEAT_LIMIT_CONDITION_MODE",
             CONDITION_MODE_HARD_FILTER,
@@ -359,23 +358,23 @@ def load_settings() -> TradingSettings:
         partial_fill_policy=_partial_fill_policy_env(),
         unfilled_cancel_after_seconds=_int_env("UNFILLED_CANCEL_AFTER_SECONDS", 60),
         news_cache_ttl_minutes=_int_env("NEWS_CACHE_TTL_MINUTES", 30),
-        take_profit_rate=_float_env("TAKE_PROFIT_RATE", 0.04),
+        take_profit_rate=_float_env("TAKE_PROFIT_RATE", 0.10),
         strategy_preset=_strategy_preset_env(),
         allow_relaxed_candidate_filter=_bool_env("ALLOW_RELAXED_CANDIDATE_FILTER", True),
         relax_opening_change_only=_bool_env("RELAX_OPENING_CHANGE_ONLY", False),
         enable_pyramiding=_bool_env("ENABLE_PYRAMIDING", False),
         partial_take_profit_enabled=_bool_env("PARTIAL_TAKE_PROFIT_ENABLED", True),
-        trailing_stop_activation_rate=_float_env("TRAILING_STOP_ACTIVATION_RATE", 0.02),
+        trailing_stop_activation_rate=_float_env("TRAILING_STOP_ACTIVATION_RATE", 0.03),
         early_exit_diagnostics_enabled=_bool_env("EARLY_EXIT_DIAGNOSTICS_ENABLED", False),
-        profit_protection_exit_enabled=_bool_env("PROFIT_PROTECTION_EXIT_ENABLED", True),
+        profit_protection_exit_enabled=_bool_env("PROFIT_PROTECTION_EXIT_ENABLED", False),
         profit_protection_trigger_rate=_float_env("PROFIT_PROTECTION_TRIGGER_RATE", 0.02),
         profit_protection_floor_rate=_float_env("PROFIT_PROTECTION_FLOOR_RATE", -0.003),
-        time_stop_exit_enabled=_bool_env("TIME_STOP_EXIT_ENABLED", True),
+        time_stop_exit_enabled=_bool_env("TIME_STOP_EXIT_ENABLED", False),
         time_stop_minutes=_int_env("TIME_STOP_MINUTES", 30),
         time_stop_min_profit_rate=_float_env("TIME_STOP_MIN_PROFIT_RATE", 0.0),
-        early_negative_exit_enabled=_bool_env("EARLY_NEGATIVE_EXIT_ENABLED", True),
+        early_negative_exit_enabled=_bool_env("EARLY_NEGATIVE_EXIT_ENABLED", False),
         early_negative_exit_minutes=_int_env("EARLY_NEGATIVE_EXIT_MINUTES", 10),
-        early_negative_exit_rate=_float_env("EARLY_NEGATIVE_EXIT_RATE", -0.015),
+        early_negative_exit_rate=_float_env("EARLY_NEGATIVE_EXIT_RATE", 0.0),
         low_profit_60m_exit_enabled=_bool_env("LOW_PROFIT_60M_EXIT_ENABLED", False),
         low_profit_60m_minutes=_int_env("LOW_PROFIT_60M_MINUTES", 60),
         low_profit_60m_min_profit_rate=_float_env("LOW_PROFIT_60M_MIN_PROFIT_RATE", 0.01),
