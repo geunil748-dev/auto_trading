@@ -52,6 +52,37 @@ Follow-ups:
 - ...
 ```
 
+## Manual DRY_RUN Slack Review Checklist
+
+When a Daily Ops message is posted in `placeholder-report dry-run`, `missing-report dry-run`, or any other DRY_RUN mode, the human operator should review the Slack record before starting any Codex work. Treat the message as an execution record and candidate queue, not as permission for real automation.
+
+1. Verify headline safety fields.
+   - Confirm `Status`, `Data quality`, and `Mode` are present.
+   - If `Mode` contains DRY_RUN, placeholder, missing, stale, or mismatch wording, treat the report as non-operational evidence until a fresh package is uploaded.
+   - Confirm any safety note says DB was not accessed, SQL was not executed, and no KIS/order/Telegram/Slack upload/broker APIs were called, except for the final manual Slack record if explicitly stated.
+2. Verify the progress cap.
+   - Confirm `Progress` includes the cap reason, such as `70% missing metrics` or `75% placeholder metrics`, whenever summary/metrics are missing, placeholder-only, stale, or mismatched.
+   - Do not interpret capped progress as proof that the underlying operational data is fresh.
+3. Verify report freshness.
+   - Compare `Expected completed trade_date`, `Latest report date found`, `Freshness status`, and the analysis period.
+   - If freshness is `placeholder`, `unknown`, `stale`, or date-mismatched, require a newly generated `daily_ops_summary_YYYY-MM-DD.md` and `daily_ops_metrics_YYYY-MM-DD.json` before making trading conclusions.
+4. Separate Codex candidates from approval-required work.
+   - LOW/MEDIUM items labeled `[Codex 실행 후보]` are review candidates only. They may be turned into a Codex request only after a human manually mentions Codex in a Slack thread with the exact bounded scope.
+   - HIGH items labeled `[승인 필요]` require explicit human approval before implementation and must not be converted into an automated Codex request by the Scheduled Task.
+   - The Scheduled Task must not include a real `<@U0BC29CQUBD>` mention or direct `@Codex` execution phrase in DRY_RUN candidate text.
+5. Confirm execution boundaries before mentioning Codex.
+   - No real Codex execution happens unless the human operator manually mentions Codex in a thread.
+   - The manual Codex request must restate the allowed scope, non-goals, validation, and PR summary requirements.
+   - For docs-only LOW work, require branch-and-PR-only changes and `git diff --check`; no runtime tests are required unless code changes are introduced.
+6. Confirm prohibited operations stayed prohibited.
+   - Do not allow DB access, SQL execution, KIS API calls, order API calls, Telegram API calls, Slack API calls, broker API calls, credential reads, or credential printing as part of DRY_RUN review.
+   - Do not allow trading logic, KIS code, order submission, scheduler timing, risk logic, DB schema, deployment, merge, or release changes unless separately approved under the HIGH-risk process.
+7. Confirm generated report outputs are not committed.
+   - `reports/analysis/` may contain generated summaries, metrics, Excel files, runner profiles, or CSVs, but those files must not be included in a Codex commit or PR.
+   - If the follow-up is to generate or upload reports, keep that as a human/local reporting step rather than a repository change.
+
+A safe human follow-up for a LOW docs candidate should look like: "Codex, create a branch from `main`, update only the named docs, do not touch trading/runtime code, run `git diff --check`, commit the docs-only change, and open a draft PR."
+
 ## `@Codex` Proposal Rules
 
 LOW and MEDIUM tasks may be proposed automatically through Slack `@Codex` when the proposed scope is specific and bounded.
