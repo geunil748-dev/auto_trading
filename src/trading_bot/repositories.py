@@ -7,6 +7,7 @@ from datetime import date
 from typing import Any, Protocol
 
 from trading_bot.config import TradingSettings
+from trading_bot.fill_persistence import FillCumulativeKey, fill_cumulative_key
 from trading_bot.models import (
     BotLog,
     CandidateEvaluation,
@@ -641,6 +642,10 @@ class SqlServerDailyRepository:
                     SELECT 1
                     FROM fill_history
                     WHERE trade_date = ?
+                      AND (
+                            (ISNULL(order_no, '') <> '' AND order_no = ?)
+                         OR (ISNULL(order_no, '') = '' AND ? = '')
+                      )
                       AND ISNULL(fill_time, '') = ?
                       AND ticker = ?
                       AND ISNULL(side, '') = ?
@@ -658,6 +663,10 @@ class SqlServerDailyRepository:
                         settings_snapshot_hash = COALESCE(settings_snapshot_hash, ?),
                         settings_snapshot_json = COALESCE(settings_snapshot_json, ?)
                     WHERE trade_date = ?
+                      AND (
+                            (ISNULL(order_no, '') <> '' AND order_no = ?)
+                         OR (ISNULL(order_no, '') = '' AND ? = '')
+                      )
                       AND ISNULL(fill_time, '') = ?
                       AND ticker = ?
                       AND ISNULL(side, '') = ?
@@ -677,6 +686,8 @@ class SqlServerDailyRepository:
                 """,
                 (
                     row[0],
+                    row[10],
+                    row[10],
                     row[1],
                     row[2],
                     row[4],
@@ -691,6 +702,8 @@ class SqlServerDailyRepository:
                     row[15],
                     row[16],
                     row[0],
+                    row[10],
+                    row[10],
                     row[1],
                     row[2],
                     row[4],
@@ -701,6 +714,29 @@ class SqlServerDailyRepository:
                     *row,
                 ),
             )
+
+    def fill_cumulative_quantities(
+        self,
+        trade_date: date,
+        is_mock: bool = True,
+    ) -> dict[FillCumulativeKey, int]:
+        rows = self._query(
+            """
+            SELECT order_no, ticker, side, SUM(ISNULL(quantity, 0)) AS quantity
+            FROM fill_history
+            WHERE trade_date = ?
+              AND is_mock = ?
+              AND ISNULL(order_no, '') <> ''
+            GROUP BY order_no, ticker, side
+            """,
+            (trade_date, is_mock),
+        )
+        result: dict[FillCumulativeKey, int] = {}
+        for order_no, ticker, side, quantity in rows:
+            result[fill_cumulative_key(str(order_no), str(ticker), str(side), is_mock)] = int(
+                quantity or 0
+            )
+        return result
 
     def history_fills(self, trade_date: date, limit: int = 200) -> list[tuple[Any, ...]]:
         try:
@@ -744,6 +780,10 @@ class SqlServerDailyRepository:
                 SELECT TOP (1) fill_notification_sent
                 FROM fill_history
                 WHERE trade_date = ?
+                  AND (
+                        (ISNULL(order_no, '') <> '' AND order_no = ?)
+                     OR (ISNULL(order_no, '') = '' AND ? = '')
+                  )
                   AND ISNULL(fill_time, '') = ?
                   AND ticker = ?
                   AND ISNULL(side, '') = ?
@@ -770,6 +810,10 @@ class SqlServerDailyRepository:
                 SET fill_notification_sent = 1,
                     fill_notification_sent_at = COALESCE(fill_notification_sent_at, GETDATE())
                 WHERE trade_date = ?
+                  AND (
+                        (ISNULL(order_no, '') <> '' AND order_no = ?)
+                     OR (ISNULL(order_no, '') = '' AND ? = '')
+                  )
                   AND ISNULL(fill_time, '') = ?
                   AND ticker = ?
                   AND ISNULL(side, '') = ?
@@ -1000,6 +1044,28 @@ class SqlServerDailyRepository:
             (trade_date,),
         )
         return {_text(ticker).upper() for (ticker,) in rows if _text(ticker)}
+
+    def position_entry_times(self, trade_date: date) -> dict[str, str]:
+        self._ensure_fill_history_table()
+        rows = self._query(
+            """
+            SELECT ticker, MIN(fill_time)
+            FROM fill_history
+            WHERE trade_date = ?
+              AND (
+                    UPPER(ISNULL(side, '')) IN ('BUY', 'B')
+                 OR ISNULL(side, '') LIKE N'%매수%'
+              )
+              AND ISNULL(fill_time, '') <> ''
+            GROUP BY ticker
+            """,
+            (trade_date,),
+        )
+        return {
+            _text(ticker).upper(): f"{trade_date.isoformat()} {_text(fill_time)}"
+            for ticker, fill_time in rows
+            if _text(ticker) and _text(fill_time)
+        }
 
     def last_stop_loss_at(self, trade_date: date, ticker: str):
         self._ensure_trade_history_columns()
@@ -3206,6 +3272,8 @@ def _bit_value(value: Any) -> bool:
 def _fill_identity_params(item: FillRecord) -> tuple[Any, ...]:
     return (
         item.trade_date,
+        item.order_no,
+        item.order_no,
         item.fill_time,
         item.ticker,
         item.side,

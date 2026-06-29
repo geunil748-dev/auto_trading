@@ -1035,6 +1035,9 @@ def _mode_text(mode: Any) -> str:
 
 
 _REASON_TEXT = {
+    "PROFIT_PROTECTION": "수익 보호",
+    "EARLY_NEGATIVE_EXIT": "초기 손실 이탈",
+    "TIME_STOP_EXIT": "시간 손절",
     "ACCOUNT_EXPOSURE_LIMIT": "계좌 투자비중 초과",
     "API_ERROR": "API 오류",
     "CANDIDATE_SNAPSHOT_EMPTY": "후보 스냅샷 없음",

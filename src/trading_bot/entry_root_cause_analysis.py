@@ -819,7 +819,16 @@ def _manual_auto_bucket(source: str) -> str:
 
 def _exit_reason(value: Any) -> str:
     reason = _text(value).upper()
-    if reason in {"STOP_LOSS", "EOD", "PARTIAL_TAKE_PROFIT", "TAKE_PROFIT", "TRAILING_STOP"}:
+    if reason in {
+        "STOP_LOSS",
+        "EOD",
+        "PROFIT_PROTECTION",
+        "EARLY_NEGATIVE_EXIT",
+        "TIME_STOP_EXIT",
+        "PARTIAL_TAKE_PROFIT",
+        "TAKE_PROFIT",
+        "TRAILING_STOP",
+    }:
         return reason
     return "UNKNOWN"
 

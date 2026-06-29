@@ -499,9 +499,15 @@ python -m trading_bot summarize-exit-rule-simulations --input-dir reports/analys
 ```
 
 운영 중 진단 로그만 남기려면 `.env`에서 `EARLY_EXIT_DIAGNOSTICS_ENABLED=true`와
-검토할 규칙별 `*_EXIT_ENABLED=true`를 함께 설정합니다. 이 진단은
-`EXIT_RULE_DIAGNOSTIC ... actual_exit_not_changed=true` 로그만 남기며,
+검토할 규칙별 `*_EXIT_ENABLED=true`를 함께 설정합니다.
+`EARLY_EXIT_DIAGNOSTICS_ENABLED=true`는
+`EXIT_RULE_DIAGNOSTIC ... actual_exit_not_changed=true` 로그를 남기며,
 `SellIntent`, mock/real 매도 주문, KIS 주문 경로를 변경하지 않습니다.
+
+현재 버전에서는 `PROFIT_PROTECTION`, `EARLY_NEGATIVE_EXIT`,
+`TIME_STOP_EXIT`가 활성화되면 실제 `SellIntent`를 생성합니다. 주문 수량
+계산, KIS 주문 payload, 주문 보호, 실투자 unlock 조건은 변경하지
+않습니다.
 
 실제 청산 규칙으로 승격하려면 최소 30건 이상의 완료 거래 또는 2~4주
 이상의 모의매매 검증에서 순효과가 반복 확인된 뒤 별도 작업으로 진행해야

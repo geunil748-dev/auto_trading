@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from trading_bot.config import TradingSettings
+from trading_bot.config import CONDITION_MODE_HARD_FILTER
 from trading_bot.entry_planner import plan_buy_intents
 from trading_bot.models import BuyIntent
 from trading_bot.runtime import DryRunResult
@@ -30,7 +31,8 @@ def recheck_fixed_watchlist(
     repository,
 ) -> DryRunResult:
     account = runtime.accounts.current_account()
-    selected = fixed_recheck_selected_scores(latest_result, settings)
+    fixed_settings = _fixed_recheck_settings(settings)
+    selected = fixed_recheck_selected_scores(latest_result, fixed_settings)
     breakout_inputs = {
         item.ticker: runtime.breakout.breakout_input(item.ticker)
         for item in selected
@@ -39,7 +41,7 @@ def recheck_fixed_watchlist(
         selected,
         breakout_inputs,
         account,
-        settings,
+        fixed_settings,
         repository=repository,
         trade_date=scoring_trade_date(latest_result.scoring),
         source="fixed_recheck",
@@ -101,6 +103,16 @@ def fixed_recheck_selected_scores(
     for score in manual:
         selected.setdefault(score.ticker, score)
     return tuple(selected.values())
+
+
+def _fixed_recheck_settings(settings: TradingSettings) -> TradingSettings:
+    return replace(
+        settings,
+        min_total_score=max(settings.min_total_score, 60.0),
+        breakout_close_condition_mode=CONDITION_MODE_HARD_FILTER,
+        volume_increase_condition_mode=CONDITION_MODE_HARD_FILTER,
+        pullback_rebreak_condition_mode=CONDITION_MODE_HARD_FILTER,
+    )
 
 
 def hybrid_selected_scores(
