@@ -32,6 +32,9 @@ TAG_LABELS = {
 }
 
 EXIT_LABELS = {
+    "PROFIT_PROTECTION": "수익 보호",
+    "EARLY_NEGATIVE_EXIT": "초기 손실 이탈",
+    "TIME_STOP_EXIT": "시간 손절",
     "STOP_LOSS": "손절",
     "TAKE_PROFIT": "익절",
     "PARTIAL_TAKE_PROFIT": "분할 익절",

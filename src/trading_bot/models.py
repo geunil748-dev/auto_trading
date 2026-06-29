@@ -100,6 +100,7 @@ class PositionState:
     quantity: int
     last_price_usd: float
     high_price_usd: float
+    entry_time: datetime | str | None = None
 
     @property
     def profit_rate(self) -> float:

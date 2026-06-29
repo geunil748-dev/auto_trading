@@ -77,7 +77,7 @@ def test_apply_stop_loss_entry_guards_keeps_intent_when_consecutive_count_is_bel
     assert repository.logs == []
 
 
-def test_apply_stop_loss_entry_guards_blocks_ticker_inside_cooldown() -> None:
+def test_apply_stop_loss_entry_guards_blocks_ticker_with_same_day_stop_loss() -> None:
     repository = RiskRepository(last_value=datetime.now() - timedelta(minutes=5))
 
     intents = apply_stop_loss_entry_guards(
@@ -87,20 +87,20 @@ def test_apply_stop_loss_entry_guards_blocks_ticker_inside_cooldown() -> None:
     )
 
     assert intents == []
-    assert repository.logs[0].reject_reason == "STOP_LOSS_COOLDOWN"
+    assert repository.logs[0].reject_reason == "NO_ORDER_RECENT_STOP_LOSS"
     assert repository.logs[0].symbol == "AAA"
-    assert repository.trading_events[0].reason_code == "STOP_LOSS_COOLDOWN"
+    assert repository.trading_events[0].reason_code == "NO_ORDER_RECENT_STOP_LOSS"
 
 
-def test_apply_stop_loss_entry_guards_keeps_ticker_outside_cooldown() -> None:
-    intent = BuyIntent("AAA", 1, 10, 10, 0.01)
+def test_apply_stop_loss_entry_guards_blocks_ticker_after_cooldown_when_same_day_stop_loss() -> None:
     repository = RiskRepository(last_value=datetime.now() - timedelta(minutes=60))
 
     assert apply_stop_loss_entry_guards(
-        [intent],
+        [BuyIntent("AAA", 1, 10, 10, 0.01)],
         repository,
         TradingSettings(stop_loss_cooldown_minutes=30),
-    ) == [intent]
+    ) == []
+    assert repository.logs[0].reject_reason == "NO_ORDER_RECENT_STOP_LOSS"
 
 
 def test_cooldown_active_handles_invalid_string_and_disabled_cooldown() -> None:
