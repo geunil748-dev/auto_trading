@@ -64,7 +64,7 @@ def account(**changes: float) -> AccountState:
     values = {
         "cash_usd": 3000.0,
         "equity_usd": 10000.0,
-        "invested_usd": 6000.0,
+        "invested_usd": 1000.0,
         "open_positions": 2,
         "daily_profit_rate": 0.0,
     }
@@ -348,7 +348,7 @@ def test_breakout_threshold_and_trailing_stop() -> None:
 
     position = PositionState("AAA", 10, 10, 12, 12)
     pulled_back = update_high(position, 11.63)
-    early_pullback = PositionState("EARLY", 10, 10, 9.9, 10.2)
+    early_pullback = PositionState("EARLY", 10, 10, 9.9, 10.19)
 
     assert trailing_stop_triggered(pulled_back, SETTINGS)
     assert not trailing_stop_triggered(early_pullback, SETTINGS)
@@ -370,16 +370,16 @@ def test_entry_planner_requires_breakout_and_reserves_exposure() -> None:
             ScoreRecord("NEXT", 85, 80),
         ],
         {
-            "TOP": (10, 9, 10, 8),
+            "TOP": (10.4, 9.5, 10, 9),
             "NOPE": (9, 9, 10, 8),
             "NEXT": (20, 19, 20, 18),
         },
-        account(cash_usd=5000, invested_usd=5000),
+        account(cash_usd=5000, invested_usd=1000),
         SETTINGS,
     )
 
-    assert [(item.ticker, item.quantity) for item in intents] == [("TOP", 200), ("NEXT", 50)]
-    assert [item.order_value_usd for item in intents] == [2000, 1000]
+    assert [(item.ticker, item.quantity) for item in intents] == [("TOP", 96), ("NEXT", 50)]
+    assert [item.order_value_usd for item in intents] == [998.4000000000001, 1000]
 
 
 def test_entry_planner_blocks_overheated_intraday_entry() -> None:
@@ -976,7 +976,7 @@ def test_exit_planner_prioritizes_eod_hard_stop_partial_profit_and_trailing_stop
         PositionState("LOSS", 10, 2, 9.4, 11),
         PositionState("PROFIT", 10, 2, 11.0, 11.0),
         PositionState("TRAIL", 10, 3, 10.27, 10.6),
-        PositionState("HOLD", 10, 1, 10.4, 10.6),
+        PositionState("HOLD", 10, 1, 10.3, 10.3),
     ]
 
     regular = plan_position_exits(positions, SETTINGS)

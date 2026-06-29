@@ -62,7 +62,7 @@ class BypassPipeline(Pipeline):
 
 class Accounts:
     def current_account(self) -> AccountState:
-        return AccountState(5000, 10000, 3000, 1, 0)
+        return AccountState(5000, 10000, 1000, 1, 0)
 
 
 class Breakout:
@@ -88,7 +88,7 @@ def test_dry_run_runtime_plans_buy_intents_and_monitor_state() -> None:
     result = DryRunRuntime(Pipeline(), Accounts(), Breakout(), settings).run()
     state = state_from_dry_run(result)
 
-    assert [(item.ticker, item.quantity) for item in result.buy_intents] == [("AAA", 153)]
+    assert [(item.ticker, item.quantity) for item in result.buy_intents] == [("AAA", 76)]
     assert state["targets"][0][:7] == ["AAA", "Alpha", "$12.00", "-", "180%", "+10.0%", "86"]
     assert state["targets"][0][6]
     assert state["gates"][-1][1] == "1"
@@ -108,6 +108,6 @@ def test_dry_run_runtime_tags_buy_intents_when_market_bypass_is_used() -> None:
     result = DryRunRuntime(BypassPipeline(), Accounts(), Breakout(), settings).run()
 
     assert result.scoring.bypass_reason == "MARKET_BELOW_MA20_BYPASSED"
-    assert [(item.ticker, item.quantity) for item in result.buy_intents] == [("AAA", 153)]
+    assert [(item.ticker, item.quantity) for item in result.buy_intents] == [("AAA", 76)]
     assert "MARKET_BELOW_MA20_BYPASSED" in result.buy_intents[0].entry_reason
     assert "MARKET_BELOW_MA20_BYPASSED" in result.buy_intents[0].entry_reason_detail

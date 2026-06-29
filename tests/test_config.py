@@ -286,14 +286,14 @@ def test_load_settings_uses_candidate_collection_defaults(tmp_path, monkeypatch)
     assert settings.max_ranked_evaluation_candidates == 125
     assert settings.target_filtered_candidates == 15
     assert settings.candidate_eval_timeout_seconds == 120.0
-    assert settings.min_total_score == 35
+    assert settings.min_total_score == 60
     assert settings.min_opening_price_change == 0.0
     assert settings.min_volume_ratio == 1.0
     assert settings.max_opening_gap == 0.30
-    assert settings.max_entry_price_change == 0.15
+    assert settings.max_entry_price_change == 0.10
     assert settings.breakout_hold_minutes == 1.0
     assert settings.min_5m_volume_increase_percent == 5.0
-    assert runtime_risk_settings_payload(settings)["maxEntryPriceChangePercent"] == 15.0
+    assert runtime_risk_settings_payload(settings)["maxEntryPriceChangePercent"] == 10.0
     assert runtime_risk_settings_payload(settings)["breakoutHoldMinutes"] == 1.0
     assert runtime_risk_settings_payload(settings)["min5mVolumeIncreasePercent"] == 5.0
     assert runtime_risk_settings_payload(settings)["initialRankedEvaluationLimit"] == 50
@@ -467,10 +467,10 @@ def test_load_settings_keeps_current_strategy_defaults(tmp_path, monkeypatch) ->
     settings = load_settings()
 
     assert settings.strategy_preset == "current"
-    assert settings.max_position_loss == -0.05
+    assert settings.max_position_loss == -0.03
     assert settings.take_profit_rate == 0.05
     assert settings.trailing_stop_activation_rate == 0.03
-    assert settings.trailing_stop_drop == 0.03
+    assert settings.trailing_stop_drop == 0.015
     assert settings.allow_relaxed_candidate_filter is True
     assert settings.enable_pyramiding is False
 
