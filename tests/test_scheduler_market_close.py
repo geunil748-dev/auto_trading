@@ -4,6 +4,7 @@ from trading_bot.config import NotificationSettings, TradingSettings
 from trading_bot.scheduler_market_close import (
     save_daily_run_summary,
     save_daily_trade_summary_report,
+    save_strategy_review_export,
     send_market_close_notice,
     send_market_close_report,
 )
@@ -115,6 +116,68 @@ def test_save_daily_trade_summary_report_failure_logs_warning(monkeypatch) -> No
             {"reject_reason": "SUMMARY_REPORT_SAVE_FAILED"},
         )
     ]
+
+
+def test_save_strategy_review_export_uses_daily_filename(monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+    logs = []
+    expected_output = tmp_path / "strategy_review_20260629.xlsx"
+
+    monkeypatch.setenv("STRATEGY_REVIEW_EXPORT_DIR", str(tmp_path))
+    monkeypatch.delenv("STRATEGY_REVIEW_DATE_FROM", raising=False)
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.current_trade_date",
+        lambda: date(2026, 6, 29),
+    )
+
+    def fake_export_strategy_review_workbook(**kwargs):
+        captured.update(kwargs)
+        return kwargs["output"]
+
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.export_strategy_review_workbook",
+        fake_export_strategy_review_workbook,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.safe_scheduler_log",
+        lambda level, module, message, **kwargs: logs.append((level, module, message, kwargs)),
+    )
+
+    assert save_strategy_review_export() == expected_output
+    assert captured == {
+        "date_from": "2026-05-20",
+        "date_to": date(2026, 6, 29),
+        "output": expected_output,
+        "include_real": False,
+    }
+    assert logs[0][0] == "INFO"
+    assert logs[0][1] == "summary"
+    assert logs[0][3]["reject_reason"] == "STRATEGY_REVIEW_EXPORT_SAVED"
+
+
+def test_save_strategy_review_export_uses_env_date_from(monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setenv("STRATEGY_REVIEW_EXPORT_DIR", str(tmp_path))
+    monkeypatch.setenv("STRATEGY_REVIEW_DATE_FROM", "2026-06-01")
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.current_trade_date",
+        lambda: date(2026, 6, 29),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.export_strategy_review_workbook",
+        lambda **kwargs: captured.update(kwargs) or kwargs["output"],
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.safe_scheduler_log",
+        lambda *args, **kwargs: None,
+    )
+
+    save_strategy_review_export()
+
+    assert captured["date_from"] == "2026-06-01"
+    assert captured["date_to"] == date(2026, 6, 29)
+    assert captured["output"] == tmp_path / "strategy_review_20260629.xlsx"
 
 
 def test_send_market_close_notice_failure_logs_warning(monkeypatch) -> None:

@@ -40,6 +40,7 @@ from trading_bot.scheduler_logging import safe_exception_summary, safe_scheduler
 from trading_bot.scheduler_market_close import (
     save_daily_run_summary,
     save_daily_trade_summary_report,
+    save_strategy_review_export,
     send_market_close_notice,
     send_market_close_report,
 )
@@ -361,6 +362,7 @@ def live_mock_tasks(
             save_daily_trade_summary_report()
             send_market_close_notice()
             send_market_close_report(state)
+            _save_strategy_review_export_safely()
             return (
                 f"장마감 모의 매도 주문 {len(trades)}건 제출 및 "
                 f"보고서 작성 완료: {report_path}"
@@ -406,6 +408,19 @@ def _risk_guard_no_order_diagnostics(
         for intent in before
         if ticker(intent.ticker) not in allowed
     ]
+
+
+def _save_strategy_review_export_safely() -> Path | None:
+    try:
+        return save_strategy_review_export()
+    except Exception as exc:
+        safe_scheduler_log(
+            "WARNING",
+            "summary",
+            f"STRATEGY_REVIEW_EXPORT_FAILED: {safe_exception_summary(exc)}",
+            reject_reason="STRATEGY_REVIEW_EXPORT_FAILED",
+        )
+        return None
 
 
 def _send_fill_notifications(records: list[FillRecord], holdings: list[object]) -> int:

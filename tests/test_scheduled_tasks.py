@@ -1,5 +1,7 @@
 from datetime import date
 
+import pytest
+
 from trading_bot.adapters.kis_http import KisHttpResponseError
 from trading_bot.config import KisSettings, NotificationSettings, TradingSettings
 from trading_bot.models import (
@@ -25,6 +27,11 @@ from trading_bot.scheduler_state import (
     persist_live_snapshot,
 )
 from trading_bot.scheduled_tasks import _send_fill_notifications, live_mock_tasks
+
+
+@pytest.fixture(autouse=True)
+def disable_strategy_review_export(monkeypatch) -> None:
+    monkeypatch.setattr("trading_bot.scheduled_tasks.save_strategy_review_export", lambda: None)
 
 
 class Accounts:
@@ -247,6 +254,142 @@ def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> N
     assert summary_calls == ["saved"]
     assert notice_calls == ["sent"]
     assert report_calls == [{"orders": [], "fills": [], "holdings": []}]
+
+
+def test_market_close_saves_strategy_review_export_after_notifications(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monitor = Monitor()
+    executor = Executor()
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_exit_poll",
+        lambda settings, kis_settings: (Accounts(), monitor, "repository"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_mock_sell_executor",
+        lambda kis_settings, repository, settings=None: executor,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._write_live_state",
+        lambda monitor_state, kis_settings: {"orders": [], "fills": [], "holdings": []},
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.cancel_unfilled_orders_for_scheduler",
+        lambda kis_settings: [],
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.save_daily_run_summary",
+        lambda *args: calls.append("run_summary"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.write_daily_report",
+        lambda *args: calls.append("daily_report") or tmp_path / "report.json",
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.save_daily_trade_summary_report",
+        lambda: calls.append("trade_summary"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_market_close_notice",
+        lambda: calls.append("notice"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_market_close_report",
+        lambda state: calls.append("market_close_report"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.save_strategy_review_export",
+        lambda: calls.append("strategy_review_export") or tmp_path / "review.xlsx",
+    )
+
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+        regular_session=lambda: True,
+    )
+
+    tasks.close_session()
+
+    assert calls == [
+        "run_summary",
+        "daily_report",
+        "trade_summary",
+        "notice",
+        "market_close_report",
+        "strategy_review_export",
+    ]
+
+
+def test_market_close_continues_when_strategy_review_export_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monitor = Monitor()
+    executor = Executor()
+    calls: list[str] = []
+    logs = []
+
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_exit_poll",
+        lambda settings, kis_settings: (Accounts(), monitor, "repository"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_mock_sell_executor",
+        lambda kis_settings, repository, settings=None: executor,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks._write_live_state",
+        lambda monitor_state, kis_settings: {"orders": [], "fills": [], "holdings": []},
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.cancel_unfilled_orders_for_scheduler",
+        lambda kis_settings: [],
+    )
+    monkeypatch.setattr("trading_bot.scheduled_tasks.save_daily_run_summary", lambda *args: None)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.write_daily_report", lambda *args: tmp_path / "r.json")
+    monkeypatch.setattr("trading_bot.scheduled_tasks.save_daily_trade_summary_report", lambda: None)
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_market_close_notice",
+        lambda: calls.append("notice"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_market_close_report",
+        lambda state: calls.append("market_close_report"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.save_strategy_review_export",
+        lambda: (_ for _ in ()).throw(RuntimeError("DB_PASSWORD=secret")),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.safe_scheduler_log",
+        lambda level, module, message, **kwargs: logs.append((level, module, message, kwargs)),
+    )
+
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+        regular_session=lambda: True,
+    )
+
+    result = tasks.close_session()
+
+    assert "r.json" in result
+    assert calls == ["notice", "market_close_report"]
+    assert logs == [
+        (
+            "WARNING",
+            "summary",
+            "STRATEGY_REVIEW_EXPORT_FAILED: RuntimeError",
+            {"reject_reason": "STRATEGY_REVIEW_EXPORT_FAILED"},
+        )
+    ]
 
 
 def test_close_session_continues_when_unfilled_cancel_lookup_fails(monkeypatch, tmp_path) -> None:
