@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from trading_bot.config import TradingSettings, load_notification_settings, load_settings
 from trading_bot.daily_trade_summary import generate_daily_trade_summary
 from trading_bot.database import pyodbc_connect_factory
@@ -12,6 +15,10 @@ from trading_bot.repositories import SqlServerDailyRepository, SqlServerMonitorR
 from trading_bot.scheduler_logging import safe_exception_summary, safe_scheduler_log
 from trading_bot.trade_fill_notifications import send_market_close_report_from_records
 from trading_bot.trading_date import current_trade_date
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_STRATEGY_REVIEW_EXPORT_DIR = PROJECT_ROOT / "exports" / "strategy_reviews"
+DEFAULT_STRATEGY_REVIEW_DATE_FROM = "2026-05-20"
 
 
 def save_daily_run_summary(
@@ -72,6 +79,54 @@ def send_market_close_notice() -> None:
             reject_reason="MARKET_CLOSE_NOTICE_FAILED",
         )
         return
+
+
+def save_strategy_review_export() -> Path | None:
+    try:
+        trade_date = current_trade_date()
+        date_from = os.getenv("STRATEGY_REVIEW_DATE_FROM", DEFAULT_STRATEGY_REVIEW_DATE_FROM)
+        export_dir = Path(
+            os.getenv("STRATEGY_REVIEW_EXPORT_DIR", "").strip()
+            or DEFAULT_STRATEGY_REVIEW_EXPORT_DIR
+        )
+        output = export_dir / f"strategy_review_{trade_date:%Y%m%d}.xlsx"
+        path = export_strategy_review_workbook(
+            date_from=date_from,
+            date_to=trade_date,
+            output=output,
+            include_real=False,
+        )
+        safe_scheduler_log(
+            "INFO",
+            "summary",
+            f"STRATEGY_REVIEW_EXPORT_SAVED: path={path}",
+            reject_reason="STRATEGY_REVIEW_EXPORT_SAVED",
+        )
+        return path
+    except Exception as exc:
+        safe_scheduler_log(
+            "WARNING",
+            "summary",
+            f"STRATEGY_REVIEW_EXPORT_FAILED: {safe_exception_summary(exc)}",
+            reject_reason="STRATEGY_REVIEW_EXPORT_FAILED",
+        )
+        return None
+
+
+def export_strategy_review_workbook(
+    date_from,
+    date_to=None,
+    output=None,
+    include_real: bool = False,
+):
+    from tools.export_strategy_review import export_strategy_review_workbook as export
+
+    return export(
+        date_from=date_from,
+        date_to=date_to,
+        output=output,
+        include_real=include_real,
+    )
 
 
 def send_market_close_report(state: dict[str, object]) -> None:

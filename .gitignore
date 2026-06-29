@@ -23,6 +23,7 @@ monitor/manual_buy_list.json
 monitor/state_manual_test.json
 monitor/ranking_mode_compare.json
 monitor/reports/
+exports/
 mobile/stock_monitor_app/.dart_tool/
 mobile/stock_monitor_app/build/
 mobile/stock_monitor_app/dist/

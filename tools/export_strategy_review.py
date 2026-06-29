@@ -35,6 +35,8 @@ TARGET_TABLES = (
     "entry_profit_snapshot",
 )
 
+DEFAULT_DATE_FROM = "2026-05-20"
+
 SENSITIVE_PATTERNS = (
     re.compile(r"(?i)\bBearer\s+[^\s,;\"'}]+"),
     re.compile(
@@ -155,19 +157,48 @@ class SimpleXlsxWriter:
 </worksheet>"""
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = parse_args(argv)
-    date_from = _parse_date(args.date_from)
-    date_to = _parse_date(args.date_to) if args.date_to else date.today()
-    output = Path(args.output) if args.output else ROOT / "exports" / f"strategy_review_{date_to:%Y%m%d}.xlsx"
+def export_strategy_review_workbook(
+    date_from: date | str = DEFAULT_DATE_FROM,
+    date_to: date | str | None = None,
+    output: Path | str | None = None,
+    include_real: bool = False,
+) -> Path:
+    output_path, _, _ = _create_strategy_review_workbook(
+        date_from=date_from,
+        date_to=date_to,
+        output=output,
+        include_real=include_real,
+    )
+    return output_path
 
+
+def _create_strategy_review_workbook(
+    *,
+    date_from: date | str = DEFAULT_DATE_FROM,
+    date_to: date | str | None = None,
+    output: Path | str | None = None,
+    include_real: bool = False,
+) -> tuple[Path, list[SheetResult], list[tuple[str, str]]]:
+    parsed_date_from = _coerce_date(date_from)
+    parsed_date_to = _coerce_date(date_to) if date_to is not None else date.today()
+    output_path = (
+        Path(output)
+        if output is not None
+        else ROOT / "exports" / f"strategy_review_{parsed_date_to:%Y%m%d}.xlsx"
+    )
     connect = pyodbc_connect_factory()
     results: list[SheetResult] = []
     failures: list[tuple[str, str]] = []
     with closing(connect()) as connection:
         columns_by_table = load_columns(connection)
         results.append(schema_columns_sheet(connection))
-        for result in export_sheets(connection, columns_by_table, date_from, date_to, args.include_real):
+        for result in export_sheets(
+            connection,
+            columns_by_table,
+            parsed_date_from,
+            parsed_date_to,
+            include_real,
+        ):
             if result.error:
                 failures.append((result.name, result.error))
             results.append(result)
@@ -176,7 +207,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     for result in results:
         rows = result.rows if not result.error else [{"error": result.error}]
         writer.add_sheet(result.name, rows)
-    writer.save(output)
+    writer.save(output_path)
+    return output_path, results, failures
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    output, results, failures = _create_strategy_review_workbook(
+        date_from=args.date_from,
+        date_to=args.date_to if args.date_to else None,
+        output=Path(args.output) if args.output else None,
+        include_real=args.include_real,
+    )
 
     metrics = final_metrics(results)
     print(f"output={output}")
@@ -202,7 +244,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Export strategy review workbook from MSSQL.")
-    parser.add_argument("--date-from", default="2026-05-20")
+    parser.add_argument("--date-from", default=DEFAULT_DATE_FROM)
     parser.add_argument("--date-to", default=date.today().isoformat())
     parser.add_argument("--output", default="")
     parser.add_argument(
@@ -1016,6 +1058,12 @@ def _xml_text(text: str) -> str:
 
 def _parse_date(value: str) -> date:
     return datetime.strptime(value, "%Y-%m-%d").date()
+
+
+def _coerce_date(value: date | str) -> date:
+    if isinstance(value, date):
+        return value
+    return _parse_date(str(value))
 
 
 def q(identifier: str) -> str:
