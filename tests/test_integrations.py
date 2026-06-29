@@ -736,6 +736,8 @@ def test_sql_repository_writes_fill_rows_without_duplicates() -> None:
     assert "IF EXISTS" in cursors[1].calls[0][0]
     assert cursors[1].calls[0][1] == (
         date(2026, 5, 22),
+        "1001",
+        "1001",
         "22:41:10",
         "AAA",
         "매수",
@@ -750,6 +752,8 @@ def test_sql_repository_writes_fill_rows_without_duplicates() -> None:
         "",
         "",
         date(2026, 5, 22),
+        "1001",
+        "1001",
         "22:41:10",
         "AAA",
         "매수",
