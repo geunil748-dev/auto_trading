@@ -706,6 +706,49 @@ def pnl_by_exit_reason_sql(columns_by_table: dict[str, list[str]]) -> str:
     th = set(columns_by_table.get("trade_history", []))
     if not {"trade_date", "ticker", "side", "profit_usd", "profit_rate"}.issubset(fh):
         return ""
+    if {"trade_date", "ticker", "order_type", "exit_reason"}.issubset(th):
+        fallback_order = "th.[created_at] DESC" if "created_at" in th else "th.[trade_date] DESC"
+        time_order = fallback_order
+        if "last_fill_time" in th and "fill_time" in fh:
+            time_order = f"""
+                CASE WHEN ISNULL(th.[last_fill_time], '') = ISNULL(fills.[fill_time], '') THEN 0 ELSE 1 END,
+                ABS(DATEDIFF(SECOND, TRY_CONVERT(time, th.[last_fill_time]), TRY_CONVERT(time, fills.[fill_time]))),
+                {fallback_order}
+            """
+        return f"""
+            SELECT COALESCE(matched.[exit_reason], 'UNKNOWN') AS exit_reason,
+                   COUNT(*) AS sell_count,
+                   SUM(COALESCE(fills.[profit_usd], 0)) AS total_profit_usd,
+                   AVG(COALESCE(fills.[profit_usd], 0)) AS avg_profit_usd,
+                   CAST(SUM(CASE WHEN COALESCE(fills.[profit_usd], 0) > 0 THEN 1 ELSE 0 END) AS FLOAT)
+                        / NULLIF(COUNT(*), 0) AS win_rate,
+                   AVG(COALESCE(fills.[profit_rate], 0)) AS avg_profit_rate
+            FROM dbo.[fill_history] AS fills
+            OUTER APPLY (
+                SELECT TOP (1) th.[exit_reason]
+                FROM dbo.[trade_history] AS th
+                WHERE th.[trade_date] = fills.[trade_date]
+                  AND th.[ticker] = fills.[ticker]
+                  AND th.[exit_reason] IS NOT NULL
+                ORDER BY {time_order}
+            ) AS matched
+            WHERE fills.[trade_date] BETWEEN ? AND ?
+              AND fills.[profit_usd] IS NOT NULL
+            GROUP BY COALESCE(matched.[exit_reason], 'UNKNOWN')
+            ORDER BY total_profit_usd ASC
+        """
+    return """
+        SELECT 'UNKNOWN' AS exit_reason,
+               COUNT(*) AS sell_count,
+               SUM(COALESCE([profit_usd], 0)) AS total_profit_usd,
+               AVG(COALESCE([profit_usd], 0)) AS avg_profit_usd,
+               CAST(SUM(CASE WHEN COALESCE([profit_usd], 0) > 0 THEN 1 ELSE 0 END) AS FLOAT)
+                    / NULLIF(COUNT(*), 0) AS win_rate,
+               AVG(COALESCE([profit_rate], 0)) AS avg_profit_rate
+        FROM dbo.[fill_history]
+        WHERE [trade_date] BETWEEN ? AND ?
+          AND [profit_usd] IS NOT NULL
+    """
     if not {"trade_date", "ticker", "order_type", "exit_reason"}.issubset(th):
         return """
             SELECT 'UNKNOWN' AS exit_reason,
