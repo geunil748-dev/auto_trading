@@ -360,7 +360,6 @@ def live_mock_tasks(
                 len(trades),
             )
             save_daily_trade_summary_report()
-            send_market_close_notice()
             send_market_close_report(state)
             _save_strategy_review_export_safely()
             return (
