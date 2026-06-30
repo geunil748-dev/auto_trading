@@ -48,7 +48,7 @@
 - missing-report dry-run mode에서는 DB에 접근하지 않았고 운영 데이터를 분석하지 않았다는 문장을 Slack 메시지에 명확히 포함한다.
 - 최신 metrics 파일이 누락되면 최종 목표 진행률은 다른 문서 증거가 있더라도 최대 70%로 제한한다.
 - metrics 파일이 존재하지만 placeholder metrics만 사용할 수 있으면 최종 목표 진행률은 최대 75%로 제한한다.
-- 리포트 패키지가 누락된 경우 Slack 메시지에 실제 `<@U0BC29CQUBD>` 멘션이나 실제 `@Codex` 실행 호출 문구를 포함하지 않는다.
+- 리포트 패키지가 누락된 경우 Slack 메시지에 실제 Slack 앱/사용자 멘션 문법이나 실제 `@Codex` 실행 호출 문구를 포함하지 않는다.
 - missing-report dry-run mode의 LOW/MEDIUM 후보는 `[Codex 실행 후보]`로만 표시하고 자동 실행 요청 문장으로 쓰지 않는다.
 - HIGH 후보는 항상 `[승인 필요]`로 유지하고, 명시적 사람 승인 전까지 실행 후보로 바꾸지 않는다.
 - missing-report dry-run mode의 추천 다음 작업은 매매 로직 수정이 아니라 daily report package 생성 및 업로드여야 한다.
@@ -87,8 +87,8 @@ Codex 작업 후보 선정:
 - LOW: 문서, 포맷, 리포트 문구, read-only 분석 노트, 테스트 이름처럼 런타임 동작 영향이 없는 작업.
 - MEDIUM: 테스트, read-only 리포팅 코드, 비매매 UI, 로그, 개발 도구처럼 운영 매매 동작을 바꾸지 않는 제한된 작업.
 - HIGH: 매매 판단, KIS API, 주문 제출, 스케줄러 타이밍, DB 스키마, credential, 계좌 처리, live API, 자금 이동, 배포, merge/release에 닿는 모든 작업.
-- LOW/MEDIUM 작업만 Slack 메시지의 `@Codex` 제안에 포함한다.
-- HIGH 작업은 `Human approval needed`에만 적고, `@Codex`를 붙이지 않는다.
+- LOW/MEDIUM 작업은 Slack 메시지의 `Codex 수동 실행 후보`에만 포함하고, 실행 가능한 실제 멘션 대신 `[MANUAL_CODEX_MENTION_PLACEHOLDER]`가 들어간 수동 handoff 프롬프트를 사용한다.
+- HIGH 작업은 `Human approval needed`에만 적고, Codex 수동 실행 후보나 handoff 프롬프트에 넣지 않는다.
 - LOW/MEDIUM이라도 범위가 불명확하면 `approval-required`로 낮추지 말고 사람 확인 필요로 표시한다.
 - 각 LOW/MEDIUM 후보에는 예상 변경 파일/영역, 명시적 non-goals, 검증 방법, PR 요약 요구사항을 포함한다.
 
@@ -98,8 +98,8 @@ Slack 메시지 작성:
 - 숫자는 metrics JSON의 원본 값을 우선 사용한다.
 - 알 수 없는 값은 추정하지 말고 `N/A`로 표시한다.
 - 민감값은 마스킹하거나 생략한다.
-- LOW/MEDIUM `@Codex` 제안은 branch-and-PR-only 범위를 명시한다.
-- missing-report dry-run mode에서는 실제 `<@U0BC29CQUBD>` 멘션이나 실제 `@Codex` 호출을 쓰지 않고 LOW/MEDIUM을 `[Codex 실행 후보]`로만 표시한다.
+- LOW/MEDIUM `Codex 수동 실행 후보`는 branch-and-PR-only 범위를 명시한다.
+- missing-report dry-run mode에서는 실제 Slack 앱/사용자 멘션 문법이나 실제 `@Codex` 호출을 쓰지 않고 LOW/MEDIUM을 `[Codex 실행 후보]`로만 표시한다.
 - HIGH risk 항목은 명시적 사람 승인 전까지 구현 금지라고 쓰고, missing-report dry-run mode에서도 `[승인 필요]`로 표시한다.
 - missing-report dry-run mode의 Follow-ups 첫 항목은 daily report package를 생성하고 업로드하라는 안내여야 하며, 매매 로직 수정 권고를 우선하지 않는다.
 
@@ -140,12 +140,12 @@ Risk queue:
 - MEDIUM: ...
 - HIGH: approval-required only - ...
 
-Recommended @Codex proposals:
-- LOW: @Codex create a branch from main and open a draft PR for ...
+Codex 수동 실행 후보:
+- LOW: [Codex 실행 후보] create a branch from main and open a draft PR for ...
   Scope: ...
   Non-goals: do not modify trading logic, KIS API code, order code, scheduler timing, risk logic, DB schema, credentials, or generated reports.
   Validation: ...
-- MEDIUM: @Codex create a branch from main and open a draft PR for ...
+- MEDIUM: [Codex 실행 후보] create a branch from main and open a draft PR for ...
   Scope: ...
   Non-goals: do not modify trading logic, KIS API code, order code, scheduler timing, risk logic, DB schema, credentials, or generated reports.
   Validation: ...
@@ -154,7 +154,7 @@ Human approval needed:
 - HIGH: ... 명시적 사람 승인 전까지 Codex 자동 실행 금지.
 
 Missing-report dry-run alternative labels:
-- LOW/MEDIUM: [Codex 실행 후보] ... (실제 `<@U0BC29CQUBD>` 멘션 또는 `@Codex` 호출 금지)
+- LOW/MEDIUM: [Codex 실행 후보] ... (실제 Slack 앱/사용자 멘션 문법 또는 `@Codex` 호출 금지)
 - HIGH: [승인 필요] ... 명시적 사람 승인 전까지 Codex 자동 실행 금지.
 
 Follow-ups:
@@ -162,15 +162,100 @@ Follow-ups:
 - ...
 ```
 
+
+## Source Triage SAFE_MANUAL_HANDOFF Korean Template
+
+Source Triage Scheduled Task 출력은 한국어 섹션명과 필드 라벨을 사용하고, Codex 실행을 자동 요청하지 않는 검토 기록으로 작성한다. 예시는 실제 Slack 앱/사용자 멘션 문법을 포함하지 않고 반드시 `[MANUAL_CODEX_MENTION_PLACEHOLDER]`를 사용한다.
+
+```text
+[Auto Trading Source Triage] YYYY-MM-DD KST
+
+모드: SAFE_MANUAL_HANDOFF
+저장소: geunil748-dev/auto_trading
+기준 브랜치: main
+실행 시각: YYYY-MM-DD HH:MM KST
+
+요약:
+• 전체 소스 상태: PASS | WARN | FAIL
+• 핵심 발견 사항: ...
+• 수동 handoff 정책: LOW 후보만 복붙용 프롬프트로 제공 | 후보 없음
+• Codex 자동 실행: 비활성화
+• DB/API/credential 접근: 수행하지 않음
+• ChatGPT의 소스 수정: 없음
+
+작업 후보 목록:
+1. LOW(낮음) | 제목: ...
+   작업량: 소형 | 중형 | 대형
+   예상 변경 파일/영역: ...
+   소스 영향: 문서 전용 | 테스트 전용 | read-only 도구
+   런타임 영향: 없음
+   선정 이유: ...
+   검증 방법: `git diff --check`
+   수동 실행 프롬프트 제공: 예 | 아니오
+2. MEDIUM(중간) | 제목: ...
+3. HIGH(높음) | 제목: ...
+
+선택된 LOW 후보:
+• 선택 여부: 예 | 아니오
+• 제목: ...
+• 선택 이유: ...
+• 예상 PR 유형: draft PR
+• 사람 작업 필요: 이 메시지의 스레드를 열고, 실제 Codex 앱 멘션을 사람이 직접 입력한 뒤 아래 프롬프트를 붙여넣는다.
+
+Codex 수동 실행 프롬프트:
+주의: 아래 프롬프트는 자동 실행되지 않는다. 사람이 Slack 스레드에서 직접 Codex 앱을 멘션한 뒤, 멘션 다음 줄부터 아래 내용을 복사해 붙여넣을 때만 실행된다.
+
+[MANUAL_CODEX_MENTION_PLACEHOLDER]
+Use the Codex cloud environment named auto_trading.
+
+Repository: geunil748-dev/auto_trading
+Base branch: main
+
+Selected candidate:
+• Risk: LOW
+• Title: ...
+Task:
+Create a new branch from main and implement only the selected LOW candidate.
+
+Scope:
+• Update only the named documentation files.
+• Do not change runtime code.
+
+Validation:
+• Run `git diff --check`.
+• No runtime tests are required unless code is changed.
+
+안전 메모:
+• ChatGPT는 DB에 연결하지 않았다.
+• ChatGPT는 SQL을 실행하지 않았다.
+• ChatGPT는 credential에 접근하지 않았다.
+• ChatGPT는 KIS/order/Telegram/broker API를 호출하지 않았다.
+• ChatGPT는 소스 파일을 수정하지 않았다.
+• Codex 작업은 자동 실행되지 않았다.
+• 위 handoff 프롬프트는 사람이 Slack 스레드에서 실제 Codex 앱 멘션을 직접 추가하기 전까지 실행되지 않는다.
+
+사람 승인 필요:
+• MEDIUM 항목은 실행 전 사람 검토가 필요하다.
+• HIGH 항목은 구현 전 명시적 사람 승인이 필요하다.
+
+다음 작업:
+1. 선택된 LOW 후보를 검토한다.
+2. 승인하면 Slack 스레드에서 실제 Codex 앱 멘션을 사람이 직접 추가한다.
+3. 생성된 draft PR을 확인한다.
+
+Slack 기록:
+• Scheduled Task source-triage 기록으로 게시됨.
+```
+
 ## LOW / MEDIUM / HIGH 처리 규칙
 
-| Risk | 허용되는 Scheduled Task 처리 | `@Codex` 포함 여부 |
+| Risk | 허용되는 Scheduled Task 처리 | Codex 수동 실행 후보 포함 여부 |
 | --- | --- | --- |
 | LOW | 구체적이고 제한된 문서/포맷/분석 노트 작업이면 자동 제안 가능 | 포함 가능 |
 | MEDIUM | 테스트, read-only 리포팅, 비매매 UI, 로그, 개발 도구처럼 운영 매매 동작을 바꾸지 않는 제한된 작업이면 자동 제안 가능 | 포함 가능 |
 | HIGH | 매매 판단, KIS API, 주문, 스케줄러, DB 스키마, credential, 계좌, live API, 자금 이동, 배포, merge/release 관련 작업은 승인 필요로만 기록 | 포함 금지 |
 
-HIGH risk 항목은 Slack 메시지에서 반드시 `approval-required only`로 표시한다. HIGH risk 항목에는 `@Codex`를 붙이지 않으며, 사람의 명시적 승인 없이 구현 요청 문장으로 바꾸지 않는다.
+HIGH risk 항목은 Slack 메시지에서 반드시 `approval-required only`로 표시한다. HIGH risk 항목은 Codex 수동 실행 후보나 handoff 프롬프트에 포함하지 않으며, 사람의 명시적 승인 없이 구현 요청 문장으로 바꾸지 않는다.
 
 ## DB 접근 경계
 

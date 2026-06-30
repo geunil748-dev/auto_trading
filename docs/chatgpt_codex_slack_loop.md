@@ -96,6 +96,27 @@ Human approval needed:
 - HIGH items require explicit human approval before implementation.
 ````
 
+
+### Source Triage Korean Label Alignment
+
+For `SAFE_MANUAL_HANDOFF` Source Triage messages, use Korean section names and field labels consistently so the Slack record reads as a review queue rather than a direct Codex command. The recommended Korean labels are:
+
+- Header: `[Auto Trading Source Triage] YYYY-MM-DD KST`
+- `모드`: `SAFE_MANUAL_HANDOFF`
+- `저장소`: repository name
+- `기준 브랜치`: base branch
+- `실행 시각`: scheduled review time
+- `요약`: overall status, key findings, handoff policy, Codex auto-execution state, DB/API/credential access state, and whether ChatGPT edited source files
+- `작업 후보 목록`: numbered LOW/MEDIUM/HIGH candidate list
+- `선택된 LOW 후보`: selected status, title, reason, expected PR type, and required human action
+- `Codex 수동 실행 프롬프트`: inert copy-paste prompt that starts with `[MANUAL_CODEX_MENTION_PLACEHOLDER]`
+- `안전 메모`: DB, SQL, credential, API, source-edit, and auto-execution boundaries
+- `사람 승인 필요`: MEDIUM/HIGH approval requirements
+- `다음 작업`: human follow-up checklist
+- `Slack 기록`: where the scheduled review was posted
+
+Do not include real Slack app/user mention syntax in examples or scheduled Source Triage output. In particular, do not include raw mention IDs such as angle-bracket Slack mentions or executable `@Codex` examples. Every reusable prompt block must use `[MANUAL_CODEX_MENTION_PLACEHOLDER]` until a human manually adds the actual Codex mention in Slack.
+
 ## Manual DRY_RUN Slack Review Checklist
 
 When a Daily Ops message is posted in `placeholder-report dry-run`, `missing-report dry-run`, or any other DRY_RUN mode, the human operator should review the Slack record before starting any Codex work. Treat the message as an execution record and candidate queue, not as permission for real automation.
