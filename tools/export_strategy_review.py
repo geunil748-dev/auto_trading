@@ -163,13 +163,27 @@ def export_strategy_review_workbook(
     output: Path | str | None = None,
     include_real: bool = False,
 ) -> Path:
-    output_path, _, _ = _create_strategy_review_workbook(
+    output_path, _, _ = export_strategy_review_workbook_with_results(
         date_from=date_from,
         date_to=date_to,
         output=output,
         include_real=include_real,
     )
     return output_path
+
+
+def export_strategy_review_workbook_with_results(
+    date_from: date | str = DEFAULT_DATE_FROM,
+    date_to: date | str | None = None,
+    output: Path | str | None = None,
+    include_real: bool = False,
+) -> tuple[Path, list[SheetResult], list[tuple[str, str]]]:
+    return _create_strategy_review_workbook(
+        date_from=date_from,
+        date_to=date_to,
+        output=output,
+        include_real=include_real,
+    )
 
 
 def _create_strategy_review_workbook(

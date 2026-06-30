@@ -2,6 +2,7 @@ from datetime import date
 
 from trading_bot.config import NotificationSettings, TradingSettings
 from trading_bot.scheduler_market_close import (
+    save_auto_trading_data_digest,
     save_daily_run_summary,
     save_daily_trade_summary_report,
     save_strategy_review_export,
@@ -125,18 +126,19 @@ def test_save_strategy_review_export_uses_daily_filename(monkeypatch, tmp_path) 
 
     monkeypatch.setenv("STRATEGY_REVIEW_EXPORT_DIR", str(tmp_path))
     monkeypatch.delenv("STRATEGY_REVIEW_DATE_FROM", raising=False)
+    monkeypatch.delenv("AUTO_TRADING_DATA_DIGEST_ENABLED", raising=False)
     monkeypatch.setattr(
         "trading_bot.scheduler_market_close.current_trade_date",
         lambda: date(2026, 6, 29),
     )
 
-    def fake_export_strategy_review_workbook(**kwargs):
+    def fake_export_strategy_review_workbook_with_results(**kwargs):
         captured.update(kwargs)
-        return kwargs["output"]
+        return kwargs["output"], [], []
 
     monkeypatch.setattr(
-        "trading_bot.scheduler_market_close.export_strategy_review_workbook",
-        fake_export_strategy_review_workbook,
+        "trading_bot.scheduler_market_close.export_strategy_review_workbook_with_results",
+        fake_export_strategy_review_workbook_with_results,
     )
     monkeypatch.setattr(
         "trading_bot.scheduler_market_close.safe_scheduler_log",
@@ -160,13 +162,14 @@ def test_save_strategy_review_export_uses_env_date_from(monkeypatch, tmp_path) -
 
     monkeypatch.setenv("STRATEGY_REVIEW_EXPORT_DIR", str(tmp_path))
     monkeypatch.setenv("STRATEGY_REVIEW_DATE_FROM", "2026-06-01")
+    monkeypatch.delenv("AUTO_TRADING_DATA_DIGEST_ENABLED", raising=False)
     monkeypatch.setattr(
         "trading_bot.scheduler_market_close.current_trade_date",
         lambda: date(2026, 6, 29),
     )
     monkeypatch.setattr(
-        "trading_bot.scheduler_market_close.export_strategy_review_workbook",
-        lambda **kwargs: captured.update(kwargs) or kwargs["output"],
+        "trading_bot.scheduler_market_close.export_strategy_review_workbook_with_results",
+        lambda **kwargs: (captured.update(kwargs) or (kwargs["output"], [], [])),
     )
     monkeypatch.setattr(
         "trading_bot.scheduler_market_close.safe_scheduler_log",
@@ -178,6 +181,198 @@ def test_save_strategy_review_export_uses_env_date_from(monkeypatch, tmp_path) -
     assert captured["date_from"] == "2026-06-01"
     assert captured["date_to"] == date(2026, 6, 29)
     assert captured["output"] == tmp_path / "strategy_review_20260629.xlsx"
+
+
+def test_save_auto_trading_data_digest_skips_when_disabled(monkeypatch, tmp_path) -> None:
+    logs = []
+    monkeypatch.delenv("AUTO_TRADING_DATA_DIGEST_ENABLED", raising=False)
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.safe_scheduler_log",
+        lambda level, module, message, **kwargs: logs.append((level, module, message, kwargs)),
+    )
+
+    result = save_auto_trading_data_digest(
+        strategy_review_path=tmp_path / "strategy_review_20260629.xlsx",
+        sheet_results=[],
+        failures=[],
+        report_date=date(2026, 6, 29),
+        date_from="2026-05-20",
+        date_to=date(2026, 6, 29),
+    )
+
+    assert result is None
+    assert logs == [
+        (
+            "INFO",
+            "summary",
+            "AUTO_TRADING_DATA_DIGEST_SKIPPED: disabled",
+            {"reject_reason": "AUTO_TRADING_DATA_DIGEST_SKIPPED"},
+        )
+    ]
+
+
+def test_save_auto_trading_data_digest_saves_text_without_slack(monkeypatch, tmp_path) -> None:
+    logs = []
+    slack_calls = []
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_ENABLED", "true")
+    monkeypatch.delenv("AUTO_TRADING_DATA_DIGEST_SLACK_ENABLED", raising=False)
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.build_strategy_review_digest",
+        lambda *args, **kwargs: "[AUTO_TRADING_DATA_DIGEST]\nbody",
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.send_slack_digest_message",
+        lambda *args, **kwargs: slack_calls.append(args),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.safe_scheduler_log",
+        lambda level, module, message, **kwargs: logs.append((level, module, message, kwargs)),
+    )
+
+    digest_path = save_auto_trading_data_digest(
+        strategy_review_path=tmp_path / "strategy_review_20260629.xlsx",
+        sheet_results=[],
+        failures=[],
+        report_date=date(2026, 6, 29),
+        date_from="2026-05-20",
+        date_to=date(2026, 6, 29),
+    )
+
+    assert digest_path == tmp_path / "strategy_digest_20260629.txt"
+    assert digest_path.read_text(encoding="utf-8").startswith("[AUTO_TRADING_DATA_DIGEST]")
+    assert slack_calls == []
+    assert logs[0][3]["reject_reason"] == "AUTO_TRADING_DATA_DIGEST_SAVED"
+
+
+def test_save_auto_trading_data_digest_slack_missing_webhook(monkeypatch, tmp_path) -> None:
+    logs = []
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_ENABLED", "true")
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_SLACK_ENABLED", "true")
+    monkeypatch.delenv("AUTO_TRADING_DATA_DIGEST_SLACK_WEBHOOK_URL", raising=False)
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.build_strategy_review_digest",
+        lambda *args, **kwargs: "[AUTO_TRADING_DATA_DIGEST]\nbody",
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.safe_scheduler_log",
+        lambda level, module, message, **kwargs: logs.append((level, module, message, kwargs)),
+    )
+
+    save_auto_trading_data_digest(
+        strategy_review_path=tmp_path / "strategy_review_20260629.xlsx",
+        sheet_results=[],
+        failures=[],
+        report_date=date(2026, 6, 29),
+        date_from="2026-05-20",
+        date_to=date(2026, 6, 29),
+    )
+
+    assert [log[3]["reject_reason"] for log in logs] == [
+        "AUTO_TRADING_DATA_DIGEST_SAVED",
+        "AUTO_TRADING_DATA_DIGEST_SLACK_SKIPPED",
+    ]
+
+
+def test_save_auto_trading_data_digest_slack_sends_plain_text(monkeypatch, tmp_path) -> None:
+    logs = []
+    sent = []
+    digest_text = "[AUTO_TRADING_DATA_DIGEST]\nbody"
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_ENABLED", "true")
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_SLACK_ENABLED", "true")
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_SLACK_WEBHOOK_URL", "https://hooks.slack.test/example")
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.build_strategy_review_digest",
+        lambda *args, **kwargs: digest_text,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.send_slack_digest_message",
+        lambda webhook_url, text: sent.append((webhook_url, text)) or True,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.safe_scheduler_log",
+        lambda level, module, message, **kwargs: logs.append((level, module, message, kwargs)),
+    )
+
+    save_auto_trading_data_digest(
+        strategy_review_path=tmp_path / "strategy_review_20260629.xlsx",
+        sheet_results=[],
+        failures=[],
+        report_date=date(2026, 6, 29),
+        date_from="2026-05-20",
+        date_to=date(2026, 6, 29),
+    )
+
+    assert sent == [("https://hooks.slack.test/example", digest_text)]
+    assert [log[3]["reject_reason"] for log in logs] == [
+        "AUTO_TRADING_DATA_DIGEST_SAVED",
+        "AUTO_TRADING_DATA_DIGEST_SLACK_SENT",
+    ]
+    assert all("secret" not in log[2] for log in logs)
+
+
+def test_save_auto_trading_data_digest_continues_when_slack_fails(monkeypatch, tmp_path) -> None:
+    logs = []
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_ENABLED", "true")
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_SLACK_ENABLED", "true")
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_SLACK_WEBHOOK_URL", "https://hooks.slack.test/example")
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.build_strategy_review_digest",
+        lambda *args, **kwargs: "[AUTO_TRADING_DATA_DIGEST]\nbody",
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.send_slack_digest_message",
+        lambda webhook_url, text: (_ for _ in ()).throw(RuntimeError("webhook hidden")),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.safe_scheduler_log",
+        lambda level, module, message, **kwargs: logs.append((level, module, message, kwargs)),
+    )
+
+    digest_path = save_auto_trading_data_digest(
+        strategy_review_path=tmp_path / "strategy_review_20260629.xlsx",
+        sheet_results=[],
+        failures=[],
+        report_date=date(2026, 6, 29),
+        date_from="2026-05-20",
+        date_to=date(2026, 6, 29),
+    )
+
+    assert digest_path == tmp_path / "strategy_digest_20260629.txt"
+    assert logs[-1][0] == "WARNING"
+    assert logs[-1][2] == "AUTO_TRADING_DATA_DIGEST_SLACK_FAILED: RuntimeError"
+    assert "hidden" not in logs[-1][2]
+
+
+def test_save_auto_trading_data_digest_continues_when_digest_fails(monkeypatch, tmp_path) -> None:
+    logs = []
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_ENABLED", "true")
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.build_strategy_review_digest",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("DB_PASSWORD=secret")),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.safe_scheduler_log",
+        lambda level, module, message, **kwargs: logs.append((level, module, message, kwargs)),
+    )
+
+    result = save_auto_trading_data_digest(
+        strategy_review_path=tmp_path / "strategy_review_20260629.xlsx",
+        sheet_results=[],
+        failures=[],
+        report_date=date(2026, 6, 29),
+        date_from="2026-05-20",
+        date_to=date(2026, 6, 29),
+    )
+
+    assert result is None
+    assert logs == [
+        (
+            "WARNING",
+            "summary",
+            "AUTO_TRADING_DATA_DIGEST_FAILED: RuntimeError",
+            {"reject_reason": "AUTO_TRADING_DATA_DIGEST_FAILED"},
+        )
+    ]
 
 
 def test_send_market_close_notice_failure_logs_warning(monkeypatch) -> None:

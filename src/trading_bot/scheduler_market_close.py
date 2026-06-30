@@ -11,8 +11,14 @@ from trading_bot.notifications import (
     send_alert_telegram_message,
     send_market_close_done,
 )
+from trading_bot.performance_digest import (
+    DEFAULT_DATA_DIGEST_MAX_CHARS,
+    build_strategy_review_digest,
+    save_strategy_review_digest,
+)
 from trading_bot.repositories import SqlServerDailyRepository, SqlServerMonitorRepository
 from trading_bot.scheduler_logging import safe_exception_summary, safe_scheduler_log
+from trading_bot.slack_digest_notifier import send_slack_digest_message
 from trading_bot.trade_fill_notifications import send_market_close_report_from_records
 from trading_bot.trading_date import current_trade_date
 
@@ -90,7 +96,7 @@ def save_strategy_review_export() -> Path | None:
             or DEFAULT_STRATEGY_REVIEW_EXPORT_DIR
         )
         output = export_dir / f"strategy_review_{trade_date:%Y%m%d}.xlsx"
-        path = export_strategy_review_workbook(
+        path, results, failures = export_strategy_review_workbook_with_results(
             date_from=date_from,
             date_to=trade_date,
             output=output,
@@ -102,6 +108,14 @@ def save_strategy_review_export() -> Path | None:
             f"STRATEGY_REVIEW_EXPORT_SAVED: path={path}",
             reject_reason="STRATEGY_REVIEW_EXPORT_SAVED",
         )
+        save_auto_trading_data_digest(
+            strategy_review_path=path,
+            sheet_results=results,
+            failures=failures,
+            report_date=trade_date,
+            date_from=date_from,
+            date_to=trade_date,
+        )
         return path
     except Exception as exc:
         safe_scheduler_log(
@@ -111,6 +125,85 @@ def save_strategy_review_export() -> Path | None:
             reject_reason="STRATEGY_REVIEW_EXPORT_FAILED",
         )
         return None
+
+
+def save_auto_trading_data_digest(
+    *,
+    strategy_review_path: Path,
+    sheet_results: list[object],
+    failures: list[tuple[str, str]],
+    report_date,
+    date_from,
+    date_to,
+) -> Path | None:
+    if not _env_flag("AUTO_TRADING_DATA_DIGEST_ENABLED"):
+        safe_scheduler_log(
+            "INFO",
+            "summary",
+            "AUTO_TRADING_DATA_DIGEST_SKIPPED: disabled",
+            reject_reason="AUTO_TRADING_DATA_DIGEST_SKIPPED",
+        )
+        return None
+    try:
+        digest = build_strategy_review_digest(
+            sheet_results,
+            report_date=report_date,
+            date_from=date_from,
+            date_to=date_to,
+            source_xlsx=strategy_review_path,
+            failures=failures,
+            max_chars=_env_int(
+                "AUTO_TRADING_DATA_DIGEST_MAX_CHARS",
+                DEFAULT_DATA_DIGEST_MAX_CHARS,
+            ),
+        )
+        digest_path = save_strategy_review_digest(digest, strategy_review_path)
+        safe_scheduler_log(
+            "INFO",
+            "summary",
+            f"AUTO_TRADING_DATA_DIGEST_SAVED: path={digest_path}",
+            reject_reason="AUTO_TRADING_DATA_DIGEST_SAVED",
+        )
+    except Exception as exc:
+        safe_scheduler_log(
+            "WARNING",
+            "summary",
+            f"AUTO_TRADING_DATA_DIGEST_FAILED: {safe_exception_summary(exc)}",
+            reject_reason="AUTO_TRADING_DATA_DIGEST_FAILED",
+        )
+        return None
+
+    _send_auto_trading_data_digest_to_slack(digest)
+    return digest_path
+
+
+def _send_auto_trading_data_digest_to_slack(digest: str) -> None:
+    if not _env_flag("AUTO_TRADING_DATA_DIGEST_SLACK_ENABLED"):
+        return
+    webhook_url = os.getenv("AUTO_TRADING_DATA_DIGEST_SLACK_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        safe_scheduler_log(
+            "INFO",
+            "summary",
+            "AUTO_TRADING_DATA_DIGEST_SLACK_SKIPPED: missing_webhook",
+            reject_reason="AUTO_TRADING_DATA_DIGEST_SLACK_SKIPPED",
+        )
+        return
+    try:
+        send_slack_digest_message(webhook_url, digest)
+        safe_scheduler_log(
+            "INFO",
+            "summary",
+            "AUTO_TRADING_DATA_DIGEST_SLACK_SENT",
+            reject_reason="AUTO_TRADING_DATA_DIGEST_SLACK_SENT",
+        )
+    except Exception as exc:
+        safe_scheduler_log(
+            "WARNING",
+            "summary",
+            f"AUTO_TRADING_DATA_DIGEST_SLACK_FAILED: {safe_exception_summary(exc)}",
+            reject_reason="AUTO_TRADING_DATA_DIGEST_SLACK_FAILED",
+        )
 
 
 def export_strategy_review_workbook(
@@ -127,6 +220,33 @@ def export_strategy_review_workbook(
         output=output,
         include_real=include_real,
     )
+
+
+def export_strategy_review_workbook_with_results(
+    date_from,
+    date_to=None,
+    output=None,
+    include_real: bool = False,
+):
+    from tools.export_strategy_review import export_strategy_review_workbook_with_results as export
+
+    return export(
+        date_from=date_from,
+        date_to=date_to,
+        output=output,
+        include_real=include_real,
+    )
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, "").strip() or default)
+    except ValueError:
+        return default
 
 
 def send_market_close_report(state: dict[str, object]) -> None:
