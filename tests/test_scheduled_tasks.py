@@ -252,11 +252,11 @@ def test_close_session_submits_end_of_day_mock_sells(monkeypatch, tmp_path) -> N
     assert monitor.calls == [(["holding"], True)]
     assert executor.intents == [SellIntent("AAA", 2, 10.5, "EOD")]
     assert summary_calls == ["saved"]
-    assert notice_calls == ["sent"]
+    assert notice_calls == []
     assert report_calls == [{"orders": [], "fills": [], "holdings": []}]
 
 
-def test_market_close_saves_strategy_review_export_after_notifications(
+def test_market_close_saves_strategy_review_export_after_report(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -319,7 +319,6 @@ def test_market_close_saves_strategy_review_export_after_notifications(
         "run_summary",
         "daily_report",
         "trade_summary",
-        "notice",
         "market_close_report",
         "strategy_review_export",
     ]
@@ -381,7 +380,7 @@ def test_market_close_continues_when_strategy_review_export_fails(
     result = tasks.close_session()
 
     assert "r.json" in result
-    assert calls == ["notice", "market_close_report"]
+    assert calls == ["market_close_report"]
     assert logs == [
         (
             "WARNING",
@@ -476,7 +475,7 @@ def test_close_session_continues_when_unfilled_cancel_lookup_fails(monkeypatch, 
     assert calls["summary"] == (1, 0)
     assert calls["report"] == (state, [], 1)
     assert calls["daily_trade_summary"] is True
-    assert calls["notice"] is True
+    assert "notice" not in calls
     assert calls["market_close_report"] == state
     assert logs[0][0] == "WARNING"
     assert logs[0][1] == "orders"
@@ -727,7 +726,7 @@ def test_close_session_continues_after_fill_confirmation_timeout(
     assert logs[0][1] == "orders"
     assert logs[0][3]["reject_reason"] == "MARKET_CLOSE_FILL_CONFIRMATION_TIMEOUT"
     assert "pending=TLT:1" in logs[0][2]
-    assert calls == ["summary", "report", "trade_summary", "notice", "market_close_report"]
+    assert calls == ["summary", "report", "trade_summary", "market_close_report"]
     assert report_states[0] is state
     assert report_states[1] is state
 
