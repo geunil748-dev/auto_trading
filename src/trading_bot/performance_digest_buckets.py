@@ -15,6 +15,7 @@ EXIT_REASON_BUCKETS = (
 )
 SCORE_BUCKETS = ("below_40", "40_50", "50_60", "60_70", "70_plus", "unknown")
 SOURCE_BUCKETS = ("auto", "fixed_recheck", "manual", "other")
+UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True)

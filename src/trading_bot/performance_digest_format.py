@@ -9,6 +9,7 @@ from trading_bot.performance_digest_buckets import (
     EXIT_REASON_BUCKETS,
     SCORE_BUCKETS,
     SOURCE_BUCKETS,
+    UNKNOWN,
     BucketStats,
 )
 
@@ -37,6 +38,9 @@ def format_strategy_review_digest(
         "overall:",
         f"- buy_count: {overall['buy_count']}",
         f"- sell_count: {overall['sell_count']}",
+        f"- realized_exit_count: {overall['realized_exit_count']}",
+        f"- matched_trade_count: {overall['matched_trade_count']}",
+        f"- unmatched_trade_count: {overall['unmatched_trade_count']}",
         f"- realized_pnl: {_money(overall['realized_pnl'])}",
         f"- realized_return: {_pct(overall['realized_return'])}",
         f"- win_rate: {_pct(overall['win_rate'])}",
@@ -47,20 +51,29 @@ def format_strategy_review_digest(
         f"- largest_loss: {_money(overall['largest_loss'])}",
         "",
         "pnl_by_exit_reason:",
+        f"- basis: {stats['exit_reason_basis']}",
         *_bucket_lines(stats["exit_stats"], EXIT_REASON_BUCKETS),
         "",
         "pnl_by_score_bucket:",
+        f"- basis: {stats['score_source_basis']}",
+        f"- matched_sell_count: {overall['matched_trade_count']}",
         *_bucket_lines(stats["score_stats"], SCORE_BUCKETS),
         "",
         "pnl_by_source:",
+        f"- basis: {stats['score_source_basis']}",
+        f"- matched_sell_count: {overall['matched_trade_count']}",
         *_bucket_lines(stats["source_stats"], SOURCE_BUCKETS),
         "",
         "data_quality:",
+        f"- data_status: {stats['data_status']}",
         f"- duplicate_suspects_count: {stats['duplicate_count']}",
         f"- summary_reconciliation_status: {reconciliation['status']}",
         f"- fill_history_sell_rows: {stats['fill_history_sell_rows']}",
+        f"- buy_count_status: {stats['buy_count_status']}",
+        f"- count_consistency_status: {stats['count_consistency_status']}",
         f"- daily_summary_realized_pnl: {_money(reconciliation['daily_summary_realized_pnl'])}",
         f"- reconciliation_gap: {_money(reconciliation['reconciliation_gap'])}",
+        f"- reconciliation_gap_basis: {reconciliation['reconciliation_gap_basis']}",
         f"- missing_or_limited_fields: {_join_notes(stats['missing_or_limited'])}",
         "",
         "interpretation:",
@@ -103,14 +116,20 @@ def _date_text(value: date | str) -> str:
 
 
 def _money(value: object) -> str:
+    if value == UNKNOWN:
+        return UNKNOWN
     return f"{float(value or 0):.2f}"
 
 
 def _pct(value: object) -> str:
+    if value == UNKNOWN:
+        return UNKNOWN
     return f"{float(value or 0) * 100:.2f}%"
 
 
 def _ratio(value: object) -> str:
+    if value == UNKNOWN:
+        return UNKNOWN
     if isinstance(value, (int, float)) and math.isinf(float(value)):
         return "inf"
     return f"{float(value or 0):.2f}"

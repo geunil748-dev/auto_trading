@@ -8,6 +8,7 @@ from trading_bot.performance_digest_buckets import (
     EXIT_REASON_BUCKETS,
     SCORE_BUCKETS,
     SOURCE_BUCKETS,
+    UNKNOWN,
     BucketStats,
     exit_reason_bucket,
     fraction,
@@ -16,6 +17,18 @@ from trading_bot.performance_digest_buckets import (
     num,
     score_bucket,
     source_bucket,
+)
+from trading_bot.performance_digest_quality import (
+    count_consistency_status,
+    data_status,
+    interpretation,
+    limited_notes,
+    matched_trade_count,
+    realized_exit_count,
+    reconciliation_metrics,
+    safe_buy_count,
+    safe_fill_history_sell_rows,
+    unmatched_count,
 )
 
 EXPECTED_SHEETS = (
@@ -41,31 +54,86 @@ def collect_strategy_review_digest_stats(
         if _sheet_error(result)
     ]
     failure_notes = [f"{sheet}:{error}" for sheet, error in failures or ()]
+    pnl_by_day_rows = _rows(by_name, "pnl_by_day")
+    exit_reason_rows = _rows(by_name, "pnl_by_exit_reason")
+    score_rows = _rows(by_name, "pnl_by_score_bucket")
+    source_rows = _rows(by_name, "pnl_by_source")
+    fill_sheet_available = "fill_history" in by_name and not _sheet_error(by_name["fill_history"])
+    score_sheet_available = "pnl_by_score_bucket" in by_name and not _sheet_error(by_name["pnl_by_score_bucket"])
+    source_sheet_available = "pnl_by_source" in by_name and not _sheet_error(by_name["pnl_by_source"])
     fill_rows = _rows(by_name, "fill_history")
     sell_rows = [row for row in fill_rows if is_sell(row.get("side"))]
     buy_rows = [row for row in fill_rows if is_buy(row.get("side"))]
-    overall = _overall_metrics(_rows(by_name, "pnl_by_day"), sell_rows, buy_rows)
+    parseable_fill_rows = len(sell_rows) + len(buy_rows)
+    overall = _overall_metrics(pnl_by_day_rows, sell_rows, buy_rows)
     exit_stats = _bucket_stats(
-        _rows(by_name, "pnl_by_exit_reason"),
+        exit_reason_rows,
         key_name="exit_reason",
         buckets=EXIT_REASON_BUCKETS,
         normalizer=exit_reason_bucket,
     )
     score_stats = _bucket_stats(
-        _rows(by_name, "pnl_by_score_bucket"),
+        score_rows,
         key_name="score_bucket",
         buckets=SCORE_BUCKETS,
         normalizer=score_bucket,
     )
     source_stats = _bucket_stats(
-        _rows(by_name, "pnl_by_source"),
+        source_rows,
         key_name="source",
         buckets=SOURCE_BUCKETS,
         normalizer=source_bucket,
     )
+    realized_exit_count_value = realized_exit_count(overall, exit_stats, pnl_by_day_rows, fill_sheet_available)
+    matched_trade_count_value = matched_trade_count(
+        score_stats,
+        source_stats,
+        score_rows,
+        source_rows,
+        score_sheet_available,
+        source_sheet_available,
+    )
+    overall["sell_count"] = realized_exit_count_value
+    overall["realized_exit_count"] = realized_exit_count_value
+    overall["matched_trade_count"] = matched_trade_count_value
+    overall["unmatched_trade_count"] = unmatched_count(realized_exit_count_value, matched_trade_count_value)
+    overall["buy_count"] = safe_buy_count(
+        buy_rows,
+        fill_sheet_available,
+        parseable_fill_rows,
+        realized_exit_count_value,
+    )
     duplicate_count = len(_rows(by_name, "duplicate_suspects"))
-    reconciliation = _reconciliation_metrics(_rows(by_name, "summary_reconciliation"))
-    limited = _limited_notes(missing, errors, failure_notes, int(overall["sell_count"]))
+    reconciliation = reconciliation_metrics(
+        _rows(by_name, "summary_reconciliation"),
+        overall.get("realized_pnl"),
+    )
+    fill_history_sell_rows = safe_fill_history_sell_rows(
+        sell_rows,
+        fill_sheet_available,
+        parseable_fill_rows,
+        realized_exit_count_value,
+    )
+    buy_count_status = (
+        "missing_or_unparsed" if overall["buy_count"] == UNKNOWN else "computed_from_fill_history"
+    )
+    count_consistency_status_value = count_consistency_status(
+        realized_exit_count_value,
+        matched_trade_count_value,
+        fill_history_sell_rows,
+        overall["buy_count"],
+    )
+    limited = limited_notes(
+        missing,
+        errors,
+        failure_notes,
+        realized_exit_count_value,
+        matched_trade_count_value,
+        fill_history_sell_rows,
+        overall["buy_count"],
+        count_consistency_status_value,
+    )
+    data_status_value = data_status(limited, reconciliation["status"], count_consistency_status_value)
     return {
         "overall": overall,
         "exit_stats": exit_stats,
@@ -74,9 +142,19 @@ def collect_strategy_review_digest_stats(
         "duplicate_count": duplicate_count,
         "reconciliation": reconciliation,
         "missing_or_limited": limited,
-        "data_status": _data_status(limited, reconciliation["status"]),
-        "interpretation": _interpretation(exit_stats, source_stats, overall, duplicate_count),
-        "fill_history_sell_rows": len(sell_rows),
+        "data_status": data_status_value,
+        "interpretation": interpretation(
+            exit_stats,
+            source_stats,
+            overall,
+            duplicate_count,
+            data_status_value,
+        ),
+        "fill_history_sell_rows": fill_history_sell_rows,
+        "buy_count_status": buy_count_status,
+        "count_consistency_status": count_consistency_status_value,
+        "score_source_basis": "matched_candidate_rows_only",
+        "exit_reason_basis": "all_realized_sell_exits",
     }
 
 
@@ -187,82 +265,6 @@ def _bucket_stats(
         )
         for bucket, values in aggregate.items()
     }
-
-
-def _reconciliation_metrics(rows: Sequence[Mapping[str, Any]]) -> dict[str, float | str]:
-    if not rows:
-        return {"status": "LIMITED", "daily_summary_realized_pnl": 0.0, "reconciliation_gap": 0.0}
-    daily_pnl = sum(num(row.get("daily_run_realized_profit_usd")) for row in rows)
-    gaps = [abs(num(row.get("fill_vs_daily_run_diff"))) for row in rows]
-    gaps += [abs(num(row.get("fill_vs_trade_summary_diff"))) for row in rows]
-    max_gap = max(gaps, default=0.0)
-    return {
-        "status": "OK" if max_gap <= 0.01 else "WARN",
-        "daily_summary_realized_pnl": daily_pnl,
-        "reconciliation_gap": max_gap,
-    }
-
-
-def _interpretation(
-    exit_stats: Mapping[str, BucketStats],
-    source_stats: Mapping[str, BucketStats],
-    overall: Mapping[str, float | int],
-    duplicate_count: int,
-) -> dict[str, str]:
-    loss_bucket = _largest_negative(exit_stats)
-    loss_source = _largest_negative(source_stats)
-    sell_count = int(overall.get("sell_count", 0))
-    realized_pnl = float(overall.get("realized_pnl", 0.0))
-    if sell_count == 0:
-        signal = "no_sell_data"
-    elif sell_count < 30:
-        signal = "sample_below_30"
-    elif realized_pnl < 0:
-        signal = "negative_expectancy_review_needed"
-    else:
-        signal = "monitor_without_rule_change"
-    focus = []
-    if loss_bucket != "none":
-        focus.append(f"exit_reason={loss_bucket}")
-    if loss_source != "none":
-        focus.append(f"source={loss_source}")
-    if duplicate_count:
-        focus.append("duplicate_suspects")
-    return {
-        "main_loss_driver": loss_bucket,
-        "main_profit_driver": _largest_positive(exit_stats),
-        "strategy_change_signal": signal,
-        "recommended_review_focus": ", ".join(focus) if focus else "collect_more_data",
-    }
-
-
-def _limited_notes(missing: Sequence[str], errors: Sequence[str], failures: Sequence[str], sell_count: int) -> list[str]:
-    notes = [f"missing_sheet:{name}" for name in missing]
-    notes.extend(f"sheet_error:{item}" for item in errors)
-    notes.extend(f"export_failure:{item}" for item in failures)
-    if sell_count == 0:
-        notes.append("no_sell_rows")
-    if sell_count < 30:
-        notes.append("sell_sample_below_30")
-    return notes
-
-
-def _data_status(notes: Sequence[str], reconciliation_status: object) -> str:
-    if any(note.startswith("sheet_error:") or note.startswith("export_failure:") for note in notes):
-        return "WARN"
-    if reconciliation_status == "WARN":
-        return "WARN"
-    return "LIMITED" if notes else "OK"
-
-
-def _largest_negative(stats: Mapping[str, BucketStats]) -> str:
-    negatives = [(name, item.total_profit_usd) for name, item in stats.items() if item.total_profit_usd < 0]
-    return min(negatives, key=lambda item: item[1])[0] if negatives else "none"
-
-
-def _largest_positive(stats: Mapping[str, BucketStats]) -> str:
-    positives = [(name, item.total_profit_usd) for name, item in stats.items() if item.total_profit_usd > 0]
-    return max(positives, key=lambda item: item[1])[0] if positives else "none"
 
 
 def _realized_return(sell_rows: Sequence[Mapping[str, Any]], realized_pnl: float) -> float:

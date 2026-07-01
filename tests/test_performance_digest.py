@@ -69,6 +69,11 @@ def test_build_strategy_review_digest_contains_required_sections(tmp_path) -> No
     assert "overall:" in digest
     assert "- buy_count: 1" in digest
     assert "- sell_count: 2" in digest
+    assert "- realized_exit_count: 2" in digest
+    assert "- matched_trade_count: 2" in digest
+    assert "- unmatched_trade_count: 0" in digest
+    assert "- basis: all_realized_sell_exits" in digest
+    assert "- basis: matched_candidate_rows_only" in digest
     assert "- STOP_LOSS: sell_count=1, pnl=-5.00" in digest
     assert "- 60_70: sell_count=2, pnl=5.00" in digest
     assert "- fixed_recheck: sell_count=1, pnl=-5.00" in digest
@@ -107,9 +112,76 @@ def test_build_strategy_review_digest_marks_missing_sheets_limited(tmp_path) -> 
         source_xlsx=tmp_path / "strategy_review_20260629.xlsx",
     )
 
-    assert "data_status: LIMITED" in digest
+    assert "data_status: WARN" in digest
     assert "missing_sheet:pnl_by_exit_reason" in digest
     assert "missing_sheet:summary_reconciliation" in digest
+
+
+def test_digest_separates_realized_exits_from_matched_candidate_counts(tmp_path) -> None:
+    digest = build_strategy_review_digest(
+        [
+            Result(
+                "pnl_by_day",
+                [
+                    {
+                        "sell_count": 49,
+                        "total_profit_usd": -895.66,
+                        "win_count": 20,
+                        "loss_count": 29,
+                        "avg_win": 164.00,
+                        "avg_loss": -143.99,
+                        "max_win": 500,
+                        "max_loss": -300,
+                    }
+                ],
+            ),
+            Result(
+                "pnl_by_exit_reason",
+                [
+                    {"exit_reason": "STOP_LOSS", "sell_count": 13, "total_profit_usd": -2537.78, "win_rate": 0.0769},
+                    {"exit_reason": "TRAILING_STOP", "sell_count": 26, "total_profit_usd": 1362.75, "win_rate": 0.7},
+                    {"exit_reason": "EOD", "sell_count": 10, "total_profit_usd": 279.37, "win_rate": 0.4},
+                ],
+            ),
+            Result("pnl_by_score_bucket", [{"score_bucket": "50_60", "sell_count": 8, "total_profit_usd": -632.23, "win_rate": 0.25}]),
+            Result("pnl_by_source", [{"source": "fixed_recheck", "sell_count": 8, "total_profit_usd": -632.23, "win_rate": 0.25}]),
+            Result("duplicate_suspects", []),
+            Result(
+                "summary_reconciliation",
+                [
+                    {
+                        "daily_run_realized_profit_usd": -747.48,
+                        "fill_history_sell_profit_usd": -895.66,
+                        "fill_vs_daily_run_diff": -148.18,
+                    }
+                ],
+            ),
+        ],
+        report_date="2026-06-30",
+        date_from="2026-05-20",
+        date_to="2026-06-30",
+        source_xlsx=tmp_path / "strategy_review_20260630.xlsx",
+    )
+
+    assert "data_status: WARN" in digest
+    assert "- buy_count: unknown" in digest
+    assert "- sell_count: 49" in digest
+    assert "- realized_exit_count: 49" in digest
+    assert "- matched_trade_count: 8" in digest
+    assert "- unmatched_trade_count: 41" in digest
+    assert "pnl_by_exit_reason:\n- basis: all_realized_sell_exits" in digest
+    assert "pnl_by_score_bucket:\n- basis: matched_candidate_rows_only\n- matched_sell_count: 8" in digest
+    assert "pnl_by_source:\n- basis: matched_candidate_rows_only\n- matched_sell_count: 8" in digest
+    assert "- fill_history_sell_rows: unknown" in digest
+    assert "- buy_count_status: missing_or_unparsed" in digest
+    assert "- count_consistency_status: WARN" in digest
+    assert "- reconciliation_gap: 148.18" in digest
+    assert "- reconciliation_gap_basis: abs(realized_pnl - daily_summary_realized_pnl)" in digest
+    assert "buy_count" in digest
+    assert "fill_history_sell_rows" in digest
+    assert "unmatched_score_source_rows" in digest
+    assert "- strategy_change_signal: insufficient_data_or_data_quality_review_needed" in digest
+    assert "- recommended_review_focus: fix digest/reconciliation/count consistency before strategy changes" in digest
 
 
 def test_build_strategy_review_digest_truncates_to_max_chars(tmp_path) -> None:
