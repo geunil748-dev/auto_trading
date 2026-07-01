@@ -772,7 +772,8 @@ def pnl_by_exit_reason_sql(columns_by_table: dict[str, list[str]]) -> str:
                 {fallback_order}
             """
         return f"""
-            SELECT COALESCE(matched.[exit_reason], 'UNKNOWN') AS exit_reason,
+            SELECT fills.[trade_date],
+                   COALESCE(matched.[exit_reason], 'UNKNOWN') AS exit_reason,
                    COUNT(*) AS sell_count,
                    SUM(COALESCE(fills.[profit_usd], 0)) AS total_profit_usd,
                    AVG(COALESCE(fills.[profit_usd], 0)) AS avg_profit_usd,
@@ -790,11 +791,12 @@ def pnl_by_exit_reason_sql(columns_by_table: dict[str, list[str]]) -> str:
             ) AS matched
             WHERE fills.[trade_date] BETWEEN ? AND ?
               AND fills.[profit_usd] IS NOT NULL
-            GROUP BY COALESCE(matched.[exit_reason], 'UNKNOWN')
-            ORDER BY total_profit_usd ASC
+            GROUP BY fills.[trade_date], COALESCE(matched.[exit_reason], 'UNKNOWN')
+            ORDER BY fills.[trade_date], total_profit_usd ASC
         """
     return """
-        SELECT 'UNKNOWN' AS exit_reason,
+        SELECT [trade_date],
+               'UNKNOWN' AS exit_reason,
                COUNT(*) AS sell_count,
                SUM(COALESCE([profit_usd], 0)) AS total_profit_usd,
                AVG(COALESCE([profit_usd], 0)) AS avg_profit_usd,
@@ -804,6 +806,8 @@ def pnl_by_exit_reason_sql(columns_by_table: dict[str, list[str]]) -> str:
         FROM dbo.[fill_history]
         WHERE [trade_date] BETWEEN ? AND ?
           AND [profit_usd] IS NOT NULL
+        GROUP BY [trade_date]
+        ORDER BY [trade_date]
     """
     if not {"trade_date", "ticker", "order_type", "exit_reason"}.issubset(th):
         return """
@@ -869,7 +873,8 @@ def pnl_by_score_bucket_sql(columns_by_table: dict[str, list[str]]) -> str:
     if not base:
         return ""
     return f"""
-        SELECT CASE
+        SELECT trade_date,
+               CASE
                  WHEN final_score IS NULL THEN 'unknown'
                  WHEN final_score < 40 THEN '<40'
                  WHEN final_score < 50 THEN '40~50'
@@ -884,7 +889,8 @@ def pnl_by_score_bucket_sql(columns_by_table: dict[str, list[str]]) -> str:
                CAST(SUM(CASE WHEN COALESCE(sell_profit_usd, 0) > 0 THEN 1 ELSE 0 END) AS FLOAT)
                     / NULLIF(SUM(CASE WHEN sell_count > 0 THEN 1 ELSE 0 END), 0) AS win_rate
         FROM ({base}) AS matched
-        GROUP BY CASE
+        GROUP BY trade_date,
+                 CASE
                  WHEN final_score IS NULL THEN 'unknown'
                  WHEN final_score < 40 THEN '<40'
                  WHEN final_score < 50 THEN '40~50'
@@ -893,7 +899,7 @@ def pnl_by_score_bucket_sql(columns_by_table: dict[str, list[str]]) -> str:
                  WHEN final_score < 80 THEN '70~80'
                  ELSE '80+'
                END
-        ORDER BY score_bucket
+        ORDER BY trade_date, score_bucket
     """
 
 
@@ -902,15 +908,16 @@ def pnl_by_source_sql(columns_by_table: dict[str, list[str]]) -> str:
     if not base:
         return ""
     return f"""
-        SELECT COALESCE(source, 'unknown') AS source,
+        SELECT trade_date,
+               COALESCE(source, 'unknown') AS source,
                SUM(sell_count) AS sell_count,
                SUM(COALESCE(sell_profit_usd, 0)) AS total_profit_usd,
                AVG(COALESCE(sell_profit_usd, 0)) AS avg_profit_usd,
                CAST(SUM(CASE WHEN COALESCE(sell_profit_usd, 0) > 0 THEN 1 ELSE 0 END) AS FLOAT)
                     / NULLIF(SUM(CASE WHEN sell_count > 0 THEN 1 ELSE 0 END), 0) AS win_rate
         FROM ({base}) AS matched
-        GROUP BY COALESCE(source, 'unknown')
-        ORDER BY total_profit_usd ASC
+        GROUP BY trade_date, COALESCE(source, 'unknown')
+        ORDER BY trade_date, total_profit_usd ASC
     """
 
 
@@ -1223,14 +1230,14 @@ PNL_BY_TICKER_COLUMNS = (
     "avg_profit_rate", "exit_reasons",
 )
 PNL_BY_EXIT_REASON_COLUMNS = (
-    "exit_reason", "sell_count", "total_profit_usd", "avg_profit_usd", "win_rate",
+    "trade_date", "exit_reason", "sell_count", "total_profit_usd", "avg_profit_usd", "win_rate",
     "avg_profit_rate",
 )
 PNL_BY_SCORE_BUCKET_COLUMNS = (
-    "score_bucket", "sell_count", "total_profit_usd", "avg_profit_usd", "win_rate",
+    "trade_date", "score_bucket", "sell_count", "total_profit_usd", "avg_profit_usd", "win_rate",
 )
 PNL_BY_SOURCE_COLUMNS = (
-    "source", "sell_count", "total_profit_usd", "avg_profit_usd", "win_rate",
+    "trade_date", "source", "sell_count", "total_profit_usd", "avg_profit_usd", "win_rate",
 )
 SUMMARY_RECONCILIATION_COLUMNS = (
     "trade_date", "sell_count", "fill_history_sell_profit_usd",

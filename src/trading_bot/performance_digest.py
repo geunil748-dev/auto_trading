@@ -24,7 +24,11 @@ def build_strategy_review_digest(
     failures: Sequence[tuple[str, str]] | None = None,
     max_chars: int = DEFAULT_DATA_DIGEST_MAX_CHARS,
 ) -> str:
-    stats = collect_strategy_review_digest_stats(sheet_results, failures)
+    stats = collect_strategy_review_digest_stats(
+        sheet_results,
+        failures,
+        report_date=report_date,
+    )
     return format_strategy_review_digest(
         stats,
         marker=AUTO_TRADING_DATA_DIGEST_MARKER,
