@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The Slack loop turns Daily Ops and Source Triage messages into a safe manual handoff queue. In `SAFE_MANUAL_HANDOFF` mode, scheduled messages must not auto-trigger Codex. They may summarize findings and provide bounded LOW-risk prompts, but those prompts remain inert until a human reviews them and manually mentions Codex in the relevant Slack thread.
+The Slack loop turns Daily Ops and Source Triage messages into a safe manual handoff queue. In `SAFE_MANUAL_HANDOFF` mode, scheduled messages must not auto-trigger Codex. They may summarize findings and provide bounded LOW implementation prompts, approval-required MEDIUM implementation prompts, and HIGH planning-only prompts, but those prompts remain inert until a human reviews them and manually mentions Codex in the relevant Slack thread.
 
 Codex is branch-and-PR-only. Humans remain responsible for deciding whether to start Codex, reviewing the draft PR, approving the work, merging, and any production rollout.
 
@@ -10,11 +10,11 @@ Codex is branch-and-PR-only. Humans remain responsible for deciding whether to s
 
 | Risk | Definition | SAFE_MANUAL_HANDOFF rule |
 | --- | --- | --- |
-| LOW | Documentation, formatting, report wording, read-only analysis notes, test naming, or other changes with no runtime behavior impact. | May be listed as a copy-paste handoff prompt. Codex starts only after a human manually mentions Codex in a thread and pastes the prompt. |
-| MEDIUM | Bounded changes to tests, read-only reporting code, non-trading UI, logs, or developer tooling where production trading behavior is not changed. | May be listed for human review, but should not be converted into a Codex prompt unless a human explicitly approves the scope. |
-| HIGH | Any change touching trading decisions, KIS API, order submission, scheduler timing, DB schema, credentials, account handling, live API calls, money movement, deployment, or merge/release actions. | Requires explicit human approval before implementation and must not be auto-executed. |
+| LOW | Documentation, formatting, report wording, read-only analysis notes, test naming, or other changes with no runtime behavior impact. | May be listed as an implementation handoff prompt. Codex starts only after a human manually mentions Codex in a thread and pastes the prompt. |
+| MEDIUM | Bounded changes to tests, read-only reporting code, non-trading UI, logs, or developer tooling where production trading behavior is not changed. | May be listed as an approval-required implementation handoff prompt, but it is valid only after a human explicitly approves the exact scope. |
+| HIGH | Any change touching trading decisions, KIS API, order submission, scheduler timing, DB schema, credentials, account handling, live API calls, money movement, deployment, or merge/release actions. | May be listed only as a planning handoff prompt. It must prohibit file changes, branch creation, commits, PRs, DB/API calls, scheduler/monitor execution, merge, and direct main push. |
 
-HIGH risk work may be discussed, but Slack automation must stop at a recommendation until a human explicitly approves the exact scope.
+HIGH risk work may be discussed through planning-only handoff prompts, but implementation must wait for explicit human approval of the exact scope in a later request.
 
 ## Daily Ops / Source Triage Slack Format
 
@@ -49,7 +49,7 @@ Selected LOW candidate:
 - Expected PR type: draft PR
 - Human action required: open this message thread, manually mention Codex, then paste the handoff prompt below.
 
-Manual Codex handoff prompt:
+LOW candidate manual Codex handoff prompt:
 Note: This prompt is not executed by the scheduled task. It starts only when a human manually mentions Codex in the Slack thread and pastes the prompt text.
 
 ```handoff-prompt
@@ -91,9 +91,19 @@ Safety notes:
 - Codex auto-execution: disabled.
 - Source edits by ChatGPT: none.
 
+MEDIUM candidate manual Codex handoff prompt:
+- Include `[MANUAL_CODEX_MENTION_PLACEHOLDER]`.
+- State that implementation is allowed only after explicit human approval.
+- Require a feature branch, draft PR, narrow relevant tests, and `git diff --check`.
+
+HIGH candidate planning-only Codex handoff prompt:
+- Include `[MANUAL_CODEX_MENTION_PLACEHOLDER]`.
+- Request an implementation plan only.
+- Prohibit file modification, branch creation, commit, PR, merge, push, DB/API calls, SQL execution, and scheduler/monitor execution.
+
 Human approval needed:
-- MEDIUM items require human review before execution.
-- HIGH items require explicit human approval before implementation.
+- MEDIUM items require explicit human approval before execution.
+- HIGH items require explicit human approval before implementation after planning review.
 ````
 
 
@@ -109,7 +119,9 @@ For `SAFE_MANUAL_HANDOFF` Source Triage messages, use Korean section names and f
 - `요약`: overall status, key findings, handoff policy, Codex auto-execution state, DB/API/credential access state, and whether ChatGPT edited source files
 - `작업 후보 목록`: numbered LOW/MEDIUM/HIGH candidate list
 - `선택된 LOW 후보`: selected status, title, reason, expected PR type, and required human action
-- `Codex 수동 실행 프롬프트`: inert copy-paste prompt that starts with `[MANUAL_CODEX_MENTION_PLACEHOLDER]`
+- `LOW 후보용 Codex 수동 실행 프롬프트`: inert LOW implementation prompt that starts with `[MANUAL_CODEX_MENTION_PLACEHOLDER]`
+- `MEDIUM 후보용 Codex 수동 실행 프롬프트`: inert MEDIUM implementation prompt that starts with `[MANUAL_CODEX_MENTION_PLACEHOLDER]` and says execution requires prior human approval
+- `HIGH 후보용 Codex 계획 프롬프트`: inert HIGH planning-only prompt that starts with `[MANUAL_CODEX_MENTION_PLACEHOLDER]` and prohibits implementation actions
 - `안전 메모`: DB, SQL, credential, API, source-edit, and auto-execution boundaries
 - `사람 승인 필요`: MEDIUM/HIGH approval requirements
 - `다음 작업`: human follow-up checklist
@@ -133,8 +145,8 @@ When a Daily Ops message is posted in `placeholder-report dry-run`, `missing-rep
    - If freshness is `placeholder`, `unknown`, `stale`, or date-mismatched, require a newly generated `daily_ops_summary_YYYY-MM-DD.md` and `daily_ops_metrics_YYYY-MM-DD.json` before making trading conclusions.
 4. Separate Codex candidates from approval-required work.
    - LOW items labeled as Codex candidates are review candidates only. They may be converted into copy-paste handoff prompts, but they must not execute until a human manually mentions Codex in a Slack thread with the exact bounded scope.
-   - MEDIUM items require human review before execution and should not be included as ready-to-run prompts by default.
-   - HIGH items labeled `[승인 필요]` require explicit human approval before implementation and must not be converted into an automated Codex request by the scheduled task.
+   - MEDIUM items require explicit human approval before execution; if included as prompts, they must be labeled approval-required and valid only after that approval.
+   - HIGH items labeled `[승인 필요]` may be included only as planning-only prompts and must not be converted into an implementation request by the scheduled task.
    - The scheduled task must not include a real Slack app mention, raw mention ID, or direct execution phrase in candidate text.
 5. Confirm execution boundaries before mentioning Codex.
    - No real Codex execution happens unless the human operator manually mentions Codex in a thread.
@@ -147,7 +159,7 @@ When a Daily Ops message is posted in `placeholder-report dry-run`, `missing-rep
    - `reports/analysis/` may contain generated summaries, metrics, Excel files, runner profiles, or CSVs, but those files must not be included in a Codex commit or PR.
    - If the follow-up is to generate or upload reports, keep that as a human/local reporting step rather than a repository change.
 
-A safe human follow-up for a LOW docs candidate should ask Codex to create a branch from `main`, update only the named docs, avoid trading/runtime code, run `git diff --check`, commit the docs-only change, and open a draft PR.
+A safe human follow-up for a LOW docs candidate should ask Codex to create a branch from `main`, update only the named docs, avoid trading/runtime code, run `git diff --check`, commit the docs-only change, and open a draft PR. A MEDIUM follow-up must include explicit human approval before implementation. A HIGH follow-up must request planning only and prohibit implementation actions.
 
 ## Manual Codex Handoff Rules
 
@@ -162,7 +174,7 @@ Each handoff prompt must state:
 - Draft PR requirement.
 - PR summary requirements.
 
-Recommended placeholder pattern:
+Recommended LOW implementation placeholder pattern:
 
 ```text
 [MANUAL_CODEX_MENTION_PLACEHOLDER]
@@ -185,6 +197,39 @@ Constraints:
 
 Validation:
 - Run git diff --check.
+```
+
+
+Recommended MEDIUM approval-required implementation placeholder pattern:
+
+```text
+[MANUAL_CODEX_MENTION_PLACEHOLDER]
+Use the Codex cloud environment named auto_trading.
+
+Selected candidate:
+- Risk: MEDIUM
+- Title: <bounded approved task>
+
+Task:
+Only after explicit human approval, create a branch from main and implement only this approved MEDIUM candidate.
+
+Validation:
+- Run <narrow relevant tests>.
+- Run git diff --check.
+```
+
+Recommended HIGH planning-only placeholder pattern:
+
+```text
+[MANUAL_CODEX_MENTION_PLACEHOLDER]
+Use the Codex cloud environment named auto_trading.
+
+Selected candidate:
+- Risk: HIGH
+- Title: <planning task>
+
+Task:
+Create an implementation plan only. Do not modify files, create branches, commit, open PRs, call APIs, connect to DB, execute SQL, run scheduler/monitor, merge, or push to main.
 ```
 
 ## Codex Execution Boundaries

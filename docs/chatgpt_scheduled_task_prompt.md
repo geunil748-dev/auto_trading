@@ -87,10 +87,13 @@ Codex 작업 후보 선정:
 - LOW: 문서, 포맷, 리포트 문구, read-only 분석 노트, 테스트 이름처럼 런타임 동작 영향이 없는 작업.
 - MEDIUM: 테스트, read-only 리포팅 코드, 비매매 UI, 로그, 개발 도구처럼 운영 매매 동작을 바꾸지 않는 제한된 작업.
 - HIGH: 매매 판단, KIS API, 주문 제출, 스케줄러 타이밍, DB 스키마, credential, 계좌 처리, live API, 자금 이동, 배포, merge/release에 닿는 모든 작업.
-- LOW/MEDIUM 작업은 Slack 메시지의 `Codex 수동 실행 후보`에만 포함하고, 실행 가능한 실제 멘션 대신 `[MANUAL_CODEX_MENTION_PLACEHOLDER]`가 들어간 수동 handoff 프롬프트를 사용한다.
-- HIGH 작업은 `Human approval needed`에만 적고, Codex 수동 실행 후보나 handoff 프롬프트에 넣지 않는다.
-- LOW/MEDIUM이라도 범위가 불명확하면 `approval-required`로 낮추지 말고 사람 확인 필요로 표시한다.
+- LOW 작업은 구현용 수동 handoff 프롬프트를 제공할 수 있으며, 실행 가능한 실제 멘션 대신 `[MANUAL_CODEX_MENTION_PLACEHOLDER]`를 사용한다.
+- MEDIUM 작업은 사람 승인 전에는 실행 금지로 표시하고, 사람 승인 후에만 사용할 수 있는 approval-required 구현용 수동 handoff 프롬프트를 제공할 수 있다.
+- HIGH 작업은 구현 프롬프트를 제공하지 않고, 파일 수정/branch/commit/PR 없이 계획 수립만 요청하는 planning-only 수동 handoff 프롬프트만 제공할 수 있다.
+- LOW/MEDIUM/HIGH 모든 수동 handoff 프롬프트는 반드시 `[MANUAL_CODEX_MENTION_PLACEHOLDER]`로 시작한다.
+- LOW/MEDIUM이라도 범위가 불명확하면 구현 프롬프트로 낮추지 말고 사람 확인 필요로 표시한다.
 - 각 LOW/MEDIUM 후보에는 예상 변경 파일/영역, 명시적 non-goals, 검증 방법, PR 요약 요구사항을 포함한다.
+- 각 HIGH 후보에는 계획 범위, 금지 작업, 승인 필요 사항, open questions를 포함한다.
 
 Slack 메시지 작성:
 - 아래 Slack message template 형식을 따른다.
@@ -178,7 +181,7 @@ Source Triage Scheduled Task 출력은 한국어 섹션명과 필드 라벨을 �
 요약:
 • 전체 소스 상태: PASS | WARN | FAIL
 • 핵심 발견 사항: ...
-• 수동 handoff 정책: LOW 후보만 복붙용 프롬프트로 제공 | 후보 없음
+• 수동 handoff 정책: LOW 구현 프롬프트 허용, MEDIUM 사람 승인 후 구현 프롬프트 허용, HIGH 계획 전용 프롬프트 허용 | 후보 없음
 • Codex 자동 실행: 비활성화
 • DB/API/credential 접근: 수행하지 않음
 • ChatGPT의 소스 수정: 없음
@@ -191,7 +194,7 @@ Source Triage Scheduled Task 출력은 한국어 섹션명과 필드 라벨을 �
    런타임 영향: 없음
    선정 이유: ...
    검증 방법: `git diff --check`
-   수동 실행 프롬프트 제공: 예 | 아니오
+   수동 실행 프롬프트 제공: LOW 구현 | MEDIUM 승인 후 구현 | HIGH 계획 전용 | 아니오
 2. MEDIUM(중간) | 제목: ...
 3. HIGH(높음) | 제목: ...
 
@@ -202,8 +205,8 @@ Source Triage Scheduled Task 출력은 한국어 섹션명과 필드 라벨을 �
 • 예상 PR 유형: draft PR
 • 사람 작업 필요: 이 메시지의 스레드를 열고, 실제 Codex 앱 멘션을 사람이 직접 입력한 뒤 아래 프롬프트를 붙여넣는다.
 
-Codex 수동 실행 프롬프트:
-주의: 아래 프롬프트는 자동 실행되지 않는다. 사람이 Slack 스레드에서 직접 Codex 앱을 멘션한 뒤, 멘션 다음 줄부터 아래 내용을 복사해 붙여넣을 때만 실행된다.
+LOW 후보용 Codex 수동 실행 프롬프트:
+주의: 자동 실행되지 않는다. LOW 후보만 안전 실행 후보로 간주한다. 사람이 Slack 스레드에서 직접 Codex 앱을 멘션한 뒤, 멘션 다음 줄부터 아래 내용을 복사해 붙여넣을 때만 실행된다.
 
 [MANUAL_CODEX_MENTION_PLACEHOLDER]
 Use the Codex cloud environment named auto_trading.
@@ -225,6 +228,47 @@ Validation:
 • Run `git diff --check`.
 • No runtime tests are required unless code is changed.
 
+
+MEDIUM 후보용 Codex 수동 실행 프롬프트:
+주의: 자동 실행되지 않는다. MEDIUM 후보는 사람 승인 전 실행 금지이며, 승인된 경우에만 아래 구현 프롬프트를 사용한다.
+
+[MANUAL_CODEX_MENTION_PLACEHOLDER]
+Use the Codex cloud environment named auto_trading.
+
+Repository: geunil748-dev/auto_trading
+Base branch: main
+
+Selected candidate:
+• Risk: MEDIUM
+• Title: ...
+Task:
+Only after explicit human approval, create a new branch from main and implement only the approved MEDIUM candidate.
+
+Scope:
+• Update only the approved files/areas.
+• Keep production trading behavior unchanged.
+
+Validation:
+• Run the narrow relevant tests named in the candidate.
+• Run `git diff --check`.
+
+HIGH 후보용 Codex 계획 프롬프트:
+주의: 자동 실행되지 않는다. HIGH 후보는 구현 프롬프트가 아니라 계획 수립 전용이다. 파일 수정, branch 생성, commit, PR, merge, push, DB/API 호출을 금지한다.
+
+[MANUAL_CODEX_MENTION_PLACEHOLDER]
+Use the Codex cloud environment named auto_trading.
+
+Repository: geunil748-dev/auto_trading
+Base branch: main
+
+Selected candidate:
+• Risk: HIGH
+• Title: ...
+Task:
+Create an implementation plan only. Do not modify files, create branches, commit, open PRs, call APIs, connect to DB, execute SQL, or run scheduler/monitor.
+
+Plan must include: problem statement, HIGH risk reason, likely files, runtime impact, DB/API/credential impact, approvals, rollout, tests, rollback, operator checklist, open questions, and prohibited actions.
+
 안전 메모:
 • ChatGPT는 DB에 연결하지 않았다.
 • ChatGPT는 SQL을 실행하지 않았다.
@@ -232,11 +276,15 @@ Validation:
 • ChatGPT는 KIS/order/Telegram/broker API를 호출하지 않았다.
 • ChatGPT는 소스 파일을 수정하지 않았다.
 • Codex 작업은 자동 실행되지 않았다.
-• 위 handoff 프롬프트는 사람이 Slack 스레드에서 실제 Codex 앱 멘션을 직접 추가하기 전까지 실행되지 않는다.
+• 위 handoff 프롬프트들은 사람이 Slack 스레드에서 실제 Codex 앱 멘션을 직접 추가하기 전까지 실행되지 않는다.
+• LOW는 안전한 소형 draft PR 작업만 허용한다.
+• MEDIUM은 사람 승인 후 draft PR 작업만 허용한다.
+• HIGH는 계획 수립 전용이며 파일 수정, branch, PR, commit, merge, push를 금지한다.
 
 사람 승인 필요:
-• MEDIUM 항목은 실행 전 사람 검토가 필요하다.
-• HIGH 항목은 구현 전 명시적 사람 승인이 필요하다.
+• LOW 항목도 실행 전 사람이 Slack 스레드에서 실제 Codex 앱 멘션을 직접 추가해야 한다.
+• MEDIUM 항목은 실행 전 사람 검토와 명시적 승인이 필요하다.
+• HIGH 항목은 구현 전 명시적 사람 승인과 별도 계획 검토가 필요하다.
 
 다음 작업:
 1. 선택된 LOW 후보를 검토한다.
