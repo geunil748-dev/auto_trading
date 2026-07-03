@@ -114,6 +114,71 @@ Slack 메시지 작성:
 5. Assumptions and missing inputs
 ```
 
+## AUTO_TRADING_DATA_PACKET Slack Chunk Intake
+
+When the after-close Slack automation posts `[AUTO_TRADING_DATA_PACKET]`, the Scheduled Task must treat the Slack text as a multi-message data packet, not as a single latest message.
+
+Required intake flow:
+
+1. Search Slack `#autotrading-전체` for the latest after-close messages containing `[AUTO_TRADING_DATA_DIGEST]` or `[AUTO_TRADING_DATA_PACKET]`.
+2. Do not read only the latest Slack message. A complete packet may be split across many Slack messages.
+3. Identify the newest `packet_id`, for example `auto_trading_data_packet_2026-07-02`.
+4. Find every Slack message part with the same `packet_id`.
+5. Parse each `part: N/M` header and sort parts by `N`.
+6. Verify that parts `1..M` are all present. If any part is missing, mark the packet incomplete and do not create a Codex-ready prompt.
+7. Verify that exactly one final part contains `packet_complete: true`.
+8. Concatenate the parts in numeric order before analysis.
+9. Read `[EXECUTION_LEDGER_COMPACT]` and parse the buy and sell CSV rows.
+10. Read `[PROBLEM_CASES_FOR_CODEX]` for top loss, top profit, stop loss, trailing stop, EOD, unmatched, and suspicious cases.
+11. Read `[CODEX_FIX_INPUT_HINTS]`, including `required_source_files_to_inspect`.
+12. Compare the packet evidence with the current GitHub `main` source before producing any Codex-ready prompt.
+13. If `strategy_change_allowed: false`, do not produce a strategy parameter change prompt.
+14. If `score_source_analysis_allowed: false`, do not use score/source bucket analysis as a strategy-change basis.
+15. Output only a Codex-ready prompt or Slack-ready summary. Do not execute Codex, send Slack messages, call APIs, modify GitHub, or change files.
+
+Incomplete packet rule:
+
+- If `packet_complete: true` is missing, duplicated, or attached to a non-final part, mark the packet incomplete.
+- If any `part: N/M` is missing, mark the packet incomplete.
+- If multiple `packet_id` values are present, use the newest complete packet and report skipped packet IDs.
+- If the Slack packet is incomplete, do not create a Codex modification prompt. Output a data-missing warning and ask for a complete packet repost.
+
+Strategy guardrails:
+
+- `strategy_change_allowed: false` means strategy parameter changes are prohibited.
+- `score_source_analysis_allowed: false` means score/source bucket based strategy changes are prohibited.
+- `data_status: FAIL` means data, logging, report, matching, or reconciliation fixes take priority over trading-rule changes.
+- `CODEX_FIX_INPUT_HINTS` should guide what to inspect next, but the Scheduled Task must still verify the named source files on GitHub `main` before writing a Codex-ready prompt.
+
+Example input:
+
+```text
+packet_id: auto_trading_data_packet_2026-07-02
+part: 1/9
+...
+part: 9/9
+packet_complete: true
+data_status: FAIL
+strategy_change_allowed: false
+score_source_analysis_allowed: false
+[CODEX_FIX_INPUT_HINTS]
+- required_source_files_to_inspect: src/trading_bot/performance_digest*.py, tools/export_strategy_review.py, exit/summary logging modules
+```
+
+Example Scheduled Task output:
+
+```text
+전략 파라미터 변경 보류.
+
+다음 Codex 작업 후보:
+1. exit trigger detail logging 보강
+2. buy_reason serialization 보강
+3. daily summary basis mismatch 분석
+
+Codex-ready prompt may be drafted after GitHub main source review.
+Do not send Slack, edit GitHub, execute Codex, or change strategy parameters automatically.
+```
+
 ## Slack Message Template
 
 Scheduled Task는 아래 형식을 유지하되, 값은 최신 `daily_ops_summary_YYYY-MM-DD.md`와 `daily_ops_metrics_YYYY-MM-DD.json`에서 채운다.

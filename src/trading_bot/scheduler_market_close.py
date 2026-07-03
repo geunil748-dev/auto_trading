@@ -180,6 +180,14 @@ def save_auto_trading_data_digest(
 def _send_auto_trading_data_digest_to_slack(digest: str) -> None:
     if not _env_flag("AUTO_TRADING_DATA_DIGEST_SLACK_ENABLED"):
         return
+    if _env_flag("AUTO_TRADING_DATA_DIGEST_SLACK_DRY_RUN") or _env_flag("DRY_RUN"):
+        safe_scheduler_log(
+            "INFO",
+            "summary",
+            "AUTO_TRADING_DATA_DIGEST_SLACK_DRY_RUN: skipped_send",
+            reject_reason="AUTO_TRADING_DATA_DIGEST_SLACK_DRY_RUN",
+        )
+        return
     webhook_url = os.getenv("AUTO_TRADING_DATA_DIGEST_SLACK_WEBHOOK_URL", "").strip()
     if not webhook_url:
         safe_scheduler_log(

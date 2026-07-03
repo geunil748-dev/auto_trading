@@ -239,6 +239,8 @@ Slack handoff rules:
 7. ChatGPT Scheduled Task proposes next Codex work candidates with risk labels.
 8. Only LOW or MEDIUM bounded follow-ups should be turned into automatic Codex PR requests. HIGH risk follow-ups require explicit human approval before implementation.
 
+If Slack contains `[AUTO_TRADING_DATA_PACKET]`, the Scheduled Task must follow the packet chunk intake rules in `docs/chatgpt_scheduled_task_prompt.md` before analysis. It must group messages by `packet_id`, sort `part: N/M`, verify all parts and `packet_complete: true`, then read `[EXECUTION_LEDGER_COMPACT]`, `[PROBLEM_CASES_FOR_CODEX]`, and `[CODEX_FIX_INPUT_HINTS]`. Reading only the latest Slack message is not sufficient when a packet is split into chunks. If `strategy_change_allowed: false` or `score_source_analysis_allowed: false`, the next work candidates must be data/logging/report fixes, not strategy parameter changes.
+
 ## Follow-up implementation PR steps
 
 1. Add a read-only reporting module and CLI entry point for `daily_ops_report generate`.

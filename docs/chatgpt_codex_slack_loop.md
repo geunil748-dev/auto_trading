@@ -133,6 +133,58 @@ Do not include real Slack app/user mention syntax in examples or scheduled Sourc
 
 When a Daily Ops message is posted in `placeholder-report dry-run`, `missing-report dry-run`, or any other DRY_RUN mode, the human operator should review the Slack record before starting any Codex work. Treat the message as an execution record and candidate queue, not as permission for real automation.
 
+## AUTO_TRADING_DATA_PACKET Chunk Review
+
+After market close, the automation may post a DB-backed text packet as several Slack messages. The Scheduled Task must reassemble the packet before any analysis.
+
+Required packet handling:
+
+1. Search Slack `#autotrading-전체` for messages containing `[AUTO_TRADING_DATA_DIGEST]` or `[AUTO_TRADING_DATA_PACKET]`.
+2. Do not use only the latest Slack message. A complete packet can be split into multiple chunks.
+3. Group candidate messages by `packet_id`.
+4. For the newest `packet_id`, parse all `part: N/M` headers and sort by `N`.
+5. Confirm all parts `1..M` are present.
+6. Confirm the final part contains `packet_complete: true`.
+7. If any part is missing or `packet_complete: true` is absent, mark the packet incomplete and do not produce a Codex-ready prompt.
+8. Concatenate the packet parts in order.
+9. Read `[EXECUTION_LEDGER_COMPACT]` for buy/sell execution rows.
+10. Read `[PROBLEM_CASES_FOR_CODEX]` for loss, profit, stop loss, trailing stop, EOD, unmatched, and suspicious cases.
+11. Read `[CODEX_FIX_INPUT_HINTS]`, especially `required_source_files_to_inspect`.
+12. Review the referenced GitHub `main` source before writing a Codex-ready prompt.
+
+Guardrails:
+
+- If `strategy_change_allowed: false`, do not draft strategy parameter change work.
+- If `score_source_analysis_allowed: false`, do not use score/source bucket analysis as a strategy-change basis.
+- If `data_status: FAIL`, prefer data, logging, report, matching, or reconciliation fixes.
+- The Scheduled Task may output a Codex-ready prompt or Slack-ready summary only. It must not send Slack, edit GitHub, execute Codex, call APIs, connect to DB, execute SQL, or modify files.
+
+Example complete packet markers:
+
+```text
+packet_id: auto_trading_data_packet_2026-07-02
+part: 1/9
+...
+part: 9/9
+packet_complete: true
+data_status: FAIL
+strategy_change_allowed: false
+score_source_analysis_allowed: false
+[CODEX_FIX_INPUT_HINTS]
+- required_source_files_to_inspect: src/trading_bot/performance_digest*.py, tools/export_strategy_review.py, exit/summary logging modules
+```
+
+Example Scheduled Task conclusion:
+
+```text
+Strategy parameter changes are blocked.
+Candidate Codex follow-ups:
+1. Strengthen exit trigger detail logging.
+2. Strengthen buy_reason serialization.
+3. Analyze daily summary basis mismatch.
+No Slack send, GitHub edit, Codex execution, or strategy change is performed by the Scheduled Task.
+```
+
 1. Verify headline safety fields.
    - Confirm `Status`, `Data quality`, and `Mode` are present.
    - If `Mode` contains DRY_RUN, placeholder, missing, stale, or mismatch wording, treat the report as non-operational evidence until a fresh package is uploaded.

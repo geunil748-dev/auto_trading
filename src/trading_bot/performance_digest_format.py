@@ -13,13 +13,18 @@ from trading_bot.performance_digest_buckets import (
     BucketStats,
 )
 from trading_bot.performance_digest_format_sections import (
+    candidate_ambiguity_breakdown_section,
+    candidate_matching_quality_section,
     decision_lines,
     duplicate_suspects_section,
+    linkage_limitations_section,
+    matching_quality_section,
     quality_overview_lines,
     reconciliation_detail_section,
     score_source_guardrail_lines,
     unmatched_breakdown_section,
 )
+from trading_bot.performance_digest_packet import format_auto_trading_data_packet
 
 
 def format_strategy_review_digest(
@@ -45,7 +50,7 @@ def format_strategy_review_digest(
         *quality_overview_lines(cumulative, money=_money, pct=_pct),
         "",
         "Decision:",
-        *decision_lines(status),
+        *decision_lines(status, cumulative),
         "",
         f"report_date: {_date_text(report_date)}",
         "date_range_basis: cumulative",
@@ -58,6 +63,20 @@ def format_strategy_review_digest(
         *_overall_section("daily_overall", daily, include_note=True),
         "",
         *_overall_section("cumulative_overall", cumulative),
+        "",
+        *matching_quality_section("daily_matching_quality", daily, pct=_pct),
+        "",
+        *matching_quality_section("cumulative_matching_quality", cumulative, pct=_pct),
+        "",
+        *candidate_matching_quality_section("daily_candidate_matching_quality", daily),
+        "",
+        *candidate_matching_quality_section("cumulative_candidate_matching_quality", cumulative),
+        "",
+        *candidate_ambiguity_breakdown_section("daily_candidate_ambiguity_breakdown", daily),
+        "",
+        *candidate_ambiguity_breakdown_section("cumulative_candidate_ambiguity_breakdown", cumulative),
+        "",
+        *linkage_limitations_section("linkage_limitations", cumulative),
         "",
         *reconciliation_detail_section("daily_reconciliation_detail", daily, money=_money),
         "",
@@ -142,6 +161,14 @@ def format_strategy_review_digest(
         f"- reason: {_join_notes(cumulative['interpretation']['reason'])}",
         f"- provisional_observation: {_join_notes(cumulative['interpretation']['provisional_observation'])}",
         f"- recommended_review_focus: {_review_focus(daily, cumulative)}",
+        "",
+        *format_auto_trading_data_packet(
+            stats,
+            report_date=report_date,
+            date_from=date_from,
+            date_to=date_to,
+            source_xlsx=source_xlsx,
+        ),
     ]
     return _truncate_digest("\n".join(lines), max_chars, default_max_chars)
 
