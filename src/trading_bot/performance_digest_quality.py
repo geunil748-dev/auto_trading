@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from trading_bot.performance_digest_buckets import UNKNOWN, BucketStats, num
+from trading_bot.performance_digest_diagnostics import matched_ratio_metrics
 
 
 def realized_exit_count(
@@ -63,6 +64,20 @@ def safe_buy_count(
     return UNKNOWN
 
 
+def safe_fill_history_buy_rows(
+    buy_rows: Sequence[Mapping[str, Any]],
+    fill_sheet_available: bool,
+    parseable_fill_rows: int,
+    realized_exit_count_value: object,
+) -> int | str:
+    return safe_buy_count(
+        buy_rows,
+        fill_sheet_available,
+        parseable_fill_rows,
+        realized_exit_count_value,
+    )
+
+
 def safe_fill_history_sell_rows(
     sell_rows: Sequence[Mapping[str, Any]],
     fill_sheet_available: bool,
@@ -84,11 +99,16 @@ def count_consistency_status(
     fill_history_sell_rows: object,
     buy_count: object,
 ) -> str:
+    ratio_status = matched_ratio_metrics(realized_exit_count_value, matched_trade_count_value)["status"]
+    if ratio_status == "FAIL":
+        return "FAIL"
     if UNKNOWN in {realized_exit_count_value, matched_trade_count_value, fill_history_sell_rows, buy_count}:
         return "WARN"
+    if ratio_status == "WARN":
+        return "WARN"
     realized = count_or_none(realized_exit_count_value)
-    matched = count_or_none(matched_trade_count_value)
-    if realized is not None and matched is not None and matched < realized:
+    fill_sells = count_or_none(fill_history_sell_rows)
+    if realized is not None and fill_sells is not None and realized != fill_sells:
         return "WARN"
     return "OK"
 
@@ -98,55 +118,42 @@ def reconciliation_metrics(
     realized_pnl: object,
 ) -> dict[str, float | str]:
     if not rows:
+        realized_value = num(realized_pnl)
+        status = "OK" if abs(realized_value) <= 1.0 else "WARN"
         return {
-            "status": "LIMITED",
+            "status": status,
             "daily_summary_realized_pnl": UNKNOWN,
             "reconciliation_gap": UNKNOWN,
+            "reconciliation_gap_abs": UNKNOWN,
+            "reconciliation_gap_pct": UNKNOWN,
+            "reconciliation_gap_signed": UNKNOWN,
             "reconciliation_gap_basis": "missing_summary_reconciliation",
         }
     daily_pnl = sum(num(row.get("daily_run_realized_profit_usd")) for row in rows)
     realized_value = num(realized_pnl)
-    gap = abs(realized_value - daily_pnl)
+    signed_gap = realized_value - daily_pnl
+    gap = abs(signed_gap)
+    gap_pct = gap / abs(realized_value) if realized_value else (0.0 if gap == 0 else UNKNOWN)
     return {
-        "status": "OK" if gap <= 0.01 else "WARN",
+        "status": reconciliation_status(gap),
         "daily_summary_realized_pnl": daily_pnl,
         "reconciliation_gap": gap,
+        "reconciliation_gap_abs": gap,
+        "reconciliation_gap_pct": gap_pct,
+        "reconciliation_gap_signed": signed_gap,
         "reconciliation_gap_basis": "abs(realized_pnl - daily_summary_realized_pnl)",
     }
 
 
-def interpretation(
-    exit_stats: Mapping[str, BucketStats],
-    source_stats: Mapping[str, BucketStats],
-    overall: Mapping[str, float | int],
-    duplicate_count: int,
-    data_status_value: str,
-) -> dict[str, str]:
-    loss_bucket = largest_negative(exit_stats)
-    loss_source = largest_negative(source_stats)
-    sell_count = count_or_none(overall.get("sell_count")) or 0
-    realized_pnl = float(overall.get("realized_pnl", 0.0))
-    if data_status_value in {"WARN", "LIMITED"}:
-        signal = "insufficient_data_or_data_quality_review_needed"
-    elif sell_count == 0:
-        signal = "no_sell_data"
-    elif sell_count < 30:
-        signal = "sample_below_30"
-    elif realized_pnl < 0:
-        signal = "negative_expectancy_review_needed"
-    else:
-        signal = "monitor_without_rule_change"
-    focus = _review_focus(loss_bucket, loss_source, duplicate_count)
-    return {
-        "main_loss_driver": loss_bucket,
-        "main_profit_driver": largest_positive(exit_stats),
-        "strategy_change_signal": signal,
-        "recommended_review_focus": (
-            "fix digest/reconciliation/count consistency before strategy changes"
-            if data_status_value in {"WARN", "LIMITED"}
-            else focus
-        ),
-    }
+def reconciliation_status(gap_abs: object) -> str:
+    if gap_abs == UNKNOWN:
+        return "WARN"
+    gap = float(gap_abs or 0.0)
+    if gap <= 1.0:
+        return "OK"
+    if gap <= 50.0:
+        return "WARN"
+    return "FAIL"
 
 
 def limited_notes(
@@ -184,11 +191,46 @@ def data_status(
     reconciliation_status: object,
     count_consistency_status_value: str,
 ) -> str:
+    if reconciliation_status == "FAIL" or count_consistency_status_value == "FAIL":
+        return "FAIL"
     if any(note.startswith("sheet_error:") or note.startswith("export_failure:") for note in notes):
         return "WARN"
     if reconciliation_status == "WARN" or count_consistency_status_value == "WARN":
         return "WARN"
-    return "LIMITED" if notes else "OK"
+    return "WARN" if notes else "OK"
+
+
+def data_status_reasons(
+    *,
+    notes: Sequence[str],
+    reconciliation: Mapping[str, Any],
+    matched_ratio_status: str,
+    duplicate_count: int,
+) -> list[str]:
+    reasons: list[str] = []
+    if matched_ratio_status == "FAIL":
+        reasons.append("matched_ratio below threshold")
+    elif matched_ratio_status == "WARN":
+        reasons.append("matched_ratio below OK threshold")
+    if reconciliation.get("status") == "FAIL":
+        reasons.append("reconciliation gap too large")
+    elif reconciliation.get("status") == "WARN":
+        reasons.append("reconciliation gap requires review")
+    if (
+        reconciliation.get("status") == "WARN"
+        and reconciliation.get("reconciliation_gap_abs") != UNKNOWN
+    ):
+        reasons.append("possible fees/taxes/slippage/fx/rounding difference")
+    if "buy_count" in notes:
+        reasons.append("buy_count missing")
+    if "fill_history_sell_rows" in notes:
+        reasons.append("fill_history_sell_rows missing")
+    if duplicate_count:
+        reasons.append("duplicate_suspects_count > 0")
+    for note in notes:
+        if note not in {"buy_count", "fill_history_sell_rows"} and note not in reasons:
+            reasons.append(note)
+    return reasons
 
 
 def stats_sell_count(stats: Mapping[str, BucketStats]) -> int:
@@ -203,24 +245,3 @@ def count_or_none(value: object) -> int | None:
     if isinstance(value, (int, float)):
         return int(value)
     return None
-
-
-def largest_negative(stats: Mapping[str, BucketStats]) -> str:
-    negatives = [(name, item.total_profit_usd) for name, item in stats.items() if item.total_profit_usd < 0]
-    return min(negatives, key=lambda item: item[1])[0] if negatives else "none"
-
-
-def largest_positive(stats: Mapping[str, BucketStats]) -> str:
-    positives = [(name, item.total_profit_usd) for name, item in stats.items() if item.total_profit_usd > 0]
-    return max(positives, key=lambda item: item[1])[0] if positives else "none"
-
-
-def _review_focus(loss_bucket: str, loss_source: str, duplicate_count: int) -> str:
-    focus = []
-    if loss_bucket != "none":
-        focus.append(f"exit_reason={loss_bucket}")
-    if loss_source != "none":
-        focus.append(f"source={loss_source}")
-    if duplicate_count:
-        focus.append("duplicate_suspects")
-    return ", ".join(focus) if focus else "collect_more_data"
