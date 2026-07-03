@@ -108,8 +108,8 @@ def test_build_strategy_review_digest_handles_zero_trades(tmp_path) -> None:
         source_xlsx=tmp_path / "strategy_review_20260629.xlsx",
     )
 
-    assert "daily_data_status: LIMITED" in digest
-    assert "cumulative_data_status: LIMITED" in digest
+    assert "daily_data_status: WARN" in digest
+    assert "cumulative_data_status: WARN" in digest
     assert "daily_overall:\n- buy_count: 0\n- sell_count: 0" in digest
     assert "- sell_count: 0" in digest
     assert "- note: no trades for report_date" in digest
@@ -183,8 +183,8 @@ def test_digest_separates_realized_exits_from_matched_candidate_counts(tmp_path)
     assert "date_range_basis: cumulative" in digest
     assert "daily_range: 2026-06-30..2026-06-30" in digest
     assert "cumulative_range: 2026-05-20..2026-06-30" in digest
-    assert "daily_data_status: LIMITED" in digest
-    assert "cumulative_data_status: WARN" in digest
+    assert "daily_data_status: WARN" in digest
+    assert "cumulative_data_status: FAIL" in digest
     assert "daily_overall:\n- buy_count: 0\n- sell_count: 0" in digest
     assert "- note: no trades for report_date" in digest
     assert "cumulative_overall:\n- buy_count: unknown\n- sell_count: 49" in digest
@@ -200,15 +200,100 @@ def test_digest_separates_realized_exits_from_matched_candidate_counts(tmp_path)
     assert "daily_pnl_by_source:\n- basis: matched_candidate_rows_only\n- matched_sell_count: 0" in digest
     assert "cumulative_pnl_by_source:\n- basis: matched_candidate_rows_only\n- matched_sell_count: 8" in digest
     assert "- cumulative_fill_history_sell_rows: unknown" in digest
-    assert "- cumulative_count_consistency_status: WARN" in digest
+    assert "- cumulative_count_consistency_status: FAIL" in digest
+    assert "- cumulative_matched_ratio: 16.33% FAIL" in digest
+    assert "- signal_usage: disabled_below_50_percent_matched_ratio" in digest
     assert "- cumulative_reconciliation_gap: 148.18" in digest
     assert "- reconciliation_gap_basis: abs(realized_pnl - daily_summary_realized_pnl)" in digest
     assert "buy_count" in digest
     assert "fill_history_sell_rows" in digest
     assert "unmatched_score_source_rows" in digest
-    assert "- daily_strategy_change_signal: insufficient_data_or_data_quality_review_needed" in digest
-    assert "- cumulative_strategy_change_signal: insufficient_data_or_data_quality_review_needed" in digest
-    assert "- recommended_review_focus: fix digest/reconciliation/count consistency before strategy changes" in digest
+    assert "- daily_strategy_change_signal: HOLD_STRATEGY_CHANGE_UNTIL_DATA_QUALITY_FIXED" in digest
+    assert "- cumulative_strategy_change_signal: HOLD_STRATEGY_CHANGE_UNTIL_DATA_QUALITY_FIXED" in digest
+    assert "- recommended_review_focus: fix matching/reconciliation/count consistency before changing entry/exit rules" in digest
+
+
+def test_digest_flags_low_match_ratio_reconciliation_missing_counts_and_duplicates(tmp_path) -> None:
+    digest = build_strategy_review_digest(
+        [
+            Result("fill_history", []),
+            Result(
+                "pnl_by_day",
+                [
+                    {
+                        "trade_date": "2026-07-02",
+                        "sell_count": 50,
+                        "total_profit_usd": -943.22,
+                        "win_count": 20,
+                        "loss_count": 30,
+                        "avg_win": 30,
+                        "avg_loss": -51.44,
+                        "max_win": 120,
+                        "max_loss": -200,
+                    }
+                ],
+            ),
+            Result(
+                "pnl_by_exit_reason",
+                [
+                    {"trade_date": "2026-07-02", "exit_reason": "STOP_LOSS", "sell_count": 25, "total_profit_usd": -1200, "win_rate": 0.0},
+                    {"trade_date": "2026-07-02", "exit_reason": "TRAILING_STOP", "sell_count": 25, "total_profit_usd": 300, "win_rate": 0.8},
+                ],
+            ),
+            Result("pnl_by_score_bucket", [{"trade_date": "2026-07-02", "score_bucket": "50_60", "sell_count": 9, "total_profit_usd": -100, "win_rate": 0.2}]),
+            Result("pnl_by_source", [{"trade_date": "2026-07-02", "source": "fixed_recheck", "sell_count": 9, "total_profit_usd": -100, "win_rate": 0.2}]),
+            Result(
+                "duplicate_suspects",
+                [
+                    {
+                        "trade_date": "2026-07-02",
+                        "ticker": f"AAA{i}",
+                        "side": "SELL",
+                        "order_no": f"O{i}",
+                        "fill_time": "15:00:00",
+                        "fill_price": 10,
+                        "row_count": 2,
+                        "sum_quantity": 2,
+                        "min_quantity": 1,
+                        "max_quantity": 1,
+                        "sum_profit_usd": -1,
+                        "id_list": f"{i},{i + 100}",
+                    }
+                    for i in range(6)
+                ],
+            ),
+            Result(
+                "summary_reconciliation",
+                [
+                    {
+                        "trade_date": "2026-07-02",
+                        "daily_run_realized_profit_usd": -795.04,
+                        "fill_history_sell_profit_usd": -943.22,
+                        "fill_vs_daily_run_diff": -148.18,
+                    }
+                ],
+            ),
+        ],
+        report_date="2026-07-02",
+        date_from="2026-05-20",
+        date_to="2026-07-02",
+        source_xlsx=tmp_path / "strategy_review_20260702.xlsx",
+    )
+
+    assert "Status: FAIL" in digest
+    assert "- matched_ratio: 18.00% FAIL" in digest
+    assert "- cumulative_data_status: FAIL" in digest
+    assert "- cumulative_reconciliation_status: FAIL" in digest
+    assert "- cumulative_reconciliation_gap_abs: 148.18" in digest
+    assert "buy_count missing" in digest
+    assert "fill_history_sell_rows missing" in digest
+    assert "- duplicate_suspects: 6 WARN" in digest
+    assert "- count: 6" in digest
+    assert "DUPLICATE_CONFIDENCE=HIGH" in digest
+    assert "- cumulative_strategy_change_signal: HOLD_STRATEGY_CHANGE_UNTIL_DATA_QUALITY_FIXED" in digest
+    assert "- confidence: LOW" in digest
+    assert "- signal_usage: disabled_below_50_percent_matched_ratio" in digest
+    assert "- strategy_review_vs_exit_reason_sum: -43.22" in digest
 
 
 def test_build_strategy_review_digest_truncates_to_max_chars(tmp_path) -> None:

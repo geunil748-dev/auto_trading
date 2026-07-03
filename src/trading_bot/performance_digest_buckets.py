@@ -59,11 +59,15 @@ def source_bucket(value: object) -> str:
 
 
 def is_sell(value: object) -> bool:
-    return str(value or "").strip().upper() in {"SELL", "S"}
+    text = str(value or "").strip()
+    upper = text.upper()
+    return upper in {"SELL", "S"} or "매도" in text
 
 
 def is_buy(value: object) -> bool:
-    return str(value or "").strip().upper() in {"BUY", "B"}
+    text = str(value or "").strip()
+    upper = text.upper()
+    return upper in {"BUY", "B"} or "매수" in text
 
 
 def num(value: object) -> float:

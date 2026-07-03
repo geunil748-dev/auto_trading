@@ -11,7 +11,7 @@ from trading_bot.performance_digest_format import (
 from trading_bot.performance_digest_stats import collect_strategy_review_digest_stats
 
 AUTO_TRADING_DATA_DIGEST_MARKER = "[AUTO_TRADING_DATA_DIGEST]"
-DEFAULT_DATA_DIGEST_MAX_CHARS = 3500
+DEFAULT_DATA_DIGEST_MAX_CHARS = 16000
 
 
 def build_strategy_review_digest(

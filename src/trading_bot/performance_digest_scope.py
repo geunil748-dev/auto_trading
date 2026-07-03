@@ -1,33 +1,41 @@
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from typing import Any
 
+from trading_bot.performance_digest_aggregates import bucket_stats, overall_metrics
 from trading_bot.performance_digest_buckets import (
     EXIT_REASON_BUCKETS,
     SCORE_BUCKETS,
     SOURCE_BUCKETS,
     UNKNOWN,
-    BucketStats,
     exit_reason_bucket,
-    fraction,
     is_buy,
     is_sell,
-    num,
     score_bucket,
     source_bucket,
+)
+from trading_bot.performance_digest_duplicates import build_duplicate_suspects
+from trading_bot.performance_digest_diagnostics import (
+    build_unmatched_breakdown,
+    matched_ratio_metrics,
+)
+from trading_bot.performance_digest_interpretation import interpretation
+from trading_bot.performance_digest_reconciliation import (
+    build_reconciliation_detail,
+    realized_pnl_sources,
 )
 from trading_bot.performance_digest_quality import (
     count_consistency_status,
     data_status,
-    interpretation,
+    data_status_reasons,
     limited_notes,
     matched_trade_count,
     realized_exit_count,
     reconciliation_metrics,
     safe_buy_count,
+    safe_fill_history_buy_rows,
     safe_fill_history_sell_rows,
     unmatched_count,
 )
@@ -48,23 +56,26 @@ def collect_scope_stats(
     score_rows = rows_by_name["pnl_by_score_bucket"]
     source_rows = rows_by_name["pnl_by_source"]
     fill_rows = rows_by_name["fill_history"]
+    candidate_rows = rows_by_name.get("candidate_orders_matched", [])
+    candidate_evaluation_rows = rows_by_name.get("candidate_evaluations", [])
+    duplicate_rows = rows_by_name["duplicate_suspects"]
     sell_rows = [row for row in fill_rows if is_sell(row.get("side"))]
     buy_rows = [row for row in fill_rows if is_buy(row.get("side"))]
     parseable_fill_rows = len(sell_rows) + len(buy_rows)
-    overall = _overall_metrics(pnl_by_day_rows, sell_rows, buy_rows)
-    exit_stats = _bucket_stats(
+    overall = overall_metrics(pnl_by_day_rows, sell_rows, buy_rows)
+    exit_stats = bucket_stats(
         exit_reason_rows,
         key_name="exit_reason",
         buckets=EXIT_REASON_BUCKETS,
         normalizer=exit_reason_bucket,
     )
-    score_stats = _bucket_stats(
+    score_stats = bucket_stats(
         score_rows,
         key_name="score_bucket",
         buckets=SCORE_BUCKETS,
         normalizer=score_bucket,
     )
-    source_stats = _bucket_stats(
+    source_stats = bucket_stats(
         source_rows,
         key_name="source",
         buckets=SOURCE_BUCKETS,
@@ -83,13 +94,23 @@ def collect_scope_stats(
     overall["realized_exit_count"] = realized_exit_count_value
     overall["matched_trade_count"] = matched_trade_count_value
     overall["unmatched_trade_count"] = unmatched_count(realized_exit_count_value, matched_trade_count_value)
+    matched_ratio = matched_ratio_metrics(realized_exit_count_value, matched_trade_count_value)
+    overall["matched_ratio"] = matched_ratio["ratio"]
+    overall["matched_ratio_status"] = matched_ratio["status"]
     overall["buy_count"] = safe_buy_count(
         buy_rows,
         fill_sheet_available,
         parseable_fill_rows,
         realized_exit_count_value,
     )
-    duplicate_count = len(rows_by_name["duplicate_suspects"])
+    fill_history_buy_rows = safe_fill_history_buy_rows(
+        buy_rows,
+        fill_sheet_available,
+        parseable_fill_rows,
+        realized_exit_count_value,
+    )
+    duplicate_suspects = build_duplicate_suspects(duplicate_rows)
+    duplicate_count = int(duplicate_suspects["count"])
     reconciliation = reconciliation_metrics(
         rows_by_name["summary_reconciliation"],
         overall.get("realized_pnl"),
@@ -119,15 +140,67 @@ def collect_scope_stats(
         overall["buy_count"],
         count_consistency_status_value,
     )
+    realized_pnl_sources_value = realized_pnl_sources(
+        sell_rows=sell_rows,
+        fill_history_sell_rows=fill_history_sell_rows,
+        score_rows=score_rows,
+        source_rows=source_rows,
+        exit_stats=exit_stats,
+        overall=overall,
+        reconciliation=reconciliation,
+    )
+    overall.update(
+        {
+            "fill_history_buy_rows": fill_history_buy_rows,
+            "fill_history_sell_rows": fill_history_sell_rows,
+            "realized_pnl_from_fill_history": realized_pnl_sources_value["raw_sell_fills"],
+            "realized_pnl_from_daily_summary": realized_pnl_sources_value["daily_summary"],
+            "realized_pnl_from_raw_sell_fills": realized_pnl_sources_value["raw_sell_fills"],
+            "realized_pnl_from_matched_trades_only": realized_pnl_sources_value["matched_trades_only"],
+            "realized_pnl_from_daily_ops_summary": realized_pnl_sources_value["daily_summary"],
+            "realized_pnl_from_strategy_review_sheet": realized_pnl_sources_value["strategy_review_sheet"],
+            "realized_pnl_from_exit_reason_sum": realized_pnl_sources_value["exit_reason_sum"],
+        }
+    )
+    unmatched_breakdown = build_unmatched_breakdown(
+        sell_rows=sell_rows,
+        buy_rows=buy_rows,
+        candidate_rows=candidate_rows,
+        candidate_evaluation_rows=candidate_evaluation_rows,
+        duplicate_rows=duplicate_rows,
+        realized_exit_count=realized_exit_count_value,
+        matched_trade_count=matched_trade_count_value,
+    )
+    reconciliation_detail = build_reconciliation_detail(
+        raw_sell_fills=realized_pnl_sources_value["raw_sell_fills"],
+        matched_trades_only=realized_pnl_sources_value["matched_trades_only"],
+        daily_summary=realized_pnl_sources_value["daily_summary"],
+        strategy_review_sheet=realized_pnl_sources_value["strategy_review_sheet"],
+        exit_reason_sum=realized_pnl_sources_value["exit_reason_sum"],
+        unmatched_count=overall["unmatched_trade_count"],
+        duplicate_count=duplicate_count,
+        reconciliation_gap_abs=reconciliation["reconciliation_gap_abs"],
+        duplicate_suspects=duplicate_suspects,
+    )
     data_status_value = data_status(limited, reconciliation["status"], count_consistency_status_value)
+    status_reasons = data_status_reasons(
+        notes=limited,
+        reconciliation=reconciliation,
+        matched_ratio_status=str(matched_ratio["status"]),
+        duplicate_count=duplicate_count,
+    )
     return {
         "overall": overall,
         "exit_stats": exit_stats,
         "score_stats": score_stats,
         "source_stats": source_stats,
         "duplicate_count": duplicate_count,
+        "duplicate_suspects": duplicate_suspects,
+        "unmatched_breakdown": unmatched_breakdown,
         "reconciliation": reconciliation,
+        "reconciliation_detail": reconciliation_detail,
         "missing_or_limited": limited,
+        "data_status_reason": status_reasons,
         "data_status": data_status_value,
         "interpretation": interpretation(
             exit_stats,
@@ -135,8 +208,10 @@ def collect_scope_stats(
             overall,
             duplicate_count,
             data_status_value,
+            status_reasons,
         ),
         "fill_history_sell_rows": fill_history_sell_rows,
+        "fill_history_buy_rows": fill_history_buy_rows,
         "buy_count_status": buy_count_status,
         "count_consistency_status": count_consistency_status_value,
     }
@@ -163,88 +238,3 @@ def _date_key(value: object) -> str:
         return value.isoformat()
     text = str(value or "").strip()
     return text[:10]
-
-
-def _overall_metrics(
-    pnl_by_day_rows: Sequence[Mapping[str, Any]],
-    sell_rows: Sequence[Mapping[str, Any]],
-    buy_rows: Sequence[Mapping[str, Any]],
-) -> dict[str, float | int]:
-    if pnl_by_day_rows:
-        sell_count = int(sum(num(row.get("sell_count")) for row in pnl_by_day_rows))
-        win_count = int(sum(num(row.get("win_count")) for row in pnl_by_day_rows))
-        loss_count = int(sum(num(row.get("loss_count")) for row in pnl_by_day_rows))
-        realized_pnl = sum(num(row.get("total_profit_usd")) for row in pnl_by_day_rows)
-        total_win = sum(num(row.get("avg_win")) * num(row.get("win_count")) for row in pnl_by_day_rows)
-        total_loss = sum(num(row.get("avg_loss")) * num(row.get("loss_count")) for row in pnl_by_day_rows)
-        avg_win = total_win / win_count if win_count else 0.0
-        avg_loss = total_loss / loss_count if loss_count else 0.0
-        profit_factor = total_win / abs(total_loss) if total_loss < 0 else (math.inf if total_win else 0.0)
-        return {
-            "buy_count": len(buy_rows),
-            "sell_count": sell_count,
-            "realized_pnl": realized_pnl,
-            "realized_return": _realized_return(sell_rows, realized_pnl),
-            "win_rate": win_count / sell_count if sell_count else 0.0,
-            "avg_win": avg_win,
-            "avg_loss": avg_loss,
-            "profit_factor": profit_factor,
-            "largest_win": max((num(row.get("max_win")) for row in pnl_by_day_rows), default=0.0),
-            "largest_loss": min((num(row.get("max_loss")) for row in pnl_by_day_rows), default=0.0),
-        }
-    return _overall_from_fill_rows(sell_rows, buy_rows)
-
-
-def _overall_from_fill_rows(
-    sell_rows: Sequence[Mapping[str, Any]],
-    buy_rows: Sequence[Mapping[str, Any]],
-) -> dict[str, float | int]:
-    profits = [num(row.get("profit_usd")) for row in sell_rows]
-    wins = [value for value in profits if value > 0]
-    losses = [value for value in profits if value < 0]
-    realized_pnl = sum(profits)
-    sell_count = len(profits)
-    return {
-        "buy_count": len(buy_rows),
-        "sell_count": sell_count,
-        "realized_pnl": realized_pnl,
-        "realized_return": _realized_return(sell_rows, realized_pnl),
-        "win_rate": len(wins) / sell_count if sell_count else 0.0,
-        "avg_win": sum(wins) / len(wins) if wins else 0.0,
-        "avg_loss": sum(losses) / len(losses) if losses else 0.0,
-        "profit_factor": sum(wins) / abs(sum(losses)) if losses else (math.inf if wins else 0.0),
-        "largest_win": max(wins, default=0.0),
-        "largest_loss": min(losses, default=0.0),
-    }
-
-
-def _bucket_stats(
-    rows: Sequence[Mapping[str, Any]],
-    *,
-    key_name: str,
-    buckets: Sequence[str],
-    normalizer,
-) -> dict[str, BucketStats]:
-    aggregate = {bucket: {"sell_count": 0, "profit": 0.0, "weighted_win": 0.0} for bucket in buckets}
-    for row in rows:
-        bucket = normalizer(row.get(key_name))
-        item = aggregate.setdefault(bucket, {"sell_count": 0, "profit": 0.0, "weighted_win": 0.0})
-        sell_count = int(num(row.get("sell_count")))
-        item["sell_count"] += sell_count
-        item["profit"] += num(row.get("total_profit_usd"))
-        item["weighted_win"] += fraction(row.get("win_rate")) * sell_count
-    return {
-        bucket: BucketStats(
-            sell_count=int(values["sell_count"]),
-            total_profit_usd=float(values["profit"]),
-            win_rate=float(values["weighted_win"]) / values["sell_count"]
-            if values["sell_count"]
-            else 0.0,
-        )
-        for bucket, values in aggregate.items()
-    }
-
-
-def _realized_return(sell_rows: Sequence[Mapping[str, Any]], realized_pnl: float) -> float:
-    amount = sum(abs(num(row.get("fill_amount"))) for row in sell_rows)
-    return realized_pnl / amount if amount else 0.0
