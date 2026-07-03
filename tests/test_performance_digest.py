@@ -289,7 +289,7 @@ def test_digest_flags_low_match_ratio_reconciliation_missing_counts_and_duplicat
     assert "fill_history_sell_rows missing" in digest
     assert "- duplicate_suspects: 6 WARN" in digest
     assert "- count: 6" in digest
-    assert "DUPLICATE_CONFIDENCE=HIGH" in digest
+    assert "DUPLICATE_CONFIDENCE=MEDIUM" in digest
     assert "- cumulative_strategy_change_signal: HOLD_STRATEGY_CHANGE_UNTIL_DATA_QUALITY_FIXED" in digest
     assert "- confidence: LOW" in digest
     assert "- signal_usage: disabled_below_50_percent_matched_ratio" in digest

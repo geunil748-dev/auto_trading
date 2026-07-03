@@ -32,12 +32,23 @@ def send_slack_digest_message(
         if requests is None:
             raise SlackDigestError("requests_unavailable")
         sender = requests.post
-    response = sender(
-        url,
-        json={"text": text},
-        timeout=SLACK_DIGEST_TIMEOUT_SECONDS,
-    )
-    if getattr(response, "ok", False):
-        return True
-    status_code = getattr(response, "status_code", "unknown")
-    raise SlackDigestError(f"slack_status_{status_code}")
+    for body in slack_digest_message_bodies(text):
+        response = sender(
+            url,
+            json={"text": body},
+            timeout=SLACK_DIGEST_TIMEOUT_SECONDS,
+        )
+        if not getattr(response, "ok", False):
+            status_code = getattr(response, "status_code", "unknown")
+            raise SlackDigestError(f"slack_status_{status_code}")
+    return True
+
+
+def slack_digest_message_bodies(text: str) -> list[str]:
+    marker = "[AUTO_TRADING_DATA_PACKET]"
+    if text.count(marker) <= 1:
+        return [text]
+    prefix, first_packet = text.split(marker, 1)
+    packets = [marker + part for part in first_packet.split(marker)]
+    packets[0] = prefix + packets[0]
+    return packets

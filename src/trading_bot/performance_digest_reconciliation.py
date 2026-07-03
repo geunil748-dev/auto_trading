@@ -53,13 +53,17 @@ def build_reconciliation_detail(
     if any(sample.get("duplicate_confidence") in {"LOW", "MEDIUM"} for sample in duplicate_suspects.get("samples", [])):
         causes.append("partial fill aggregation mismatch")
     gap = float(reconciliation_gap_abs) if isinstance(reconciliation_gap_abs, (int, float)) else 0.0
+    raw_vs_exit = _gap(raw_sell_fills, exit_reason_sum)
+    raw_vs_daily = _gap(raw_sell_fills, daily_summary)
+    if raw_vs_exit == 0.0 and raw_vs_daily not in {0.0, UNKNOWN}:
+        causes.append("daily summary basis mismatch")
     if 0.0 < gap <= 50.0:
         causes.append("fees/taxes/slippage/fx/rounding included on one side only")
     if gap > 50.0:
         causes.append("date boundary/timezone mismatch")
     return {
-        "raw_sell_fills_vs_daily_summary": _gap(raw_sell_fills, daily_summary),
-        "raw_sell_fills_vs_exit_reason_sum": _gap(raw_sell_fills, exit_reason_sum),
+        "raw_sell_fills_vs_daily_summary": raw_vs_daily,
+        "raw_sell_fills_vs_exit_reason_sum": raw_vs_exit,
         "strategy_review_vs_daily_summary": _gap(strategy_review_sheet, daily_summary),
         "strategy_review_vs_exit_reason_sum": _gap(strategy_review_sheet, exit_reason_sum),
         "matched_only_vs_all_sells": _gap(matched_trades_only, strategy_review_sheet),

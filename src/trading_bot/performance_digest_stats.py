@@ -43,6 +43,7 @@ def collect_strategy_review_digest_stats(
         "pnl_by_score_bucket": _rows(by_name, "pnl_by_score_bucket"),
         "pnl_by_source": _rows(by_name, "pnl_by_source"),
         "fill_history": _rows(by_name, "fill_history"),
+        "trade_history": _rows(by_name, "trade_history"),
         "candidate_orders_matched": _rows(by_name, "candidate_orders_matched"),
         "candidate_evaluations": _rows(by_name, "candidate_evaluations"),
         "summary_reconciliation": _rows(by_name, "summary_reconciliation"),

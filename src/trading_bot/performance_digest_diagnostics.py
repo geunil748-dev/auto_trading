@@ -93,7 +93,7 @@ def build_unmatched_breakdown(
 
     classified_count = sum(reason_counts.values())
     if expected_unmatched is not None and expected_unmatched > classified_count:
-        reason_counts["UNKNOWN"] += expected_unmatched - classified_count
+        reason_counts["MATCHED_COUNT_RECONCILIATION_GAP"] += expected_unmatched - classified_count
     return {
         "count": expected_unmatched if expected_unmatched is not None else classified_count,
         "count_basis": "realized_exit_count_minus_matched_trade_count",
@@ -224,7 +224,7 @@ def _unmatched_reason(
         return "SCORE_MISSING"
     if sell_group_sizes[_sell_group_key(row)] > 1:
         return "PARTIAL_FILL_OR_SPLIT_ORDER"
-    return "UNKNOWN"
+    return "PARTIAL_FILL_NEEDS_AGGREGATION"
 
 
 def _unmatched_sample(

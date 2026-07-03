@@ -16,12 +16,17 @@ from trading_bot.performance_digest_buckets import (
     score_bucket,
     source_bucket,
 )
+from trading_bot.performance_digest_candidate_matching import build_candidate_matching_diagnostics
 from trading_bot.performance_digest_duplicates import build_duplicate_suspects
-from trading_bot.performance_digest_diagnostics import (
-    build_unmatched_breakdown,
-    matched_ratio_metrics,
-)
+from trading_bot.performance_digest_diagnostics import matched_ratio_metrics
 from trading_bot.performance_digest_interpretation import interpretation
+from trading_bot.performance_digest_matching import (
+    build_matching_ledger,
+    matching_quality,
+    matching_recommendation,
+    unmatched_breakdown_from_ledger,
+)
+from trading_bot.performance_digest_packet import build_execution_ledgers
 from trading_bot.performance_digest_reconciliation import (
     build_reconciliation_detail,
     realized_pnl_sources,
@@ -56,6 +61,7 @@ def collect_scope_stats(
     score_rows = rows_by_name["pnl_by_score_bucket"]
     source_rows = rows_by_name["pnl_by_source"]
     fill_rows = rows_by_name["fill_history"]
+    trade_rows = rows_by_name.get("trade_history", [])
     candidate_rows = rows_by_name.get("candidate_orders_matched", [])
     candidate_evaluation_rows = rows_by_name.get("candidate_evaluations", [])
     duplicate_rows = rows_by_name["duplicate_suspects"]
@@ -162,15 +168,17 @@ def collect_scope_stats(
             "realized_pnl_from_exit_reason_sum": realized_pnl_sources_value["exit_reason_sum"],
         }
     )
-    unmatched_breakdown = build_unmatched_breakdown(
-        sell_rows=sell_rows,
-        buy_rows=buy_rows,
+    matching_ledger = build_matching_ledger(
+        fill_rows=fill_rows,
         candidate_rows=candidate_rows,
         candidate_evaluation_rows=candidate_evaluation_rows,
         duplicate_rows=duplicate_rows,
-        realized_exit_count=realized_exit_count_value,
-        matched_trade_count=matched_trade_count_value,
+        trade_rows=trade_rows,
     )
+    candidate_matching = build_candidate_matching_diagnostics(matching_ledger, candidate_evaluation_rows)
+    execution_ledgers = build_execution_ledgers(fill_rows, candidate_matching["ledger_v2"])
+    unmatched_breakdown = unmatched_breakdown_from_ledger(matching_ledger)
+    matching_quality_value = matching_quality(matching_ledger, matched_trade_count_value)
     reconciliation_detail = build_reconciliation_detail(
         raw_sell_fills=realized_pnl_sources_value["raw_sell_fills"],
         matched_trades_only=realized_pnl_sources_value["matched_trades_only"],
@@ -181,6 +189,11 @@ def collect_scope_stats(
         duplicate_count=duplicate_count,
         reconciliation_gap_abs=reconciliation["reconciliation_gap_abs"],
         duplicate_suspects=duplicate_suspects,
+    )
+    matching_recommendation_value = matching_recommendation(
+        unmatched_breakdown,
+        duplicate_suspects,
+        reconciliation_detail,
     )
     data_status_value = data_status(limited, reconciliation["status"], count_consistency_status_value)
     status_reasons = data_status_reasons(
@@ -196,6 +209,15 @@ def collect_scope_stats(
         "source_stats": source_stats,
         "duplicate_count": duplicate_count,
         "duplicate_suspects": duplicate_suspects,
+        "matching_ledger": matching_ledger,
+        "matching_ledger_v2": candidate_matching["ledger_v2"],
+        "ambiguous_candidate_analysis": candidate_matching["ambiguous_analysis"],
+        "execution_ledger_compact": execution_ledgers,
+        "matching_quality": matching_quality_value,
+        "candidate_matching_quality": candidate_matching["candidate_matching_quality"],
+        "candidate_ambiguity_breakdown": candidate_matching["candidate_ambiguity_breakdown"],
+        "linkage_limitations": candidate_matching["linkage_limitations"],
+        "matching_recommendation": matching_recommendation_value,
         "unmatched_breakdown": unmatched_breakdown,
         "reconciliation": reconciliation,
         "reconciliation_detail": reconciliation_detail,

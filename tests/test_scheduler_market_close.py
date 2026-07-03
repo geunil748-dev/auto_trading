@@ -310,6 +310,42 @@ def test_save_auto_trading_data_digest_slack_sends_plain_text(monkeypatch, tmp_p
     assert all("secret" not in log[2] for log in logs)
 
 
+def test_save_auto_trading_data_digest_slack_dry_run_blocks_send(monkeypatch, tmp_path) -> None:
+    logs = []
+    sent = []
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_ENABLED", "true")
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_SLACK_ENABLED", "true")
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_SLACK_DRY_RUN", "true")
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_SLACK_WEBHOOK_URL", "https://hooks.slack.test/example")
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.build_strategy_review_digest",
+        lambda *args, **kwargs: "[AUTO_TRADING_DATA_DIGEST]\n[AUTO_TRADING_DATA_PACKET]\npacket_id: p\nreport_date: 2026-07-02\npart: 1/1\npacket_complete: true",
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.send_slack_digest_message",
+        lambda *args, **kwargs: sent.append(args),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close.safe_scheduler_log",
+        lambda level, module, message, **kwargs: logs.append((level, module, message, kwargs)),
+    )
+
+    save_auto_trading_data_digest(
+        strategy_review_path=tmp_path / "strategy_review_20260629.xlsx",
+        sheet_results=[],
+        failures=[],
+        report_date=date(2026, 6, 29),
+        date_from="2026-05-20",
+        date_to=date(2026, 6, 29),
+    )
+
+    assert sent == []
+    assert [log[3]["reject_reason"] for log in logs] == [
+        "AUTO_TRADING_DATA_DIGEST_SAVED",
+        "AUTO_TRADING_DATA_DIGEST_SLACK_DRY_RUN",
+    ]
+
+
 def test_save_auto_trading_data_digest_continues_when_slack_fails(monkeypatch, tmp_path) -> None:
     logs = []
     monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_ENABLED", "true")
