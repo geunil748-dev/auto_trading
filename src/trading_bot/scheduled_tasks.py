@@ -845,10 +845,18 @@ class _LatestRunState:
 
 
 def _daily_candidate_notification_sender(latest: _LatestRunState):
-    def send_once(trade_date, targets, scores) -> bool:
+    def send_once(trade_date, targets, scores, market_context=None) -> bool:
         if trade_date in latest.candidate_notification_dates:
             return False
-        sent = send_candidate_list_notification(trade_date, targets, scores)
+        if market_context is None:
+            sent = send_candidate_list_notification(trade_date, targets, scores)
+        else:
+            sent = send_candidate_list_notification(
+                trade_date,
+                targets,
+                scores,
+                market_context=market_context,
+            )
         if sent:
             latest.candidate_notification_dates.add(trade_date)
         return sent

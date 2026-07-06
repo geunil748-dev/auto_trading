@@ -44,6 +44,17 @@ class BlockedPipeline(Pipeline):
         )
 
 
+class UnreliableMarketContextPipeline(BlockedPipeline):
+    def run(self) -> ScoringRun:
+        result = super().run()
+        return ScoringRun(
+            result.trade_date,
+            "MARKET_CONTEXT_UNRELIABLE",
+            result.targets,
+            result.scores,
+        )
+
+
 class BypassPipeline(Pipeline):
     def run(self) -> ScoringRun:
         target = DailyTarget(
@@ -99,6 +110,20 @@ def test_dry_run_runtime_skips_buy_intents_when_scoring_is_blocked() -> None:
     result = DryRunRuntime(BlockedPipeline(), Accounts(), FailingBreakout(), settings).run()
 
     assert result.scoring.blocked_reason == "MARKET_BELOW_MA20"
+    assert [item.ticker for item in result.scoring.selected] == ["AAA"]
+    assert result.buy_intents == ()
+
+
+def test_dry_run_runtime_skips_buy_intents_when_market_context_is_unreliable() -> None:
+    settings = TradingSettings(max_entry_price_change=0.30)
+    result = DryRunRuntime(
+        UnreliableMarketContextPipeline(),
+        Accounts(),
+        FailingBreakout(),
+        settings,
+    ).run()
+
+    assert result.scoring.blocked_reason == "MARKET_CONTEXT_UNRELIABLE"
     assert [item.ticker for item in result.scoring.selected] == ["AAA"]
     assert result.buy_intents == ()
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
@@ -11,6 +12,7 @@ from trading_bot.models import (
     CandidateSnapshot,
     DailyScore,
     DailyTarget,
+    MarketContext,
     TradingEvent,
     RankedStock,
     ScoreRecord,
@@ -23,7 +25,7 @@ from trading_bot.ports import (
     ScreeningMarketData,
     TradingClock,
 )
-from trading_bot.risk import MARKET_BELOW_MA20_BYPASSED, global_entry_gate
+from trading_bot.risk import MARKET_BELOW_MA20_BYPASSED, RiskDecision, global_entry_gate
 from trading_bot.scoring import select_candidates
 from trading_bot.screening import (
     composite_ranking_selection,
@@ -41,6 +43,11 @@ CANDIDATE_EVAL_NO_MORE = "no_more_candidates"
 CANDIDATE_SOURCE_AUTO = "auto"
 CANDIDATE_SOURCE_BOTH = "both"
 CANDIDATE_SOURCE_MANUAL = "manual_buy_list"
+MARKET_CONTEXT_UNRELIABLE = "MARKET_CONTEXT_UNRELIABLE"
+BUY_BLOCKED_MARKET_CONTEXT_UNRELIABLE = "BUY_BLOCKED_MARKET_CONTEXT_UNRELIABLE"
+MARKET_CONTEXT_BUY_GUARD_PASSED = "MARKET_CONTEXT_BUY_GUARD_PASSED"
+MARKET_CONTEXT_CONFIDENCE_PENALTY_APPLIED = "MARKET_CONTEXT_CONFIDENCE_PENALTY_APPLIED"
+MARKET_CONTEXT_CONFIDENCE_PENALTY_SKIPPED = "MARKET_CONTEXT_CONFIDENCE_PENALTY_SKIPPED"
 
 
 CandidateNotificationSender = Callable[
@@ -57,6 +64,7 @@ class ScoringRun:
     scores: tuple[DailyScore, ...]
     candidate_sources: dict[str, str] = field(default_factory=dict)
     bypass_reason: str | None = None
+    market_context: MarketContext | None = None
 
     @property
     def selected(self) -> tuple[ScoreRecord, ...]:
@@ -128,6 +136,28 @@ class ScreeningScoringPipeline:
             account,
             self.settings,
         )
+        if not _market_context_reliable_for_buy(market):
+            entry_gate = RiskDecision(False, MARKET_CONTEXT_UNRELIABLE)
+            self._safe_log(
+                BotLog(
+                    "WARNING",
+                    "pipeline",
+                    _market_context_guard_message(
+                        BUY_BLOCKED_MARKET_CONTEXT_UNRELIABLE,
+                        market,
+                    ),
+                    reject_reason=BUY_BLOCKED_MARKET_CONTEXT_UNRELIABLE,
+                )
+            )
+        else:
+            self._safe_log(
+                BotLog(
+                    "INFO",
+                    "pipeline",
+                    _market_context_guard_message(MARKET_CONTEXT_BUY_GUARD_PASSED, market),
+                    reject_reason=MARKET_CONTEXT_BUY_GUARD_PASSED,
+                )
+            )
         snapshots = {}
         requested_tickers: set[str] = set()
         evaluated_tickers: set[str] = set()
@@ -302,16 +332,18 @@ class ScreeningScoringPipeline:
                     f"Screened {len(targets)} targets and selected 0.",
                 )
             )
-            self._send_candidate_notification(trade_date, targets, ())
+            self._send_candidate_notification(trade_date, targets, (), market)
             return ScoringRun(
                 trade_date,
                 "STRICT_FILTER_NO_CANDIDATES",
                 targets,
                 (),
                 candidate_sources,
+                market_context=market,
             )
 
         scored = [self.scoring.score(item) for item in candidates]
+        scored = self._apply_market_context_confidence_penalty(scored, market)
         scoring_settings = active_profile.settings
         scoring_pass_count = sum(
             1 for item in scored if item.total_score >= scoring_settings.min_total_score
@@ -345,7 +377,7 @@ class ScreeningScoringPipeline:
             )
         )
         self.repository.save_daily_scores(scores)
-        self._send_candidate_notification(trade_date, targets, scores)
+        self._send_candidate_notification(trade_date, targets, scores, market)
         self._log_pipeline_diagnostics(
             started_at,
             requested_gainer_limit=active_profile.gainer_limit,
@@ -399,6 +431,7 @@ class ScreeningScoringPipeline:
             scores,
             candidate_sources,
             bypass_reason=bypass_reason,
+            market_context=market,
         )
 
     def _evaluate_ranked_candidates(
@@ -823,6 +856,50 @@ class ScreeningScoringPipeline:
             )
         )
 
+    def _apply_market_context_confidence_penalty(
+        self,
+        scored: list[ScoreRecord],
+        market: MarketContext,
+    ) -> list[ScoreRecord]:
+        penalty = _market_context_score_penalty(market)
+        if penalty == 0:
+            self._safe_log(
+                BotLog(
+                    "INFO",
+                    "pipeline",
+                    _market_context_penalty_message(
+                        MARKET_CONTEXT_CONFIDENCE_PENALTY_SKIPPED,
+                        market,
+                        penalty,
+                    ),
+                    reject_reason=MARKET_CONTEXT_CONFIDENCE_PENALTY_SKIPPED,
+                )
+            )
+            return scored
+        adjusted = [
+            ScoreRecord(
+                item.ticker,
+                item.news_score,
+                max(0.0, item.chart_score + (penalty / 0.9)),
+            )
+            for item in scored
+        ]
+        self._safe_log(
+            BotLog(
+                "WARNING",
+                "pipeline",
+                _market_context_penalty_message(
+                    MARKET_CONTEXT_CONFIDENCE_PENALTY_APPLIED,
+                    market,
+                    penalty,
+                ),
+                reject_reason=MARKET_CONTEXT_CONFIDENCE_PENALTY_APPLIED,
+                actual_value=float(penalty),
+                threshold_value=0.0,
+            )
+        )
+        return adjusted
+
     def _safe_log(self, log: BotLog) -> None:
         try:
             self.repository.save_log(log)
@@ -834,11 +911,18 @@ class ScreeningScoringPipeline:
         trade_date: date,
         targets: tuple[DailyTarget, ...],
         scores: tuple[DailyScore, ...],
+        market_context: MarketContext | None = None,
     ) -> None:
         if self.candidate_notification_sender is None:
             return
         try:
-            sent = self.candidate_notification_sender(trade_date, targets, scores)
+            sent = _send_candidate_notification_compat(
+                self.candidate_notification_sender,
+                trade_date,
+                targets,
+                scores,
+                market_context,
+            )
         except Exception as exc:
             record_notification_event(
                 self.repository,
@@ -892,6 +976,76 @@ class ScreeningScoringPipeline:
                 reject_reason="CANDIDATE_LIST_TELEGRAM_SKIPPED",
             )
         )
+
+def _send_candidate_notification_compat(
+    sender: CandidateNotificationSender,
+    trade_date: date,
+    targets: tuple[DailyTarget, ...],
+    scores: tuple[DailyScore, ...],
+    market_context: MarketContext | None,
+) -> bool:
+    try:
+        signature = inspect.signature(sender)
+    except (TypeError, ValueError):
+        return sender(trade_date, targets, scores)
+    parameters = tuple(signature.parameters.values())
+    if any(item.kind == inspect.Parameter.VAR_POSITIONAL for item in parameters):
+        return sender(trade_date, targets, scores, market_context)
+    if "market_context" in signature.parameters:
+        return sender(trade_date, targets, scores, market_context=market_context)
+    positional_count = sum(
+        1
+        for item in parameters
+        if item.kind
+        in {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        }
+    )
+    if positional_count >= 4:
+        return sender(trade_date, targets, scores, market_context)
+    return sender(trade_date, targets, scores)
+
+
+def _market_context_reliable_for_buy(market: MarketContext) -> bool:
+    status = (market.status or "ok").lower()
+    source = (market.source or "fresh").lower()
+    return status in {"ok", "cached"} and source in {
+        "fresh",
+        "last_good_cache",
+        "proxy",
+    }
+
+
+def _market_context_score_penalty(market: MarketContext) -> float:
+    status = (market.status or "ok").lower()
+    source = (market.source or "fresh").lower()
+    if status in {"degraded", "unknown"} or source in {"degraded", "unknown"}:
+        return -5.0
+    if source == "proxy":
+        return -3.0
+    if source == "last_good_cache" or status == "cached":
+        return -2.0
+    return 0.0
+
+
+def _market_context_guard_message(marker: str, market: MarketContext) -> str:
+    return (
+        f"{marker}: status={market.status} source={market.source} "
+        f"symbol={market.symbol} proxy_for={market.proxy_for or '-'} "
+        f"reason={market.reason or '-'} stale_age_hours={market.stale_age_hours}"
+    )
+
+
+def _market_context_penalty_message(
+    marker: str,
+    market: MarketContext,
+    penalty: float,
+) -> str:
+    return (
+        f"{marker}: penalty={penalty:g} status={market.status} source={market.source} "
+        f"symbol={market.symbol} reason={market.reason or '-'}"
+    )
 
 
 def _expanded_tickers(gainers, turnover, rank_limit: int) -> set[str]:
