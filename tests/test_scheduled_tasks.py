@@ -1485,6 +1485,54 @@ def test_intraday_watch_skips_when_trading_guard_reports_degraded(
     assert calls == []
 
 
+def test_mock_buy_blocks_when_market_context_is_unreliable(monkeypatch, tmp_path) -> None:
+    class BlockedScoring:
+        selected = (ScoreRecord("AAA", 90, 90),)
+        blocked_reason = "MARKET_CONTEXT_UNRELIABLE"
+
+    class BlockedResult:
+        scoring = BlockedScoring()
+        buy_intents = (BuyIntent("AAA", 1, 10, 10, 0.01),)
+
+    class BlockedRuntime:
+        def run(self) -> BlockedResult:
+            return BlockedResult()
+
+    logs = []
+    executor_builds = []
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_dry_run",
+        lambda settings, kis_settings, **_kwargs: (BlockedRuntime(), "repository"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_mock_buy_executor",
+        lambda *args, **kwargs: executor_builds.append("executor") or RecordingExecutor(),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.state_from_dry_run",
+        lambda result: {"targets": [["AAA"]], "gates": [], "logs": []},
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.safe_scheduler_log",
+        lambda level, module, message, **kwargs: logs.append(
+            (level, module, message, kwargs)
+        ),
+    )
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+    )
+
+    message = tasks.mock_buy()
+
+    assert message.startswith("MOCK_BUY_BLOCKED_MARKET_CONTEXT_UNRELIABLE")
+    assert executor_builds == []
+    assert logs[-1][2].startswith("MOCK_BUY_BLOCKED_MARKET_CONTEXT_UNRELIABLE")
+    assert logs[-1][3]["reject_reason"] == "MOCK_BUY_BLOCKED_MARKET_CONTEXT_UNRELIABLE"
+
+
 def test_intraday_watch_skips_while_market_close_is_running(monkeypatch, tmp_path) -> None:
     class TltMonitor:
         def poll(self, positions, end_of_day=False):
