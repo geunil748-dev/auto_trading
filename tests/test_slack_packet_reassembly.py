@@ -111,6 +111,24 @@ def test_missing_required_source_files_blocks_prompt_generation() -> None:
     assert result.required_source_files_to_inspect_present is False
 
 
+def test_skipped_packet_is_not_reassembled_as_regular_packet() -> None:
+    skipped = """[AUTO_TRADING_DATA_PACKET_SKIPPED]
+packet_id: auto_trading_data_packet_skipped_2026-07-03
+report_date: 2026-07-03
+market_status: CLOSED
+skip_reason: US_MARKET_HOLIDAY
+- normal_skip: true
+- strategy_change_allowed: false
+- codex_prompt_allowed: false
+"""
+
+    result = _verify(skipped)
+
+    assert result.status == "FAIL"
+    assert result.found_parts == []
+    assert result.reason_if_not == "no parts found for packet_id; packet_complete true missing or not on final part; required sections missing"
+
+
 def _verify(text: str):
     return reassemble_slack_packet(
         text,

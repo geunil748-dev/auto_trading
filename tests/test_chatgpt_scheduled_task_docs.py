@@ -42,6 +42,23 @@ def test_scheduled_task_prompt_documents_strategy_packet_guardrails() -> None:
     assert "GitHub `main`" in text
 
 
+def test_scheduled_task_prompt_documents_skipped_packet_handling() -> None:
+    text = _doc("docs/chatgpt_scheduled_task_prompt.md")
+
+    required = [
+        "[AUTO_TRADING_DATA_PACKET_SKIPPED]",
+        "normal market-closed skip notice",
+        "not as a failed data packet",
+        "normal_skip: true",
+        "not a Codex modification prompt source",
+        "calendar/session-date check",
+        "MARKET_CLOSE_TASK_NOT_TRIGGERED",
+        "PACKET_BUILT_BUT_NOT_SENT",
+    ]
+    for phrase in required:
+        assert phrase in text
+
+
 def test_slack_loop_documents_packet_chunk_review() -> None:
     text = _doc("docs/chatgpt_codex_slack_loop.md")
 
@@ -56,6 +73,21 @@ def test_slack_loop_documents_packet_chunk_review() -> None:
         "[CODEX_FIX_INPUT_HINTS]",
         "required_source_files_to_inspect",
         "do not use score/source bucket analysis as a strategy-change basis",
+    ]
+    for phrase in required:
+        assert phrase in text
+
+
+def test_slack_loop_documents_skipped_packet_review() -> None:
+    text = _doc("docs/chatgpt_codex_slack_loop.md")
+
+    required = [
+        "[AUTO_TRADING_DATA_PACKET_SKIPPED]",
+        "normal market-closed skip notice",
+        "Do not reassemble it as a regular packet",
+        "do not create a Codex-ready prompt from it",
+        "normal_skip: true",
+        "calendar/session-date investigation",
     ]
     for phrase in required:
         assert phrase in text

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable
 from contextlib import closing
@@ -7,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
+from zoneinfo import ZoneInfo
 
 from trading_bot.adapters.kis_http import KisJsonClient
 from trading_bot.composition import (
@@ -19,6 +21,7 @@ from trading_bot.candidate_notifications import send_candidate_list_notification
 from trading_bot.config import (
     KisSettings,
     TradingSettings,
+    load_notification_settings,
     load_settings,
 )
 from trading_bot.daily_report import write_daily_report
@@ -35,6 +38,7 @@ from trading_bot.market_calendar import (
 )
 from trading_bot.models import BotLog, FillRecord, PositionState
 from trading_bot.monitor_state import state_from_dry_run
+from trading_bot.notifications import send_alert_telegram_message
 from trading_bot.schedule import DailyTasks
 from trading_bot.scheduler_logging import safe_exception_summary, safe_scheduler_log
 from trading_bot.scheduler_market_close import (
@@ -43,6 +47,9 @@ from trading_bot.scheduler_market_close import (
     save_strategy_review_export,
     send_market_close_notice,
     send_market_close_report,
+)
+from trading_bot.scheduler_market_close_skip_notice import (
+    send_auto_trading_data_packet_skipped_notice,
 )
 from trading_bot.scheduler_recheck import (
     fixed_opening_result,
@@ -80,6 +87,9 @@ from trading_bot.trading_date import current_trade_date
 NO_ORDER_RISK_GUARD = "NO_ORDER_RISK_GUARD"
 MARKET_CLOSE_FILL_CONFIRM_TIMEOUT_SECONDS = 20.0
 MARKET_CLOSE_FILL_CONFIRM_POLL_SECONDS = 2.0
+SCREEN_AND_SCORE_JOB_ID = "screen_and_score"
+PIPELINE_FAILURE_TELEGRAM_SENT = "PIPELINE_FAILURE_TELEGRAM_SENT"
+PIPELINE_FAILURE_TELEGRAM_FAILED = "PIPELINE_FAILURE_TELEGRAM_FAILED"
 
 
 def live_mock_tasks(
@@ -112,7 +122,11 @@ def live_mock_tasks(
             kis_settings,
             candidate_notification_sender=_daily_candidate_notification_sender(latest),
         )
-        latest.result = runtime.run()
+        try:
+            latest.result = runtime.run()
+        except Exception as exc:
+            _handle_screen_and_score_failure(monitor_state, SCREEN_AND_SCORE_JOB_ID, exc)
+            raise
         latest.repository = repository
         latest.opening_result = latest.result
         latest.opening_trade_date = current_trade_date()
@@ -322,6 +336,7 @@ def live_mock_tasks(
 
     def close_session() -> str:
         if not trading_day():
+            send_auto_trading_data_packet_skipped_notice(current_us_market_date())
             _write_closed_state(monitor_state)
             return "미국 휴장일이라 장마감 처리를 건너뜁니다."
         if not regular_session():
@@ -377,6 +392,139 @@ def live_mock_tasks(
         cancel_unfilled,
         close_session,
     )
+
+
+def _handle_screen_and_score_failure(
+    monitor_state: Path,
+    job_id: str,
+    exc: Exception,
+) -> None:
+    stage = _screen_and_score_failure_stage(exc)
+    _write_screen_and_score_failure_status(monitor_state, job_id, stage, exc)
+    marker = _send_pipeline_failure_notice(job_id, stage, exc)
+    safe_scheduler_log(
+        "WARNING",
+        "notification",
+        f"{marker}: job={job_id} stage={stage} exception={type(exc).__name__}",
+        reject_reason=marker,
+    )
+
+
+def _send_pipeline_failure_notice(job_id: str, stage: str, exc: Exception) -> str:
+    try:
+        sent = send_alert_telegram_message(
+            _pipeline_failure_message(job_id, stage, exc),
+            load_notification_settings(),
+        )
+    except Exception:
+        return PIPELINE_FAILURE_TELEGRAM_FAILED
+    return PIPELINE_FAILURE_TELEGRAM_SENT if sent else PIPELINE_FAILURE_TELEGRAM_FAILED
+
+
+def _pipeline_failure_message(job_id: str, stage: str, exc: Exception) -> str:
+    return "\n".join(
+        [
+            "[자동매매 장애 알림]",
+            f"발생시각(KST): {_kst_now_text()}",
+            f"job: {job_id}",
+            f"stage: {stage}",
+            f"exception: {type(exc).__name__}",
+            f"message: {_safe_exception_message(exc)}",
+            f"후보 저장 전 실패: {_candidate_save_before_failure_text(stage)}",
+            "monitor/state.json의 targets가 갱신되지 않았을 수 있습니다.",
+        ]
+    )
+
+
+def _write_screen_and_score_failure_status(
+    monitor_state: Path,
+    job_id: str,
+    stage: str,
+    exc: Exception,
+) -> None:
+    try:
+        status_path = monitor_state.with_name("screen_and_score_status.json")
+        status_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = status_path.with_name(f"{status_path.name}.tmp")
+        temp_path.write_text(
+            json.dumps(
+                {
+                    "last_screen_and_score_status": "failed",
+                    "last_screen_and_score_at": _kst_now_iso(),
+                    "last_error": {
+                        "job": job_id,
+                        "stage": stage,
+                        "exception_class": type(exc).__name__,
+                        "exception_message": _safe_exception_message(exc),
+                        "candidate_saved_before_failure": (
+                            stage in {"market_context", "screening"}
+                        ),
+                    },
+                    "state_targets_may_be_stale": True,
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        temp_path.replace(status_path)
+    except Exception as status_exc:
+        safe_scheduler_log(
+            "WARNING",
+            "scheduler",
+            f"SCREEN_AND_SCORE_STATUS_WRITE_FAILED: {safe_exception_summary(status_exc)}",
+            reject_reason="SCREEN_AND_SCORE_STATUS_WRITE_FAILED",
+        )
+
+
+def _screen_and_score_failure_stage(exc: Exception) -> str:
+    message = str(exc)
+    if "Nasdaq history" in message or "USD/KRW" in message:
+        return "market_context"
+    if "market_context" in message:
+        return "market_context"
+    if "save_daily" in message or "CANDIDATE_SNAPSHOT_SAVE_FAILED" in message:
+        return "saving"
+    if "score" in message.lower():
+        return "scoring"
+    return "screening"
+
+
+def _candidate_save_before_failure_text(stage: str) -> str:
+    if stage in {"market_context", "screening"}:
+        return "예"
+    return "확인 필요"
+
+
+def _safe_exception_message(exc: Exception) -> str:
+    message = str(exc).strip()
+    if not message:
+        return "-"
+    upper = message.upper()
+    sensitive_markers = (
+        "TOKEN",
+        "SECRET",
+        "PASSWORD",
+        "APPKEY",
+        "APP_KEY",
+        "APPSECRET",
+        "APP_SECRET",
+        "CHAT_ID",
+        "ACCOUNT",
+        "KIS_",
+        "TELEGRAM",
+    )
+    if any(marker in upper for marker in sensitive_markers):
+        return type(exc).__name__
+    return message[:200]
+
+
+def _kst_now_text() -> str:
+    return datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _kst_now_iso() -> str:
+    return datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
 
 
 def _mark_candidate_no_order_diagnostics(

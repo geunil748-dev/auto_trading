@@ -118,6 +118,14 @@ Slack 메시지 작성:
 
 When the after-close Slack automation posts `[AUTO_TRADING_DATA_PACKET]`, the Scheduled Task must treat the Slack text as a multi-message data packet, not as a single latest message.
 
+If Slack contains `[AUTO_TRADING_DATA_PACKET_SKIPPED]`, treat it as a normal market-closed skip notice, not as a failed data packet. A skipped packet is not a Codex modification prompt source: confirm `normal_skip: true`, verify
+`strategy_change_allowed: false` and `score_source_analysis_allowed: false`, then
+report that no trading data packet was expected. If a regular trading day
+produces `[AUTO_TRADING_DATA_PACKET_SKIPPED]`, classify the next investigation as
+a calendar/session-date check. If neither a regular packet nor a skipped packet
+exists after the expected close, investigate `MARKET_CLOSE_TASK_NOT_TRIGGERED`,
+`PACKET_BUILT_BUT_NOT_SENT`, or Slack delivery/search issues.
+
 Required intake flow:
 
 1. Search Slack `#autotrading-전체` for the latest after-close messages containing `[AUTO_TRADING_DATA_DIGEST]` or `[AUTO_TRADING_DATA_PACKET]`.

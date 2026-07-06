@@ -9,6 +9,10 @@ from trading_bot.scheduler_market_close import (
     send_market_close_notice,
     send_market_close_report,
 )
+from trading_bot.scheduler_market_close_skip_notice import (
+    build_auto_trading_data_packet_skipped_notice,
+    send_auto_trading_data_packet_skipped_notice,
+)
 
 
 def test_save_daily_run_summary_calls_repositories(monkeypatch) -> None:
@@ -409,6 +413,73 @@ def test_save_auto_trading_data_digest_continues_when_digest_fails(monkeypatch, 
             {"reject_reason": "AUTO_TRADING_DATA_DIGEST_FAILED"},
         )
     ]
+
+
+def test_build_auto_trading_data_packet_skipped_notice_has_guardrails() -> None:
+    text = build_auto_trading_data_packet_skipped_notice(date(2026, 7, 3))
+
+    assert "[AUTO_TRADING_DATA_PACKET_SKIPPED]" in text
+    assert "packet_id: auto_trading_data_packet_skipped_2026-07-03" in text
+    assert "report_date: 2026-07-03" in text
+    assert "market_status: CLOSED" in text
+    assert "skip_reason: US_MARKET_HOLIDAY" in text
+    assert "holiday_name: Independence Day observed" in text
+    assert "- strategy_change_allowed: false" in text
+    assert "- codex_prompt_allowed: false" in text
+    assert "next_expected_market_close:" in text
+    assert "[EXECUTION_LEDGER_COMPACT]" not in text
+    assert "[CODEX_FIX_INPUT_HINTS]" not in text
+
+
+def test_send_auto_trading_data_packet_skipped_notice_dry_run_blocks_send(monkeypatch) -> None:
+    logs = []
+    sent = []
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_SLACK_ENABLED", "true")
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_SLACK_DRY_RUN", "true")
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_SLACK_WEBHOOK_URL", "https://hooks.slack.test/example")
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close_skip_notice.send_slack_digest_message",
+        lambda *args: sent.append(args),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close_skip_notice.safe_scheduler_log",
+        lambda level, module, message, **kwargs: logs.append((level, module, message, kwargs)),
+    )
+
+    text = send_auto_trading_data_packet_skipped_notice(date(2026, 7, 3))
+
+    assert "[AUTO_TRADING_DATA_PACKET_SKIPPED]" in text
+    assert sent == []
+    assert logs[-1][3]["reject_reason"] == "AUTO_TRADING_DATA_PACKET_SKIPPED"
+    assert "slack_skip_notice_attempted=false" in logs[-1][2]
+    assert "slack_skip_notice_sent=false" in logs[-1][2]
+    assert "dry_run=true" in logs[-1][2]
+
+
+def test_send_auto_trading_data_packet_skipped_notice_sends_when_enabled(monkeypatch) -> None:
+    logs = []
+    sent = []
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_SLACK_ENABLED", "true")
+    monkeypatch.delenv("AUTO_TRADING_DATA_DIGEST_SLACK_DRY_RUN", raising=False)
+    monkeypatch.delenv("DRY_RUN", raising=False)
+    monkeypatch.setenv("AUTO_TRADING_DATA_DIGEST_SLACK_WEBHOOK_URL", "https://hooks.slack.test/example")
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close_skip_notice.send_slack_digest_message",
+        lambda webhook_url, text: sent.append((webhook_url, text)) or True,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduler_market_close_skip_notice.safe_scheduler_log",
+        lambda level, module, message, **kwargs: logs.append((level, module, message, kwargs)),
+    )
+
+    send_auto_trading_data_packet_skipped_notice(date(2026, 7, 3))
+
+    assert len(sent) == 1
+    assert sent[0][0] == "https://hooks.slack.test/example"
+    assert "[AUTO_TRADING_DATA_PACKET_SKIPPED]" in sent[0][1]
+    assert "slack_skip_notice_attempted=true" in logs[-1][2]
+    assert "slack_skip_notice_sent=true" in logs[-1][2]
+    assert "slack_status=sent" in logs[-1][2]
 
 
 def test_send_market_close_notice_failure_logs_warning(monkeypatch) -> None:
