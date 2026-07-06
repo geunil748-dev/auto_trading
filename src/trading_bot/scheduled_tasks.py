@@ -90,6 +90,7 @@ MARKET_CLOSE_FILL_CONFIRM_POLL_SECONDS = 2.0
 SCREEN_AND_SCORE_JOB_ID = "screen_and_score"
 PIPELINE_FAILURE_TELEGRAM_SENT = "PIPELINE_FAILURE_TELEGRAM_SENT"
 PIPELINE_FAILURE_TELEGRAM_FAILED = "PIPELINE_FAILURE_TELEGRAM_FAILED"
+MOCK_BUY_BLOCKED_MARKET_CONTEXT_UNRELIABLE = "MOCK_BUY_BLOCKED_MARKET_CONTEXT_UNRELIABLE"
 
 
 def live_mock_tasks(
@@ -145,6 +146,14 @@ def live_mock_tasks(
             dry_run()
         if latest.result is None or latest.repository is None:
             return "후보 점검이 실행되지 않아 모의 매수를 건너뜁니다."
+        if getattr(latest.result.scoring, "blocked_reason", None) == "MARKET_CONTEXT_UNRELIABLE":
+            safe_scheduler_log(
+                "WARNING",
+                "orders",
+                f"{MOCK_BUY_BLOCKED_MARKET_CONTEXT_UNRELIABLE}: 시장 컨텍스트 신뢰 불가로 모의 매수를 건너뜁니다.",
+                reject_reason=MOCK_BUY_BLOCKED_MARKET_CONTEXT_UNRELIABLE,
+            )
+            return f"{MOCK_BUY_BLOCKED_MARKET_CONTEXT_UNRELIABLE}: 시장 컨텍스트 신뢰 불가로 모의 매수를 건너뜁니다."
         current_settings = _current_settings(settings)
         intents = apply_stop_loss_entry_guards(
             list(latest.result.buy_intents),

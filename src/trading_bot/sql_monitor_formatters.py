@@ -1061,6 +1061,7 @@ _REASON_TEXT = {
     "MARKET_CONTEXT_CONFIDENCE_PENALTY_APPLIED": "시장 컨텍스트 신뢰도 페널티 적용",
     "MARKET_CONTEXT_CONFIDENCE_PENALTY_SKIPPED": "시장 컨텍스트 신뢰도 페널티 없음",
     "MARKET_CONTEXT_BUY_GUARD_PASSED": "시장 컨텍스트 매수 가드 통과",
+    "MOCK_BUY_BLOCKED_MARKET_CONTEXT_UNRELIABLE": "시장 컨텍스트 신뢰 불가로 모의 매수 차단",
     "MANUAL_SELL": "수동 매도",
     "MANUAL_SELL_ALL": "전량 수동 매도",
     "MISSING_SNAPSHOT": "시세 스냅샷 없음",

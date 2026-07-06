@@ -272,6 +272,49 @@ def test_yahoo_market_context_uses_fallback_period_when_one_month_is_short(
     assert "MARKET_CONTEXT_DEGRADED_USED symbol=^IXIC" not in caplog.text
 
 
+def test_yahoo_market_context_uses_six_month_fallback_when_three_month_is_short(
+    caplog,
+    tmp_path,
+) -> None:
+    class History(dict):
+        pass
+
+    class Ticker:
+        def __init__(self, closes_by_period: dict[str, list[float]]) -> None:
+            self.closes_by_period = closes_by_period
+            self.periods: list[str] = []
+
+        def history(self, period: str) -> History:
+            self.periods.append(period)
+            return History(Close=self.closes_by_period[period])
+
+    tickers = {
+        "^IXIC": Ticker(
+            {
+                "1mo": [1.0, 2.0, float("nan")],
+                "3mo": [float(value) for value in range(1, 10)],
+                "6mo": [float(value) for value in range(1, 31)],
+            }
+        ),
+        "USDKRW=X": Ticker({"5d": [1300.0, 1326.0]}),
+    }
+
+    with caplog.at_level(logging.WARNING):
+        context = YahooMarketContextSource(
+            ticker_factory=tickers.__getitem__,
+            cache_path=tmp_path / "last_good_market_context.json",
+        ).market_context()
+
+    assert context.status == "ok"
+    assert context.source == "fresh"
+    assert context.period == "6mo"
+    assert context.nasdaq_price_usd == 30
+    assert context.nasdaq_ma20_usd == 20.5
+    assert tickers["^IXIC"].periods == ["1mo", "3mo", "6mo"]
+    assert "fallback_period=6mo" in caplog.text
+    assert "MARKET_CONTEXT_DEGRADED_USED symbol=^IXIC" not in caplog.text
+
+
 def test_yahoo_market_context_saves_fresh_last_good_cache(caplog, tmp_path) -> None:
     class History(dict):
         pass
