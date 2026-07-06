@@ -298,6 +298,42 @@ def test_yahoo_market_context_uses_neutral_degraded_context_when_history_stays_s
     assert "reason=NASDAQ_HISTORY_INSUFFICIENT" in caplog.text
 
 
+def test_yahoo_market_context_reads_close_from_multiindex_like_history() -> None:
+    class Columns:
+        def get_level_values(self, level: int) -> list[str]:
+            return ["Ticker"] if level == 0 else ["Close"]
+
+    class MultiIndexHistory:
+        columns = Columns()
+
+        def __getitem__(self, _key: str):
+            raise KeyError("Close")
+
+        def xs(self, key: str, axis: int, level: int) -> list[float]:
+            assert (key, axis, level) == ("Close", 1, 1)
+            return [float(value) for value in range(1, 22)]
+
+    class History(dict):
+        pass
+
+    class Ticker:
+        def __init__(self, history) -> None:
+            self.item_history = history
+
+        def history(self, period: str):
+            return self.item_history
+
+    tickers = {
+        "^IXIC": Ticker(MultiIndexHistory()),
+        "USDKRW=X": Ticker(History(Close=[1300.0, 1326.0])),
+    }
+
+    context = YahooMarketContextSource(ticker_factory=tickers.__getitem__).market_context()
+
+    assert context.nasdaq_price_usd == 21
+    assert context.nasdaq_ma20_usd == 11.5
+
+
 def test_chart_pattern_score_stays_in_range_for_uptrend() -> None:
     bars = [
         PriceBar(close=10 + value * 0.2, high=10.2 + value * 0.2, low=9.8 + value * 0.2)

@@ -41,7 +41,7 @@ class YahooMarketContextSource:
     def market_context(self) -> MarketContext:
         nasdaq_closes, _nasdaq_period, _degraded = self._nasdaq_closes()
         fx_closes = _close_values(self.ticker_factory(FX_SYMBOL).history(period="5d"))
-        if len(fx_closes) < 2:
+        if len(fx_closes) < 2 or fx_closes[-2] <= 0:
             logger.warning(
                 "MARKET_CONTEXT_DEGRADED_USED symbol=%s close_count=%s "
                 "fallback_period=5d degraded=true reason=FX_HISTORY_INSUFFICIENT",
@@ -128,6 +128,14 @@ def _close_column(history: Any) -> Any | None:
     except Exception:
         if isinstance(history, dict):
             return history.get("Close")
+        columns = getattr(history, "columns", None)
+        if columns is not None:
+            for level in (0, 1):
+                try:
+                    if "Close" in columns.get_level_values(level):
+                        return history.xs("Close", axis=1, level=level)
+                except Exception:
+                    continue
     return None
 
 
