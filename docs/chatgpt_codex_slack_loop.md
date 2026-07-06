@@ -137,6 +137,14 @@ When a Daily Ops message is posted in `placeholder-report dry-run`, `missing-rep
 
 After market close, the automation may post a DB-backed text packet as several Slack messages. The Scheduled Task must reassemble the packet before any analysis.
 
+If the automation posts `[AUTO_TRADING_DATA_PACKET_SKIPPED]`, treat it as a
+normal market-closed skip notice. Do not reassemble it as a regular packet, do not create a Codex-ready prompt from it, and do not mark it as FAIL when
+`normal_skip: true` is present. If the day was expected to be a trading day,
+classify the issue as a calendar/session-date investigation. If neither a
+regular packet nor a skipped packet is found after the expected close, investigate
+whether the market-close task did not trigger or the packet was built but not
+sent.
+
 Required packet handling:
 
 1. Search Slack `#autotrading-전체` for messages containing `[AUTO_TRADING_DATA_DIGEST]` or `[AUTO_TRADING_DATA_PACKET]`.

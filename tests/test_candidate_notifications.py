@@ -1,7 +1,7 @@
 from datetime import date
 
 from trading_bot.candidate_notifications import candidate_list_message
-from trading_bot.models import CandidateSnapshot, DailyScore, DailyTarget, ScoreRecord
+from trading_bot.models import CandidateSnapshot, DailyScore, DailyTarget, MarketContext, ScoreRecord
 
 
 def test_candidate_list_message_summarizes_selected_candidates() -> None:
@@ -53,3 +53,25 @@ def test_candidate_list_message_reports_no_candidates() -> None:
     assert "후보 수: 0" in message
     assert "선정 수: 0" in message
     assert "금일 후보리스트가 없습니다." in message
+
+
+def test_candidate_list_message_includes_market_context_warning() -> None:
+    context = MarketContext(
+        100,
+        100,
+        0,
+        status="degraded",
+        source="degraded",
+        symbol="^IXIC",
+        period="6mo",
+        close_count=19,
+        reason="NASDAQ_HISTORY_INSUFFICIENT",
+    )
+
+    message = candidate_list_message(date(2026, 6, 8), (), (), context)
+
+    assert "[시장]" in message
+    assert "상태: DEGRADED" in message
+    assert "기준: ^IXIC" in message
+    assert "종가 19개" in message
+    assert "자동매수는 제한됩니다" in message

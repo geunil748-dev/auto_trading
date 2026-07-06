@@ -36,6 +36,18 @@ class MarketContext:
     nasdaq_price_usd: float
     nasdaq_ma20_usd: float
     fx_change_rate: float
+    status: str = "ok"
+    source: str = "fresh"
+    symbol: str = "^IXIC"
+    proxy_for: str | None = None
+    period: str = "1mo"
+    close_count: int = 0
+    as_of: str = ""
+    saved_at: str = ""
+    stale_age_hours: float | None = None
+    confidence: str = "high"
+    insufficient_history: bool = False
+    reason: str | None = None
 
 
 @dataclass(frozen=True)

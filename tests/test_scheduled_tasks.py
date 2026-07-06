@@ -1,3 +1,4 @@
+import json
 from datetime import date
 
 import pytest
@@ -1217,6 +1218,35 @@ def test_market_closed_skips_scheduled_trading_and_writes_monitor_state(tmp_path
     assert "\ubbf8\uad6d \uac70\ub798\uc77c" in state_path.read_text(encoding="utf-8")
 
 
+def test_market_closed_close_session_sends_skipped_packet_notice(monkeypatch, tmp_path) -> None:
+    state_path = tmp_path / "state.json"
+    notices = []
+    strategy_exports = []
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.current_us_market_date",
+        lambda: date(2026, 7, 3),
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_auto_trading_data_packet_skipped_notice",
+        lambda report_date: notices.append(report_date) or "[AUTO_TRADING_DATA_PACKET_SKIPPED]",
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.save_strategy_review_export",
+        lambda: strategy_exports.append("called"),
+    )
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        state_path,
+        trading_day=lambda: False,
+    )
+
+    assert tasks.close_session() == "미국 휴장일이라 장마감 처리를 건너뜁니다."
+    assert notices == [date(2026, 7, 3)]
+    assert strategy_exports == []
+    assert "\ubbf8\uad6d \uac70\ub798\uc77c" in state_path.read_text(encoding="utf-8")
+
+
 def test_dry_run_wires_daily_once_candidate_notification(monkeypatch, tmp_path) -> None:
     captured_kwargs = []
     candidate_calls = []
@@ -1300,6 +1330,107 @@ def test_daily_candidate_notification_retries_after_send_failure(monkeypatch, tm
     assert sender(trade_date, (), ()) is True
     assert sender(trade_date, (), ()) is False
     assert len(candidate_calls) == 2
+
+
+def test_dry_run_sends_pipeline_failure_telegram_before_candidate_notification(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    notices = []
+    logs = []
+    candidate_calls = []
+
+    class Runtime:
+        def run(self):
+            raise ValueError("Nasdaq history requires at least 20 closing prices")
+
+    def fake_build_live_dry_run(settings, kis_settings, **kwargs):
+        assert "candidate_notification_sender" in kwargs
+        return Runtime(), "repository"
+
+    def capture_log(level, module, message, **kwargs):
+        logs.append((level, module, message, kwargs))
+
+    monkeypatch.setattr("trading_bot.scheduled_tasks.build_live_dry_run", fake_build_live_dry_run)
+    monkeypatch.setattr("trading_bot.scheduled_tasks.load_notification_settings", lambda: NotificationSettings())
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_alert_telegram_message",
+        lambda message, settings: notices.append((message, settings)) or True,
+    )
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.send_candidate_list_notification",
+        lambda *_args: candidate_calls.append("candidate"),
+    )
+    monkeypatch.setattr("trading_bot.scheduled_tasks.safe_scheduler_log", capture_log)
+
+    state_path = tmp_path / "state.json"
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        state_path,
+        trading_day=lambda: True,
+    )
+
+    with pytest.raises(ValueError, match="Nasdaq history"):
+        tasks.dry_run()
+
+    assert candidate_calls == []
+    assert len(notices) == 1
+    message, _settings = notices[0]
+    assert "job: screen_and_score" in message
+    assert "stage: market_context" in message
+    assert "exception: ValueError" in message
+    assert "후보 저장 전 실패: 예" in message
+    assert "targets가 갱신되지 않았을 수 있습니다" in message
+    assert logs[-1][2].startswith("PIPELINE_FAILURE_TELEGRAM_SENT")
+    assert logs[-1][3]["reject_reason"] == "PIPELINE_FAILURE_TELEGRAM_SENT"
+
+    status = json.loads((tmp_path / "screen_and_score_status.json").read_text(encoding="utf-8"))
+    assert status["last_screen_and_score_status"] == "failed"
+    assert status["last_error"]["job"] == "screen_and_score"
+    assert status["last_error"]["stage"] == "market_context"
+    assert status["last_error"]["candidate_saved_before_failure"] is True
+    assert status["state_targets_may_be_stale"] is True
+
+
+def test_dry_run_pipeline_failure_telegram_error_does_not_hide_original_exception(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    logs = []
+
+    class Runtime:
+        def run(self):
+            raise ValueError("Nasdaq history requires at least 20 closing prices")
+
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.build_live_dry_run",
+        lambda settings, kis_settings, **kwargs: (Runtime(), "repository"),
+    )
+    monkeypatch.setattr("trading_bot.scheduled_tasks.load_notification_settings", lambda: NotificationSettings())
+
+    def fail_telegram(_message, _settings):
+        raise RuntimeError("telegram token secret")
+
+    monkeypatch.setattr("trading_bot.scheduled_tasks.send_alert_telegram_message", fail_telegram)
+    monkeypatch.setattr(
+        "trading_bot.scheduled_tasks.safe_scheduler_log",
+        lambda level, module, message, **kwargs: logs.append((level, module, message, kwargs)),
+    )
+
+    tasks = live_mock_tasks(
+        TradingSettings(),
+        KisSettings("key", "secret", "account", "01", "https://kis.example"),
+        tmp_path / "state.json",
+        trading_day=lambda: True,
+    )
+
+    with pytest.raises(ValueError, match="Nasdaq history"):
+        tasks.dry_run()
+
+    assert logs[-1][2].startswith("PIPELINE_FAILURE_TELEGRAM_FAILED")
+    assert logs[-1][3]["reject_reason"] == "PIPELINE_FAILURE_TELEGRAM_FAILED"
+    assert "secret" not in logs[-1][2]
 
 
 def test_intraday_watch_submits_one_exit_and_remembers_pending_sells(

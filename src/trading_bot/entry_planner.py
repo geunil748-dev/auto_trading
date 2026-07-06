@@ -236,6 +236,7 @@ BUY_BLOCK_REASON_LABELS = {
     "ACCOUNT_EXPOSURE_LIMIT": "계좌 노출 한도 초과",
     "MARKET_BELOW_MA20": "시장 MA20 하회",
     "MARKET_BELOW_MA20_BYPASSED": "시장 MA20 하회 우회",
+    "MARKET_CONTEXT_UNRELIABLE": "시장 컨텍스트 신뢰 불가",
     "FX_VOLATILITY": "환율 변동성 초과",
     "DAILY_ACCOUNT_LOSS": "일 손실 한도 초과",
     "OPEN_POSITION_LIMIT": "보유 종목 수 한도 초과",

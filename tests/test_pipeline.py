@@ -360,6 +360,92 @@ def test_pipeline_screens_scores_and_persists_selected_candidates() -> None:
     assert any(message.startswith("[PIPELINE_SUMMARY]") for message in messages)
 
 
+def test_pipeline_blocks_buy_when_market_context_is_degraded_but_keeps_candidates() -> None:
+    market_data = MarketData(
+        MarketContext(
+            100,
+            100,
+            0.0,
+            status="degraded",
+            source="degraded",
+            reason="NASDAQ_HISTORY_INSUFFICIENT",
+        )
+    )
+
+    run, repository, _ = run_pipeline(
+        market_data,
+        TradingSettings(min_selected_candidates=2),
+    )
+
+    assert run.blocked_reason == "MARKET_CONTEXT_UNRELIABLE"
+    assert [item.candidate.ticker for item in repository.targets] == ["AAA", "BBB"]
+    assert [item.score.ticker for item in repository.scores] == ["AAA", "BBB"]
+    assert [item.ticker for item in run.selected] == ["AAA", "BBB"]
+    assert any(
+        log.reject_reason == "BUY_BLOCKED_MARKET_CONTEXT_UNRELIABLE"
+        for log in repository.logs
+    )
+    assert any(
+        log.reject_reason == "MARKET_CONTEXT_CONFIDENCE_PENALTY_APPLIED"
+        and log.actual_value == -5.0
+        for log in repository.logs
+    )
+
+
+def test_pipeline_applies_cached_market_context_penalty_without_blocking_buy() -> None:
+    market_data = MarketData(
+        MarketContext(
+            101,
+            100,
+            0.0,
+            status="cached",
+            source="last_good_cache",
+            reason="NASDAQ_PRIMARY_HISTORY_INSUFFICIENT_LAST_GOOD_USED",
+        )
+    )
+
+    run, repository, _ = run_pipeline(
+        market_data,
+        TradingSettings(min_selected_candidates=2),
+    )
+
+    assert run.blocked_reason is None
+    assert round(repository.scores[0].score.total_score, 1) == 79.5
+    assert any(
+        log.reject_reason == "MARKET_CONTEXT_CONFIDENCE_PENALTY_APPLIED"
+        and log.actual_value == -2.0
+        for log in repository.logs
+    )
+
+
+def test_pipeline_applies_proxy_market_context_penalty_without_blocking_buy() -> None:
+    market_data = MarketData(
+        MarketContext(
+            101,
+            100,
+            0.0,
+            status="ok",
+            source="proxy",
+            symbol="QQQ",
+            proxy_for="^IXIC",
+            reason="NASDAQ_PRIMARY_HISTORY_INSUFFICIENT_PROXY_USED",
+        )
+    )
+
+    run, repository, _ = run_pipeline(
+        market_data,
+        TradingSettings(min_selected_candidates=2),
+    )
+
+    assert run.blocked_reason is None
+    assert round(repository.scores[0].score.total_score, 1) == 78.5
+    assert any(
+        log.reject_reason == "MARKET_CONTEXT_CONFIDENCE_PENALTY_APPLIED"
+        and log.actual_value == -3.0
+        for log in repository.logs
+    )
+
+
 def test_pipeline_sends_candidate_notification_after_scores_are_saved() -> None:
     market_data = MarketData(MarketContext(101, 100, 0.01))
     repository = Repository()
@@ -394,6 +480,29 @@ def test_pipeline_sends_candidate_notification_after_scores_are_saved() -> None:
         event.event_type == "CANDIDATE_LIST_TELEGRAM_SENT"
         for event in repository.trading_events
     )
+
+
+def test_pipeline_passes_market_context_to_candidate_notification_sender() -> None:
+    market_context = MarketContext(101, 100, 0.01, status="ok", source="proxy", symbol="QQQ")
+    market_data = MarketData(market_context)
+    repository = Repository()
+    notifications = []
+
+    def send_notification(trade_date, targets, scores, market_context=None):
+        notifications.append(market_context)
+        return True
+
+    ScreeningScoringPipeline(
+        market_data,
+        Scoring(),
+        AccountReader(account()),
+        repository,
+        FixedClock(),
+        TradingSettings(min_selected_candidates=2),
+        candidate_notification_sender=send_notification,
+    ).run()
+
+    assert notifications == [market_context]
 
 
 def test_pipeline_sends_candidate_notification_when_global_gate_blocks_entry() -> None:
@@ -656,19 +765,26 @@ def test_pipeline_handles_zero_listed_candidates_without_error() -> None:
         if not log.message.startswith(("[SAVE_", "[PIPELINE]", "[FILTER]"))
         and not log.message.startswith("[PIPELINE_SUMMARY]")
     ]
-    assert core_logs[-4:] == [
-        BotLog("INFO", "screening", "Filter rejects: none."),
-        BotLog("INFO", "screening", "CANDIDATE_SNAPSHOT_SAVED: 후보 0건을 DB에 저장했습니다.", actual_value=0.0),
-        BotLog(
-            "WARNING",
-            "screening",
-            "CANDIDATE_SNAPSHOT_EMPTY: 후보 0건으로 수집이 완료되었습니다.",
-            reject_reason="CANDIDATE_SNAPSHOT_EMPTY",
-            actual_value=0.0,
-            threshold_value=3.0,
-        ),
-        BotLog("INFO", "pipeline", "Screened 0 targets and selected 0."),
-    ]
+    assert BotLog("INFO", "screening", "Filter rejects: none.") in core_logs
+    assert BotLog(
+        "INFO",
+        "screening",
+        "CANDIDATE_SNAPSHOT_SAVED: 후보 0건을 DB에 저장했습니다.",
+        actual_value=0.0,
+    ) in core_logs
+    assert BotLog(
+        "WARNING",
+        "screening",
+        "CANDIDATE_SNAPSHOT_EMPTY: 후보 0건으로 수집이 완료되었습니다.",
+        reject_reason="CANDIDATE_SNAPSHOT_EMPTY",
+        actual_value=0.0,
+        threshold_value=3.0,
+    ) in core_logs
+    assert any(
+        log.reject_reason == "MARKET_CONTEXT_CONFIDENCE_PENALTY_SKIPPED"
+        for log in core_logs
+    )
+    assert core_logs[-1] == BotLog("INFO", "pipeline", "Screened 0 targets and selected 0.")
 
 
 def test_ranked_union_limits_initial_expensive_evaluation_to_configured_size() -> None:

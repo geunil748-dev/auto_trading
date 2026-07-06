@@ -1,3 +1,7 @@
+import json
+import logging
+from datetime import UTC, datetime, timedelta
+
 from trading_bot.adapters.chart_history import YahooChartScorer
 from trading_bot.adapters.breakout_history import KisBreakoutHistory
 from trading_bot.adapters.context import YahooMarketContextSource
@@ -200,7 +204,7 @@ def test_kis_daily_volume_history_averages_twenty_daily_rows() -> None:
     assert history.average_daily_volume("AAA", 20) == 10.5
 
 
-def test_yahoo_market_context_calculates_nasdaq_ma20_and_fx_change() -> None:
+def test_yahoo_market_context_calculates_nasdaq_ma20_and_fx_change(tmp_path) -> None:
     class History(dict):
         pass
 
@@ -216,11 +220,323 @@ def test_yahoo_market_context_calculates_nasdaq_ma20_and_fx_change() -> None:
         "^IXIC": Ticker([float(value) for value in range(1, 22)]),
         "USDKRW=X": Ticker([1300.0, 1326.0]),
     }
-    context = YahooMarketContextSource(ticker_factory=tickers.__getitem__).market_context()
+    context = YahooMarketContextSource(
+        ticker_factory=tickers.__getitem__,
+        cache_path=tmp_path / "last_good_market_context.json",
+    ).market_context()
 
     assert context.nasdaq_price_usd == 21
     assert context.nasdaq_ma20_usd == 11.5
     assert round(context.fx_change_rate, 4) == 0.02
+
+
+def test_yahoo_market_context_uses_fallback_period_when_one_month_is_short(
+    caplog,
+    tmp_path,
+) -> None:
+    class History(dict):
+        pass
+
+    class Ticker:
+        def __init__(self, closes_by_period: dict[str, list[float]]) -> None:
+            self.closes_by_period = closes_by_period
+            self.periods: list[str] = []
+
+        def history(self, period: str) -> History:
+            self.periods.append(period)
+            return History(Close=self.closes_by_period[period])
+
+    tickers = {
+        "^IXIC": Ticker(
+            {
+                "1mo": [1.0, 2.0, float("nan")],
+                "3mo": [float(value) for value in range(1, 26)],
+                "6mo": [float(value) for value in range(1, 31)],
+            }
+        ),
+        "USDKRW=X": Ticker({"5d": [1300.0, 1326.0]}),
+    }
+
+    with caplog.at_level(logging.WARNING):
+        context = YahooMarketContextSource(
+            ticker_factory=tickers.__getitem__,
+            cache_path=tmp_path / "last_good_market_context.json",
+        ).market_context()
+
+    assert context.nasdaq_price_usd == 25
+    assert context.nasdaq_ma20_usd == 15.5
+    assert round(context.fx_change_rate, 4) == 0.02
+    assert tickers["^IXIC"].periods == ["1mo", "3mo"]
+    assert "NASDAQ_HISTORY_INSUFFICIENT_FALLBACK" in caplog.text
+    assert "fallback_period=3mo" in caplog.text
+    assert "MARKET_CONTEXT_DEGRADED_USED symbol=^IXIC" not in caplog.text
+
+
+def test_yahoo_market_context_saves_fresh_last_good_cache(caplog, tmp_path) -> None:
+    class History(dict):
+        pass
+
+    class Ticker:
+        def __init__(self, closes: list[float]) -> None:
+            self.closes = closes
+
+        def history(self, period: str) -> History:
+            return History(Close=self.closes)
+
+    cache_path = tmp_path / "last_good_market_context.json"
+    tickers = {
+        "^IXIC": Ticker([float(value) for value in range(1, 22)]),
+        "USDKRW=X": Ticker([1300.0, 1326.0]),
+    }
+
+    with caplog.at_level(logging.INFO):
+        context = YahooMarketContextSource(
+            ticker_factory=tickers.__getitem__,
+            cache_path=cache_path,
+        ).market_context()
+
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert context.source == "fresh"
+    assert payload["source"] == "fresh"
+    assert payload["last_close"] == 21
+    assert payload["ma20"] == 11.5
+    assert "LAST_GOOD_MARKET_CONTEXT_SAVED" in caplog.text
+
+
+def test_yahoo_market_context_uses_last_good_cache_when_primary_history_is_short(
+    caplog,
+    tmp_path,
+) -> None:
+    class History(dict):
+        pass
+
+    class Ticker:
+        def __init__(self, closes_by_period: dict[str, list[float]]) -> None:
+            self.closes_by_period = closes_by_period
+
+        def history(self, period: str) -> History:
+            return History(Close=self.closes_by_period.get(period, []))
+
+    cache_path = tmp_path / "last_good_market_context.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "source": "fresh",
+                "symbol": "^IXIC",
+                "saved_at": datetime.now(UTC).isoformat(),
+                "close_count": 63,
+                "period": "3mo",
+                "ma20": 100.0,
+                "last_close": 105.0,
+                "fx_change_rate": 0.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    tickers = {
+        "^IXIC": Ticker({"1mo": [], "3mo": [], "6mo": []}),
+        "USDKRW=X": Ticker({"5d": [1300.0, 1300.0]}),
+    }
+
+    with caplog.at_level(logging.WARNING):
+        context = YahooMarketContextSource(
+            ticker_factory=tickers.__getitem__,
+            cache_path=cache_path,
+        ).market_context()
+
+    assert context.status == "cached"
+    assert context.source == "last_good_cache"
+    assert context.nasdaq_price_usd == 105.0
+    assert abs(context.nasdaq_ma20_usd - 100.0) < 1e-9
+    assert "LAST_GOOD_MARKET_CONTEXT_USED" in caplog.text
+
+
+def test_yahoo_market_context_uses_qqq_proxy_when_primary_and_cache_fail(
+    caplog,
+    tmp_path,
+) -> None:
+    class History(dict):
+        pass
+
+    class Ticker:
+        def __init__(self, closes_by_period: dict[str, list[float]]) -> None:
+            self.closes_by_period = closes_by_period
+
+        def history(self, period: str) -> History:
+            return History(Close=self.closes_by_period.get(period, []))
+
+    tickers = {
+        "^IXIC": Ticker({"1mo": [], "3mo": [], "6mo": []}),
+        "QQQ": Ticker({"3mo": [float(value) for value in range(1, 22)]}),
+        "USDKRW=X": Ticker({"5d": [1300.0, 1300.0]}),
+    }
+
+    with caplog.at_level(logging.WARNING):
+        context = YahooMarketContextSource(
+            ticker_factory=tickers.__getitem__,
+            cache_path=tmp_path / "missing_last_good.json",
+        ).market_context()
+
+    assert context.status == "ok"
+    assert context.source == "proxy"
+    assert context.symbol == "QQQ"
+    assert context.proxy_for == "^IXIC"
+    assert context.confidence == "medium"
+    assert "MARKET_CONTEXT_PROXY_USED symbol=QQQ" in caplog.text
+
+
+def test_yahoo_market_context_uses_ndx_proxy_when_qqq_fails(caplog, tmp_path) -> None:
+    class History(dict):
+        pass
+
+    class Ticker:
+        def __init__(self, closes_by_period: dict[str, list[float]]) -> None:
+            self.closes_by_period = closes_by_period
+
+        def history(self, period: str) -> History:
+            return History(Close=self.closes_by_period.get(period, []))
+
+    tickers = {
+        "^IXIC": Ticker({"1mo": [], "3mo": [], "6mo": []}),
+        "QQQ": Ticker({"3mo": [], "6mo": []}),
+        "^NDX": Ticker({"3mo": [float(value) for value in range(1, 22)]}),
+        "USDKRW=X": Ticker({"5d": [1300.0, 1300.0]}),
+    }
+
+    with caplog.at_level(logging.WARNING):
+        context = YahooMarketContextSource(
+            ticker_factory=tickers.__getitem__,
+            cache_path=tmp_path / "missing_last_good.json",
+        ).market_context()
+
+    assert context.source == "proxy"
+    assert context.symbol == "^NDX"
+    assert "MARKET_CONTEXT_PROXY_FAILED symbol=QQQ" in caplog.text
+    assert "MARKET_CONTEXT_PROXY_USED symbol=^NDX" in caplog.text
+
+
+def test_yahoo_market_context_skips_stale_last_good_cache_before_proxy(
+    caplog,
+    tmp_path,
+) -> None:
+    class History(dict):
+        pass
+
+    class Ticker:
+        def __init__(self, closes_by_period: dict[str, list[float]]) -> None:
+            self.closes_by_period = closes_by_period
+
+        def history(self, period: str) -> History:
+            return History(Close=self.closes_by_period.get(period, []))
+
+    cache_path = tmp_path / "last_good_market_context.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "source": "fresh",
+                "symbol": "^IXIC",
+                "saved_at": (datetime.now(UTC) - timedelta(hours=72)).isoformat(),
+                "close_count": 63,
+                "period": "3mo",
+                "ma20": 100.0,
+                "last_close": 105.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    tickers = {
+        "^IXIC": Ticker({"1mo": [], "3mo": [], "6mo": []}),
+        "QQQ": Ticker({"3mo": [float(value) for value in range(1, 22)]}),
+        "USDKRW=X": Ticker({"5d": [1300.0, 1300.0]}),
+    }
+
+    with caplog.at_level(logging.WARNING):
+        context = YahooMarketContextSource(
+            ticker_factory=tickers.__getitem__,
+            cache_path=cache_path,
+        ).market_context()
+
+    assert context.source == "proxy"
+    assert context.symbol == "QQQ"
+    assert "LAST_GOOD_MARKET_CONTEXT_STALE" in caplog.text
+
+
+def test_yahoo_market_context_uses_neutral_degraded_context_when_history_stays_short(
+    caplog,
+    tmp_path,
+) -> None:
+    class History(dict):
+        pass
+
+    class Ticker:
+        def __init__(self, closes_by_period: dict[str, list[float]]) -> None:
+            self.closes_by_period = closes_by_period
+
+        def history(self, period: str) -> History:
+            return History(Close=self.closes_by_period.get(period, []))
+
+    tickers = {
+        "^IXIC": Ticker(
+            {
+                "1mo": [],
+                "3mo": [10.0, float("nan"), 11.0],
+                "6mo": [float(value) for value in range(1, 20)],
+            }
+        ),
+        "USDKRW=X": Ticker({"5d": [1300.0, 1300.0]}),
+    }
+
+    with caplog.at_level(logging.WARNING):
+        context = YahooMarketContextSource(
+            ticker_factory=tickers.__getitem__,
+            cache_path=tmp_path / "last_good_market_context.json",
+        ).market_context()
+
+    assert context.nasdaq_price_usd == 19
+    assert context.nasdaq_ma20_usd == 19
+    assert context.fx_change_rate == 0
+    assert "NASDAQ_HISTORY_INSUFFICIENT_FALLBACK" in caplog.text
+    assert "MARKET_CONTEXT_DEGRADED_USED symbol=^IXIC" in caplog.text
+    assert "reason=NASDAQ_HISTORY_INSUFFICIENT" in caplog.text
+
+
+def test_yahoo_market_context_reads_close_from_multiindex_like_history(tmp_path) -> None:
+    class Columns:
+        def get_level_values(self, level: int) -> list[str]:
+            return ["Ticker"] if level == 0 else ["Close"]
+
+    class MultiIndexHistory:
+        columns = Columns()
+
+        def __getitem__(self, _key: str):
+            raise KeyError("Close")
+
+        def xs(self, key: str, axis: int, level: int) -> list[float]:
+            assert (key, axis, level) == ("Close", 1, 1)
+            return [float(value) for value in range(1, 22)]
+
+    class History(dict):
+        pass
+
+    class Ticker:
+        def __init__(self, history) -> None:
+            self.item_history = history
+
+        def history(self, period: str):
+            return self.item_history
+
+    tickers = {
+        "^IXIC": Ticker(MultiIndexHistory()),
+        "USDKRW=X": Ticker(History(Close=[1300.0, 1326.0])),
+    }
+
+    context = YahooMarketContextSource(
+        ticker_factory=tickers.__getitem__,
+        cache_path=tmp_path / "last_good_market_context.json",
+    ).market_context()
+
+    assert context.nasdaq_price_usd == 21
+    assert context.nasdaq_ma20_usd == 11.5
 
 
 def test_chart_pattern_score_stays_in_range_for_uptrend() -> None:
