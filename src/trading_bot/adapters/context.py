@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import logging
+import inspect
 import json
+import logging
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ NASDAQ_HISTORY_PERIODS = ("1mo", "3mo", "6mo")
 PROXY_SYMBOL_PERIODS = (("QQQ", ("3mo", "6mo")), ("^NDX", ("3mo", "6mo")))
 LAST_GOOD_MARKET_CONTEXT_PATH = Path("monitor/last_good_market_context.json")
 LAST_GOOD_MARKET_CONTEXT_TTL_HOURS = 36.0
+YFINANCE_HISTORY_TIMEOUT_SECONDS = 5
 
 logger = logging.getLogger(__name__)
 
@@ -131,12 +133,15 @@ class YahooMarketContextSource:
         best_period = periods[0]
         for period in periods:
             try:
-                closes = _close_values(self.ticker_factory(symbol).history(period=period))
+                closes = _close_values(_ticker_history(self.ticker_factory(symbol), period))
             except Exception as exc:
                 logger.warning(
-                    "MARKET_CONTEXT_HISTORY_FETCH_FAILED symbol=%s period=%s exception=%s",
+                    "MARKET_CONTEXT_HISTORY_FETCH_FAILED symbol=%s period=%s reason=%s "
+                    "timeout_seconds=%s exception=%s",
                     symbol,
                     period,
+                    _history_failure_reason(exc),
+                    YFINANCE_HISTORY_TIMEOUT_SECONDS,
                     type(exc).__name__,
                 )
                 closes = []
@@ -175,8 +180,17 @@ class YahooMarketContextSource:
         best_period = NASDAQ_HISTORY_PERIODS[0]
         for period in NASDAQ_HISTORY_PERIODS:
             try:
-                closes = _close_values(self.ticker_factory(NASDAQ_SYMBOL).history(period=period))
-            except Exception:
+                closes = _close_values(_ticker_history(self.ticker_factory(NASDAQ_SYMBOL), period))
+            except Exception as exc:
+                logger.warning(
+                    "MARKET_CONTEXT_HISTORY_FETCH_FAILED symbol=%s period=%s reason=%s "
+                    "timeout_seconds=%s exception=%s",
+                    NASDAQ_SYMBOL,
+                    period,
+                    _history_failure_reason(exc),
+                    YFINANCE_HISTORY_TIMEOUT_SECONDS,
+                    type(exc).__name__,
+                )
                 closes = []
             if len(closes) > len(best_closes):
                 best_closes = closes
@@ -221,11 +235,30 @@ def _close_values(history: Any) -> list[float]:
     return result
 
 
+def _ticker_history(ticker: Any, period: str) -> Any:
+    history = ticker.history
+    if _history_accepts_timeout(history):
+        return history(period=period, timeout=YFINANCE_HISTORY_TIMEOUT_SECONDS)
+    return history(period=period)
+
+
+def _history_accepts_timeout(history: Callable[..., Any]) -> bool:
+    try:
+        parameters = inspect.signature(history).parameters.values()
+    except (TypeError, ValueError):
+        return True
+    return any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD or parameter.name == "timeout"
+        for parameter in parameters
+    )
+
+
 def _fx_change_rate(ticker_factory: Callable[[str], Any]) -> float:
     try:
-        fx_closes = _close_values(ticker_factory(FX_SYMBOL).history(period="5d"))
+        fx_closes = _close_values(_ticker_history(ticker_factory(FX_SYMBOL), "5d"))
     except Exception as exc:
-        _log_fx_fallback("FX_HISTORY_FETCH_FAILED", 0, type(exc).__name__)
+        reason = "FX_HISTORY_TIMEOUT" if _is_timeout_exception(exc) else "FX_HISTORY_FETCH_FAILED"
+        _log_fx_fallback(reason, 0, type(exc).__name__)
         return 0.0
     if len(fx_closes) < 2:
         _log_fx_fallback("FX_HISTORY_INSUFFICIENT", len(fx_closes))
@@ -241,12 +274,23 @@ def _fx_change_rate(ticker_factory: Callable[[str], Any]) -> float:
 def _log_fx_fallback(reason: str, close_count: int, exception_name: str = "-") -> None:
     logger.warning(
         "MARKET_CONTEXT_FX_FALLBACK: FX 조회 실패로 fx_change_rate=0.0 fallback 적용 "
-        "symbol=%s close_count=%s reason=%s exception=%s",
+        "symbol=%s close_count=%s reason=%s timeout_seconds=%s exception=%s",
         FX_SYMBOL,
         close_count,
         reason,
+        YFINANCE_HISTORY_TIMEOUT_SECONDS,
         exception_name,
     )
+
+
+def _history_failure_reason(exc: Exception) -> str:
+    if _is_timeout_exception(exc):
+        return "YFINANCE_HISTORY_TIMEOUT"
+    return "HISTORY_FETCH_FAILED"
+
+
+def _is_timeout_exception(exc: Exception) -> bool:
+    return isinstance(exc, TimeoutError) or "timeout" in type(exc).__name__.lower()
 
 
 def _save_last_good_market_context(path: Path, context: MarketContext) -> None:

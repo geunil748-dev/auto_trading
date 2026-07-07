@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from trading_bot.adapters.chart_history import YahooChartScorer
 from trading_bot.adapters.breakout_history import KisBreakoutHistory
-from trading_bot.adapters.context import YahooMarketContextSource
+from trading_bot.adapters.context import YFINANCE_HISTORY_TIMEOUT_SECONDS, YahooMarketContextSource
 from trading_bot.adapters.market_data import KisDailyVolumeHistory, KisScreeningMarketData
 from trading_bot.chart_models import PriceBar
 from trading_bot.chart_scoring import chart_pattern_score
@@ -230,6 +230,34 @@ def test_yahoo_market_context_calculates_nasdaq_ma20_and_fx_change(tmp_path) -> 
     assert round(context.fx_change_rate, 4) == 0.02
 
 
+def test_yahoo_market_context_passes_history_timeout(tmp_path) -> None:
+    class History(dict):
+        pass
+
+    class Ticker:
+        def __init__(self, closes_by_period: dict[str, list[float]]) -> None:
+            self.closes_by_period = closes_by_period
+            self.calls: list[tuple[str, int | None]] = []
+
+        def history(self, period: str, timeout: int | None = None) -> History:
+            self.calls.append((period, timeout))
+            return History(Close=self.closes_by_period[period])
+
+    tickers = {
+        "^IXIC": Ticker({"1mo": [float(value) for value in range(1, 22)]}),
+        "USDKRW=X": Ticker({"5d": [1300.0, 1326.0]}),
+    }
+
+    context = YahooMarketContextSource(
+        ticker_factory=tickers.__getitem__,
+        cache_path=tmp_path / "last_good_market_context.json",
+    ).market_context()
+
+    assert context.nasdaq_price_usd == 21
+    assert tickers["^IXIC"].calls == [("1mo", YFINANCE_HISTORY_TIMEOUT_SECONDS)]
+    assert tickers["USDKRW=X"].calls == [("5d", YFINANCE_HISTORY_TIMEOUT_SECONDS)]
+
+
 def test_yahoo_market_context_fx_ticker_error_falls_back_to_zero(
     caplog,
     tmp_path,
@@ -258,6 +286,42 @@ def test_yahoo_market_context_fx_ticker_error_falls_back_to_zero(
     assert "MARKET_CONTEXT_FX_FALLBACK" in caplog.text
     assert "FX 조회 실패로 fx_change_rate=0.0 fallback 적용" in caplog.text
     assert "RuntimeError" in caplog.text
+
+
+def test_yahoo_market_context_fx_history_timeout_falls_back_to_zero(
+    caplog,
+    tmp_path,
+) -> None:
+    class History(dict):
+        pass
+
+    class NasdaqTicker:
+        def history(self, period: str, timeout: int | None = None) -> History:
+            assert period == "1mo"
+            assert timeout == YFINANCE_HISTORY_TIMEOUT_SECONDS
+            return History(Close=[float(value) for value in range(1, 22)])
+
+    class FxTicker:
+        def history(self, period: str, timeout: int | None = None) -> History:
+            assert period == "5d"
+            assert timeout == YFINANCE_HISTORY_TIMEOUT_SECONDS
+            raise TimeoutError("fx history timed out")
+
+    tickers = {
+        "^IXIC": NasdaqTicker(),
+        "USDKRW=X": FxTicker(),
+    }
+
+    with caplog.at_level(logging.WARNING):
+        context = YahooMarketContextSource(
+            ticker_factory=tickers.__getitem__,
+            cache_path=tmp_path / "last_good_market_context.json",
+        ).market_context()
+
+    assert context.fx_change_rate == 0.0
+    assert "MARKET_CONTEXT_FX_FALLBACK" in caplog.text
+    assert "reason=FX_HISTORY_TIMEOUT" in caplog.text
+    assert f"timeout_seconds={YFINANCE_HISTORY_TIMEOUT_SECONDS}" in caplog.text
 
 
 def test_yahoo_market_context_fx_history_error_falls_back_to_zero(
@@ -360,6 +424,40 @@ def test_yahoo_market_context_fx_invalid_history_falls_back_to_zero(
 
         assert context.fx_change_rate == 0.0
         assert "MARKET_CONTEXT_FX_FALLBACK" in caplog.text
+
+
+def test_yahoo_market_context_nasdaq_history_timeout_uses_degraded_series(
+    caplog,
+    tmp_path,
+) -> None:
+    class History(dict):
+        pass
+
+    class Ticker:
+        def __init__(self, symbol: str) -> None:
+            self.symbol = symbol
+
+        def history(self, period: str, timeout: int | None = None) -> History:
+            assert timeout == YFINANCE_HISTORY_TIMEOUT_SECONDS
+            if self.symbol == "^IXIC":
+                raise TimeoutError("nasdaq history timed out")
+            if self.symbol == "USDKRW=X":
+                return History(Close=[1300.0, 1326.0])
+            return History(Close=[])
+
+    with caplog.at_level(logging.WARNING):
+        context = YahooMarketContextSource(
+            ticker_factory=lambda symbol: Ticker(symbol),
+            cache_path=tmp_path / "last_good_market_context.json",
+        ).market_context()
+
+    assert context.status == "degraded"
+    assert context.source == "degraded"
+    assert context.reason == "NASDAQ_HISTORY_INSUFFICIENT"
+    assert round(context.fx_change_rate, 4) == 0.02
+    assert "reason=YFINANCE_HISTORY_TIMEOUT" in caplog.text
+    assert f"timeout_seconds={YFINANCE_HISTORY_TIMEOUT_SECONDS}" in caplog.text
+    assert "MARKET_CONTEXT_DEGRADED_USED symbol=^IXIC" in caplog.text
 
 
 def test_yahoo_market_context_uses_fallback_period_when_one_month_is_short(
