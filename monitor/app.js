@@ -81,6 +81,8 @@ const fallbackState = {
     activeMode: "mock",
     modeLabel: "모의투자",
     realTrading: {
+      appMode: "test",
+      mockTrading: true,
       envEnabled: false,
       emergencyStop: true,
       manualEnabled: false,

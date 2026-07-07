@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 from trading_bot.backtest_service import run_backtest_from_monitor_state
 from trading_bot.config import (
+    APP_MODE_REAL,
     load_settings,
     runtime_risk_settings_payload,
     save_runtime_risk_settings,
@@ -261,7 +262,7 @@ def _handler(
             body = self._read_json_body()
             settings = load_settings()
             requested = bool(body.get("enabled", False))
-            enabled = requested and settings.real_trading_enabled and not settings.real_emergency_stop
+            enabled = _real_trading_control_enabled(requested, settings)
             control = save_manual_enabled(enabled)
             self._write_json(
                 {
@@ -423,3 +424,12 @@ def _handler(
             self.wfile.write(payload)
 
     return MonitorHandler
+
+
+def _real_trading_control_enabled(requested: bool, settings: Any) -> bool:
+    return (
+        requested
+        and settings.app_mode == APP_MODE_REAL
+        and settings.real_trading_enabled
+        and not settings.real_emergency_stop
+    )

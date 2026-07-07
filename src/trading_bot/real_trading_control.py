@@ -4,13 +4,15 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from trading_bot.config import TradingSettings
+from trading_bot.config import APP_MODE_REAL, TradingSettings
 
 CONTROL_PATH = Path("monitor/real_trading_control.json")
 
 
 @dataclass(frozen=True)
 class RealTradingControl:
+    app_mode: str
+    mock_trading: bool
     env_enabled: bool
     emergency_stop: bool
     manual_enabled: bool
@@ -19,7 +21,12 @@ class RealTradingControl:
 
     @property
     def orders_unlocked(self) -> bool:
-        return self.env_enabled and not self.emergency_stop and self.manual_enabled
+        return (
+            self.app_mode == APP_MODE_REAL
+            and self.env_enabled
+            and not self.emergency_stop
+            and self.manual_enabled
+        )
 
     @property
     def mode_label(self) -> str:
@@ -27,6 +34,8 @@ class RealTradingControl:
 
     def to_dict(self) -> dict[str, object]:
         return {
+            "appMode": self.app_mode,
+            "mockTrading": self.mock_trading,
             "envEnabled": self.env_enabled,
             "emergencyStop": self.emergency_stop,
             "manualEnabled": self.manual_enabled,
@@ -41,6 +50,8 @@ def load_real_trading_control(
     path: Path = CONTROL_PATH,
 ) -> RealTradingControl:
     return RealTradingControl(
+        app_mode=settings.app_mode,
+        mock_trading=settings.mock_trading,
         env_enabled=settings.real_trading_enabled,
         emergency_stop=settings.real_emergency_stop,
         manual_enabled=_read_manual_enabled(path),

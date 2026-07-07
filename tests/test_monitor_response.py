@@ -1,7 +1,10 @@
 from datetime import date
 from types import SimpleNamespace
 
+from trading_bot.config import APP_MODE_REAL, APP_MODE_TEST, TradingSettings
 from trading_bot.monitor_response import generate_daily_summary_state, runtime_state
+from trading_bot.monitor_server import _real_trading_control_enabled
+from trading_bot.real_trading_control import load_real_trading_control
 
 
 def test_generate_daily_summary_state_keeps_response_keys(monkeypatch) -> None:
@@ -106,3 +109,63 @@ def test_runtime_state_keeps_monitor_auth_shape(monkeypatch) -> None:
         },
         "realTrading": {"ordersUnlocked": False},
     }
+
+
+def test_runtime_state_exposes_app_mode_without_unlocking_test_mode(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    control_path = tmp_path / "control.json"
+    control_path.write_text('{"manualEnabled": true}', encoding="utf-8")
+    monkeypatch.delenv("MONITOR_BEARER_TOKEN", raising=False)
+    control = load_real_trading_control(
+        TradingSettings(
+            app_mode=APP_MODE_TEST,
+            real_trading_enabled=True,
+            real_emergency_stop=False,
+        ),
+        control_path,
+    )
+
+    payload = runtime_state(control)
+
+    assert payload["activeMode"] == "mock"
+    assert payload["realTrading"]["appMode"] == "test"
+    assert payload["realTrading"]["mockTrading"] is True
+    assert payload["realTrading"]["manualEnabled"] is True
+    assert payload["realTrading"]["ordersUnlocked"] is False
+
+
+def test_monitor_unlock_request_requires_real_mode_and_env_switches() -> None:
+    assert _real_trading_control_enabled(
+        True,
+        TradingSettings(
+            app_mode=APP_MODE_REAL,
+            real_trading_enabled=True,
+            real_emergency_stop=False,
+        ),
+    )
+    assert not _real_trading_control_enabled(
+        True,
+        TradingSettings(
+            app_mode=APP_MODE_TEST,
+            real_trading_enabled=True,
+            real_emergency_stop=False,
+        ),
+    )
+    assert not _real_trading_control_enabled(
+        True,
+        TradingSettings(
+            app_mode=APP_MODE_REAL,
+            real_trading_enabled=True,
+            real_emergency_stop=True,
+        ),
+    )
+    assert not _real_trading_control_enabled(
+        False,
+        TradingSettings(
+            app_mode=APP_MODE_REAL,
+            real_trading_enabled=True,
+            real_emergency_stop=False,
+        ),
+    )

@@ -131,6 +131,8 @@ APP_MODE=test
 `APP_MODE=real` is required before real KIS settings can be loaded. Real
 order-capable paths still remain locked unless `REAL_TRADING_ENABLED=true`,
 `REAL_EMERGENCY_STOP=false`, and the runtime manual unlock are all satisfied.
+`APP_MODE=real` alone never opens real orders; `APP_MODE=test` ignores real
+unlock flags and remains mock/test only.
 
 테스트/모의 서버에서 주문/체결 표본을 늘려야 할 때만 나스닥 20일선 전역
 진입 차단(`MARKET_BELOW_MA20`)을 우회할 수 있습니다.
@@ -448,7 +450,10 @@ candidate exhaustion.
 체결/보유 동기화, 일일 요약 저장, 모니터 화면 표시로 구성됩니다. 실투자
 주문은 `APP_MODE=real`, `REAL_TRADING_ENABLED=true`,
 `REAL_EMERGENCY_STOP=false`, 별도 런타임 잠금 해제가 모두 만족되기 전에는
-열리지 않도록 설계되어 있습니다.
+열리지 않도록 설계되어 있습니다. 현재 스케줄러와 `mock-*` CLI 주문 경로는
+KIS 모의투자 submitter만 사용하며, 실투자 주문 submitter가 추가될 경우에도
+`real_trading_guard`의 모드/비상정지/수동잠금/한도 검사를 먼저 통과해야
+합니다.
 
 ### 후보 수집과 후보 평가
 

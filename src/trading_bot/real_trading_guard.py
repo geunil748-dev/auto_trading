@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from trading_bot.config import TradingSettings
+from trading_bot.config import APP_MODE_REAL, TradingSettings
 
 
 @dataclass(frozen=True)
@@ -15,6 +15,8 @@ def ensure_real_trading_allowed(
     settings: TradingSettings,
     manual_enabled: bool = False,
 ) -> None:
+    if settings.app_mode != APP_MODE_REAL:
+        raise PermissionError("실투자 주문은 APP_MODE=real에서만 허용됩니다.")
     if settings.real_emergency_stop:
         raise PermissionError("실투자 비상정지가 켜져 있습니다.")
     if not settings.real_trading_enabled:

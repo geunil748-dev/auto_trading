@@ -17,6 +17,8 @@ window.runtimeControls = (() => {
 
   function render(runtime) {
     const fallback = {
+      appMode: "test",
+      mockTrading: true,
       envEnabled: false,
       emergencyStop: true,
       manualEnabled: false,
@@ -30,7 +32,7 @@ window.runtimeControls = (() => {
     const modeLabel = runtime.modeLabel || (ordersUnlocked ? "실투자 대기" : "모의투자");
     const status = orderStatusText(realTrading);
     document.querySelector("#operatingMode").textContent = modeLabel;
-    document.querySelector("#realOrderStatus").textContent = ordersUnlocked ? status : "";
+    document.querySelector("#realOrderStatus").textContent = status;
     if (securityBar) {
       securityBar.hidden = monitorAuth.localBypass === true;
     }
@@ -43,6 +45,9 @@ window.runtimeControls = (() => {
   }
 
   function orderStatusText(realTrading) {
+    if (realTrading.appMode !== "real") {
+      return "APP_MODE=test이므로 실투자 주문이 막혀 있습니다.";
+    }
     if (!realTrading.envEnabled) {
       return ".env의 REAL_TRADING_ENABLED가 꺼져 있어 실투자 주문이 막혀 있습니다.";
     }

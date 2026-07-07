@@ -935,6 +935,7 @@ def test_kis_mock_buy_submitter_uses_settings_for_limit_order() -> None:
 
     assert result == {"ok": True}
     assert calls[0][:6] == ("12345678", "01", "AAA", 2, 10.5, "buy")
+    assert calls[0][-1] == {"mock": True}
 
     sell_result = KisMockSellSubmitter(
         Kis(),
@@ -943,6 +944,7 @@ def test_kis_mock_buy_submitter_uses_settings_for_limit_order() -> None:
 
     assert sell_result == {"ok": True}
     assert calls[1][:6] == ("12345678", "01", "AAA", 2, 10.1, "sell")
+    assert calls[1][-1] == {"mock": True}
 
     cancel_result = KisMockOrderCanceller(
         Kis(),
@@ -951,6 +953,7 @@ def test_kis_mock_buy_submitter_uses_settings_for_limit_order() -> None:
 
     assert cancel_result == {"ok": True}
     assert calls[2][:5] == ("12345678", "01", "AAA", "999", 1)
+    assert calls[2][-1]["mock"] is True
 
 
 def test_kis_mock_submitter_raises_on_business_error_response() -> None:
