@@ -102,9 +102,13 @@ def test_buy_intent_executor_marks_candidate_evaluation_order_submitted() -> Non
 
     assert repository.candidate_evaluations[0].order_submitted is True
     assert repository.candidate_evaluations[0].order_id == "1001"
-    assert repository.trading_events[0].event_type == "ORDER_SUBMIT_SUCCEEDED"
+    assert [event.event_type for event in repository.trading_events] == [
+        "ORDER_SUBMIT_SUCCEEDED",
+        "ORDER_RECONCILIATION_MATCHED",
+    ]
     assert repository.trading_events[0].order_no == "1001"
-    assert repository.trading_events[-1].event_type == "ORDER_RECONCILIATION_MATCHED"
+    assert len(repository.logs) == 1
+    assert repository.logs[0].module == "execution"
 
 
 def test_buy_intent_executor_handles_empty_intents() -> None:
@@ -157,6 +161,13 @@ def test_buy_intent_executor_records_failures_and_continues() -> None:
         "API_ERROR",
         "ORDER_FAILED",
     ]
+    assert [item.event_type for item in repository.trading_events] == [
+        "ORDER_SUBMIT_FAILED",
+        "ORDER_SUBMIT_FAILED",
+        "ORDER_SUBMIT_SUCCEEDED",
+        "ORDER_RECONCILIATION_MISSING_TRADE_RECORD",
+        "ORDER_RECONCILIATION_MATCHED",
+    ]
 
 
 def test_buy_intent_executor_retries_temporary_api_errors() -> None:
@@ -185,6 +196,13 @@ def test_buy_intent_executor_retries_temporary_api_errors() -> None:
         "API_ERROR",
         "RETRY",
     ]
+    assert [item.event_type for item in repository.trading_events] == [
+        "ORDER_SUBMIT_FAILED",
+        "ORDER_RETRY",
+        "ORDER_SUBMIT_SUCCEEDED",
+        "ORDER_RECONCILIATION_MATCHED",
+    ]
+    assert repository.logs[-1].module == "execution"
 
 
 def test_buy_intent_executor_blocks_wide_bid_ask_spread() -> None:

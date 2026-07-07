@@ -8,7 +8,7 @@ decisions and operational outcomes. It does not replace the existing tables.
 - `candidate_evaluations`: latest per-candidate state such as final decision and
   whether an order was submitted.
 - `bot_log`: human-facing operational log used by existing monitor and report
-  paths.
+  paths. Per-candidate analytical events should not be duplicated here.
 - `trading_event_log`: normalized event history for later analysis of why a
   ticker did or did not reach order submission, fill, exit, or notification.
 
@@ -69,7 +69,8 @@ value to a real column only when it is repeatedly used across analysis queries.
 3. Record the event through `trading_bot.trading_event_logger`.
 4. If the event blocks a buy candidate, update `candidate_evaluations` through
    `record_buy_not_submitted` when possible.
-5. Keep existing `bot_log` writes when monitor or reports still depend on them.
+5. Keep `bot_log` writes only for operator-visible summaries or failures that
+   monitor or reports still depend on.
 6. Put extra values in `details_json` and never include secrets.
 
 Example:
@@ -84,6 +85,20 @@ record_buy_not_submitted(
     details={"unfilled_order_count": 1},
 )
 ```
+
+## Cutover Policy
+
+After this logging-policy cutover, analysis should use `trading_event_log` as
+the canonical source for structured trading events. `bot_log` is reserved for
+operator-facing summaries and failures, such as scheduler status, pipeline
+summaries, API/DB errors, notification failures, monitor health issues, and
+human-readable buy/sell order summaries.
+
+Legacy `bot_log` rows from before the cutover may still contain duplicated
+candidate or trading analysis events. Do not delete those rows; treat them as
+legacy operational history. New analysis code should not mix `bot_log` with
+`trading_event_log` for event counts unless a deliberately named option such as
+`include_legacy_bot_log` is added and defaults to off.
 
 ## Correlation
 

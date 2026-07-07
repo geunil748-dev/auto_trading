@@ -60,7 +60,7 @@ def record_trading_event(
     repository: object | None,
     event: TradingEvent,
     *,
-    fallback_bot_log: bool = True,
+    fallback_bot_log: bool = False,
 ) -> bool:
     """Best-effort append-only event save.
 
@@ -150,7 +150,7 @@ def record_buy_not_submitted(
     details: Mapping[str, Any] | None = None,
     candidate_source: str | None = None,
     ranking_selection_mode: str | None = None,
-    fallback_bot_log: bool = True,
+    fallback_bot_log: bool = False,
     update_candidate_evaluation: bool = True,
 ) -> bool:
     target_date = trade_date or current_trade_date()

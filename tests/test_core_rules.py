@@ -553,11 +553,7 @@ def test_entry_planner_saves_bought_and_soft_score_evaluation() -> None:
     assert evaluation.soft_condition_failed_count == 1
     condition_json = json.loads(evaluation.condition_result_json)
     assert condition_json["failed_soft_reasons"] == ["BREAKOUT_CLOSE_FAILED"]
-    assert repository.logs[0].message == (
-        "후보평가 저장: 종목=SOFT 최종점수=85.5 매수허용=예 주문제출=아니오 "
-        "매수판정=매수 허용 하드필터탈락=0 소프트조건탈락=1 VWAP/MA20상태=비활성화"
-    )
-    assert repository.logs[0].reject_reason == "BUY_ALLOWED"
+    assert repository.logs == []
     assert repository.trading_events[0].event_type == "BUY_ALLOWED"
 
 

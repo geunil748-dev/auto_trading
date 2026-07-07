@@ -59,7 +59,7 @@ def test_sanitize_event_details_redacts_sensitive_keys() -> None:
     assert details["rows"][0]["symbol"] == "AAA"
 
 
-def test_record_trading_event_sanitizes_and_optionally_writes_bot_log() -> None:
+def test_record_trading_event_sanitizes_without_default_bot_log() -> None:
     repository = FakeRepository()
 
     saved = record_trading_event(
@@ -76,13 +76,33 @@ def test_record_trading_event_sanitizes_and_optionally_writes_bot_log() -> None:
     )
 
     assert saved is True
-    assert repository.logs[-1].reject_reason == "CANDIDATE_LIST_TELEGRAM_SENT"
+    assert repository.logs == []
     assert repository.events[0].details_json["telegram_token"] == "<redacted>"
     assert repository.events[0].details_json["메모"] == "한글"
     assert repository.events[0].details_json["correlation"]["event_type"] == "NOTIFICATION_SENT"
 
 
-def test_record_buy_not_submitted_updates_candidate_event_and_bot_log() -> None:
+def test_record_trading_event_writes_bot_log_when_explicitly_enabled() -> None:
+    repository = FakeRepository()
+
+    saved = record_trading_event(
+        repository,
+        TradingEvent(
+            event_time=datetime(2026, 6, 18, 1, 2, 3),
+            trade_date=date(2026, 6, 18),
+            ticker="AAA",
+            stage="NOTIFICATION",
+            event_type="NOTIFICATION_SENT",
+            reason_code="OPERATOR_VISIBLE_EVENT",
+        ),
+        fallback_bot_log=True,
+    )
+
+    assert saved is True
+    assert repository.logs[-1].reject_reason == "OPERATOR_VISIBLE_EVENT"
+
+
+def test_record_buy_not_submitted_updates_candidate_event_without_default_bot_log() -> None:
     repository = FakeRepository()
 
     record_buy_not_submitted(
@@ -100,6 +120,20 @@ def test_record_buy_not_submitted_updates_candidate_event_and_bot_log() -> None:
     assert repository.events[0].reason_code == "NO_ORDER_UNFILLED_ORDER"
     assert repository.events[0].details_json["reason_family"] == "NO_ORDER"
     assert repository.events[0].details_json["correlation"]["flow_key"] == "2026-06-18:AAA"
+    assert repository.logs == []
+
+
+def test_record_buy_not_submitted_writes_bot_log_when_explicitly_enabled() -> None:
+    repository = FakeRepository()
+
+    record_buy_not_submitted(
+        repository,
+        ticker="AAA",
+        trade_date=date(2026, 6, 18),
+        reason_code="NO_ORDER_UNFILLED_ORDER",
+        fallback_bot_log=True,
+    )
+
     assert repository.logs[-1].message == (
         "candidate_order_not_submitted symbol=AAA reason=NO_ORDER_UNFILLED_ORDER"
     )
@@ -171,6 +205,7 @@ def test_candidate_evaluation_records_buy_allowed_and_blocked() -> None:
     assert repository.events[0].candidate_source == "manual_buy_list"
     assert repository.events[1].event_type == "BUY_BLOCKED"
     assert repository.events[1].reason_code == "BREAKOUT_NOT_TRIGGERED"
+    assert repository.logs == []
 
 
 def test_order_protection_blocked_marks_candidate_not_submitted() -> None:

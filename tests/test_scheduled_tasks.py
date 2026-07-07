@@ -2005,5 +2005,5 @@ def test_intraday_recheck_records_buy_allowed_no_order_reason(
     assert repository.no_orders == [("AAA", "NO_ORDER_UNFILLED_ORDER")]
     assert repository.trading_events[0].event_type == "BUY_NOT_SUBMITTED"
     assert repository.trading_events[0].reason_code == "NO_ORDER_UNFILLED_ORDER"
-    assert repository.logs[0].reject_reason == "NO_ORDER_UNFILLED_ORDER"
+    assert repository.logs == []
     assert [item.ticker for item in executor.calls[0]] == ["BBB"]
