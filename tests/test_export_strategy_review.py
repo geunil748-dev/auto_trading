@@ -3,9 +3,12 @@ from __future__ import annotations
 from datetime import date
 
 from tools.export_strategy_review import (
+    SheetResult,
     _safe_error,
     candidate_orders_sql,
+    event_summary_sql,
     export_sheets,
+    export_strategy_review_workbook_with_results,
     pnl_by_exit_reason_sql,
     sanitize_value,
     summary_reconciliation_sql,
@@ -51,6 +54,18 @@ def _columns() -> dict[str, list[str]]:
         ],
         "daily_run_summary": ["trade_date", "realized_profit_usd"],
         "daily_trade_summary_report": ["trade_date", "mode", "total_profit_usd"],
+        "trading_event_log": [
+            "trade_date",
+            "event_type",
+            "reason_code",
+            "severity",
+            "stage",
+            "side",
+            "is_blocking",
+            "order_submitted",
+            "buy_allowed",
+        ],
+        "bot_log": ["trade_date", "created_at", "message", "reject_reason"],
     }
 
 
@@ -107,3 +122,105 @@ def test_export_sheets_includes_reconciliation_sheet(monkeypatch) -> None:
     list(export_sheets(None, _columns(), date(2026, 6, 1), date(2026, 6, 29), False))
 
     assert "summary_reconciliation" in names
+
+
+def test_export_strategy_review_workbook_with_results_excludes_legacy_bot_log_by_default(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeConnection:
+        def close(self) -> None:
+            pass
+
+    def fake_export_sheets(
+        connection,
+        columns_by_table,
+        date_from,
+        date_to,
+        include_real,
+        include_legacy_bot_log=False,
+    ):
+        captured["include_legacy_bot_log"] = include_legacy_bot_log
+        return [SheetResult("trading_event_log", [])]
+
+    monkeypatch.setattr(
+        "tools.export_strategy_review.pyodbc_connect_factory",
+        lambda: lambda: FakeConnection(),
+    )
+    monkeypatch.setattr(
+        "tools.export_strategy_review.load_columns",
+        lambda connection, **kwargs: {},
+    )
+    monkeypatch.setattr(
+        "tools.export_strategy_review.schema_columns_sheet",
+        lambda connection, **kwargs: SheetResult("schema_columns", []),
+    )
+    monkeypatch.setattr("tools.export_strategy_review.export_sheets", fake_export_sheets)
+
+    output, results, failures = export_strategy_review_workbook_with_results(
+        date_from=date(2026, 6, 1),
+        date_to=date(2026, 6, 29),
+        output=tmp_path / "strategy_review.xlsx",
+    )
+
+    assert output.exists()
+    assert failures == []
+    assert captured["include_legacy_bot_log"] is False
+    assert "bot_log" not in {result.name for result in results}
+    assert "legacy_bot_log" not in {result.name for result in results}
+
+
+def test_export_sheets_excludes_legacy_bot_log_by_default(monkeypatch) -> None:
+    raw_names = []
+
+    def fake_query_raw_sheet(connection, columns, name, sql, params, out_columns):
+        return SheetResult(name, [])
+
+    def fake_raw_table_sheet(connection, columns, sheet_name, *args, **kwargs):
+        raw_names.append(sheet_name)
+        return SheetResult(sheet_name, [])
+
+    monkeypatch.setattr("tools.export_strategy_review.query_raw_sheet", fake_query_raw_sheet)
+    monkeypatch.setattr("tools.export_strategy_review.raw_table_sheet", fake_raw_table_sheet)
+
+    list(export_sheets(None, _columns(), date(2026, 6, 1), date(2026, 6, 29), False))
+
+    assert "bot_log" not in raw_names
+    assert "legacy_bot_log" not in raw_names
+
+
+def test_export_sheets_includes_legacy_bot_log_only_when_requested(monkeypatch) -> None:
+    raw_names = []
+
+    def fake_query_raw_sheet(connection, columns, name, sql, params, out_columns):
+        return SheetResult(name, [])
+
+    def fake_raw_table_sheet(connection, columns, sheet_name, *args, **kwargs):
+        raw_names.append(sheet_name)
+        return SheetResult(sheet_name, [])
+
+    monkeypatch.setattr("tools.export_strategy_review.query_raw_sheet", fake_query_raw_sheet)
+    monkeypatch.setattr("tools.export_strategy_review.raw_table_sheet", fake_raw_table_sheet)
+
+    list(
+        export_sheets(
+            None,
+            _columns(),
+            date(2026, 6, 1),
+            date(2026, 6, 29),
+            False,
+            include_legacy_bot_log=True,
+        )
+    )
+
+    assert "legacy_bot_log" in raw_names
+    assert "bot_log" not in raw_names
+
+
+def test_event_summary_sql_uses_trading_event_log_only() -> None:
+    sql = event_summary_sql(_columns())
+
+    assert "FROM dbo.[trading_event_log]" in sql
+    assert "bot_log" not in sql.lower()

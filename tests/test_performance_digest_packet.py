@@ -80,6 +80,41 @@ def test_packet_chunks_include_part_numbers_and_packet_id(tmp_path) -> None:
     assert "packet_complete: true" in text
 
 
+def test_digest_stats_ignore_legacy_bot_log_sheets() -> None:
+    stats = collect_strategy_review_digest_stats(
+        _sheet_results()
+        + [
+            Result(
+                "legacy_bot_log",
+                [
+                    {
+                        "trade_date": "2026-07-02",
+                        "event_type": "BUY_NOT_SUBMITTED",
+                        "sell_count": 999,
+                        "total_profit_usd": -999,
+                    }
+                ],
+            ),
+            Result(
+                "bot_log",
+                [
+                    {
+                        "trade_date": "2026-07-02",
+                        "event_type": "ORDER_SUBMIT_FAILED",
+                        "sell_count": 999,
+                        "total_profit_usd": -999,
+                    }
+                ],
+            ),
+        ],
+        report_date=date(2026, 7, 2),
+    )
+
+    assert stats["daily"]["overall"]["sell_count"] == 50
+    assert stats["daily"]["overall"]["realized_pnl"] == 100
+    assert not any("bot_log" in item for item in stats["missing_or_limited"])
+
+
 def test_codex_hints_do_not_direct_strategy_parameter_change(tmp_path) -> None:
     digest = _build_digest(tmp_path)
     hints = _block_after(digest, "[CODEX_FIX_INPUT_HINTS]", "")

@@ -100,6 +100,19 @@ legacy operational history. New analysis code should not mix `bot_log` with
 `trading_event_log` for event counts unless a deliberately named option such as
 `include_legacy_bot_log` is added and defaults to off.
 
+## Strategy Review Export
+
+The default strategy review workbook and automatic data digest use structured
+sheets for analysis. Event summaries come from `trading_event_log`; performance
+metrics come from sheets such as `fill_history`, `trade_history`,
+`daily_run_summary`, `daily_trade_summary_report`, `candidate_evaluations`, and
+the derived `pnl_*` and reconciliation sheets.
+
+The raw `bot_log` sheet is not included by default. Operators can include old
+operational rows for reference with `--include-legacy-bot-log`, which writes a
+`legacy_bot_log` sheet. That sheet is reference-only and must not be used for
+candidate, order, event, reason, ticker, or performance counts.
+
 ## Correlation
 
 Do not add columns for every new relationship. The event logger writes a

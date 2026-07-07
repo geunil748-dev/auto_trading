@@ -101,6 +101,7 @@ def save_strategy_review_export() -> Path | None:
             date_to=trade_date,
             output=output,
             include_real=False,
+            include_legacy_bot_log=False,
         )
         safe_scheduler_log(
             "INFO",
@@ -219,6 +220,7 @@ def export_strategy_review_workbook(
     date_to=None,
     output=None,
     include_real: bool = False,
+    include_legacy_bot_log: bool = False,
 ):
     from tools.export_strategy_review import export_strategy_review_workbook as export
 
@@ -227,6 +229,7 @@ def export_strategy_review_workbook(
         date_to=date_to,
         output=output,
         include_real=include_real,
+        include_legacy_bot_log=include_legacy_bot_log,
     )
 
 
@@ -235,6 +238,7 @@ def export_strategy_review_workbook_with_results(
     date_to=None,
     output=None,
     include_real: bool = False,
+    include_legacy_bot_log: bool = False,
 ):
     from tools.export_strategy_review import export_strategy_review_workbook_with_results as export
 
@@ -243,6 +247,7 @@ def export_strategy_review_workbook_with_results(
         date_to=date_to,
         output=output,
         include_real=include_real,
+        include_legacy_bot_log=include_legacy_bot_log,
     )
 
 

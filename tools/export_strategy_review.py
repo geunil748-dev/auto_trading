@@ -55,12 +55,12 @@ TARGET_TABLES = (
     "daily_trade_summary_report",
     "candidate_evaluations",
     "trading_event_log",
-    "bot_log",
     "order_snapshot",
     "holding_snapshot",
     "account_snapshot",
     "entry_profit_snapshot",
 )
+LEGACY_BOT_LOG_TABLES = ("bot_log",)
 
 DEFAULT_DATE_FROM = "2026-05-20"
 
@@ -72,17 +72,25 @@ class SheetResult:
     error: str = ""
 
 
+def target_tables(*, include_legacy_bot_log: bool = False) -> tuple[str, ...]:
+    if include_legacy_bot_log:
+        return TARGET_TABLES + LEGACY_BOT_LOG_TABLES
+    return TARGET_TABLES
+
+
 def export_strategy_review_workbook(
     date_from: date | str = DEFAULT_DATE_FROM,
     date_to: date | str | None = None,
     output: Path | str | None = None,
     include_real: bool = False,
+    include_legacy_bot_log: bool = False,
 ) -> Path:
     output_path, _, _ = export_strategy_review_workbook_with_results(
         date_from=date_from,
         date_to=date_to,
         output=output,
         include_real=include_real,
+        include_legacy_bot_log=include_legacy_bot_log,
     )
     return output_path
 
@@ -92,12 +100,14 @@ def export_strategy_review_workbook_with_results(
     date_to: date | str | None = None,
     output: Path | str | None = None,
     include_real: bool = False,
+    include_legacy_bot_log: bool = False,
 ) -> tuple[Path, list[SheetResult], list[tuple[str, str]]]:
     return _create_strategy_review_workbook(
         date_from=date_from,
         date_to=date_to,
         output=output,
         include_real=include_real,
+        include_legacy_bot_log=include_legacy_bot_log,
     )
 
 
@@ -107,6 +117,7 @@ def _create_strategy_review_workbook(
     date_to: date | str | None = None,
     output: Path | str | None = None,
     include_real: bool = False,
+    include_legacy_bot_log: bool = False,
 ) -> tuple[Path, list[SheetResult], list[tuple[str, str]]]:
     parsed_date_from = _coerce_date(date_from)
     parsed_date_to = _coerce_date(date_to) if date_to is not None else date.today()
@@ -119,14 +130,23 @@ def _create_strategy_review_workbook(
     results: list[SheetResult] = []
     failures: list[tuple[str, str]] = []
     with closing(connect()) as connection:
-        columns_by_table = load_columns(connection)
-        results.append(schema_columns_sheet(connection))
+        columns_by_table = load_columns(
+            connection,
+            include_legacy_bot_log=include_legacy_bot_log,
+        )
+        results.append(
+            schema_columns_sheet(
+                connection,
+                include_legacy_bot_log=include_legacy_bot_log,
+            )
+        )
         for result in export_sheets(
             connection,
             columns_by_table,
             parsed_date_from,
             parsed_date_to,
             include_real,
+            include_legacy_bot_log=include_legacy_bot_log,
         ):
             if result.error:
                 failures.append((result.name, result.error))
@@ -147,6 +167,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         date_to=args.date_to if args.date_to else None,
         output=Path(args.output) if args.output else None,
         include_real=args.include_real,
+        include_legacy_bot_log=args.include_legacy_bot_log,
     )
 
     metrics = final_metrics(results)
@@ -181,6 +202,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Do not apply default is_mock=1 / mode=mock filters.",
     )
+    parser.add_argument(
+        "--include-legacy-bot-log",
+        action="store_true",
+        help="Include legacy bot_log rows as a reference-only legacy_bot_log sheet.",
+    )
     return parser.parse_args(argv)
 
 
@@ -190,6 +216,7 @@ def export_sheets(
     date_from: date,
     date_to: date,
     include_real: bool,
+    include_legacy_bot_log: bool = False,
 ) -> Iterable[SheetResult]:
     raw_specs = [
         ("fill_history", "fill_history", "trade_date", FILL_HISTORY_COLUMNS, RAW_ORDERS["fill_history"]),
@@ -199,11 +226,14 @@ def export_sheets(
         ("daily_trade_summary_report", "daily_trade_summary_report", "trade_date", DAILY_TRADE_SUMMARY_REPORT_COLUMNS, RAW_ORDERS["daily_trade_summary_report"]),
         ("candidate_evaluations", "candidate_evaluations", "trading_date", CANDIDATE_EVALUATION_COLUMNS, RAW_ORDERS["candidate_evaluations"]),
         ("trading_event_log", "trading_event_log", "trade_date", TRADING_EVENT_LOG_COLUMNS, RAW_ORDERS["trading_event_log"]),
-        ("bot_log", "bot_log", "trade_date", BOT_LOG_COLUMNS, RAW_ORDERS["bot_log"]),
         ("holding_snapshot", "holding_snapshot", "trade_date", HOLDING_SNAPSHOT_COLUMNS, RAW_ORDERS["holding_snapshot"]),
         ("account_snapshot", "account_snapshot", "trade_date", ACCOUNT_SNAPSHOT_COLUMNS, RAW_ORDERS["account_snapshot"]),
         ("entry_profit_snapshot", "entry_profit_snapshot", "trade_date", ENTRY_PROFIT_SNAPSHOT_COLUMNS, RAW_ORDERS["entry_profit_snapshot"], True),
     ]
+    if include_legacy_bot_log:
+        raw_specs.append(
+            ("legacy_bot_log", "bot_log", "trade_date", BOT_LOG_COLUMNS, RAW_ORDERS["bot_log"])
+        )
     yield query_raw_sheet(
         connection,
         columns_by_table,
@@ -316,8 +346,13 @@ def export_sheets(
     )
 
 
-def load_columns(connection: Any) -> dict[str, list[str]]:
-    placeholders = ", ".join("?" for _ in TARGET_TABLES)
+def load_columns(
+    connection: Any,
+    *,
+    include_legacy_bot_log: bool = False,
+) -> dict[str, list[str]]:
+    tables = target_tables(include_legacy_bot_log=include_legacy_bot_log)
+    placeholders = ", ".join("?" for _ in tables)
     rows = fetch_rows(
         connection,
         f"""
@@ -327,17 +362,22 @@ def load_columns(connection: Any) -> dict[str, list[str]]:
           AND TABLE_NAME IN ({placeholders})
         ORDER BY TABLE_NAME, ORDINAL_POSITION
         """,
-        TARGET_TABLES,
+        tables,
         ["table_name", "column_name"],
     )
-    result: dict[str, list[str]] = {table: [] for table in TARGET_TABLES}
+    result: dict[str, list[str]] = {table: [] for table in tables}
     for row in rows:
         result.setdefault(str(row["table_name"]), []).append(str(row["column_name"]))
     return result
 
 
-def schema_columns_sheet(connection: Any) -> SheetResult:
-    placeholders = ", ".join("?" for _ in TARGET_TABLES)
+def schema_columns_sheet(
+    connection: Any,
+    *,
+    include_legacy_bot_log: bool = False,
+) -> SheetResult:
+    tables = target_tables(include_legacy_bot_log=include_legacy_bot_log)
+    placeholders = ", ".join("?" for _ in tables)
     rows = fetch_rows(
         connection,
         f"""
@@ -351,7 +391,7 @@ def schema_columns_sheet(connection: Any) -> SheetResult:
           AND TABLE_NAME IN ({placeholders})
         ORDER BY TABLE_NAME, ORDINAL_POSITION
         """,
-        TARGET_TABLES,
+        tables,
         ["table_name", "column_name", "data_type", "ordinal_position", "is_nullable"],
     )
     return SheetResult("schema_columns", rows)

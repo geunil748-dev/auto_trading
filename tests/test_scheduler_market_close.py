@@ -155,6 +155,7 @@ def test_save_strategy_review_export_uses_daily_filename(monkeypatch, tmp_path) 
         "date_to": date(2026, 6, 29),
         "output": expected_output,
         "include_real": False,
+        "include_legacy_bot_log": False,
     }
     assert logs[0][0] == "INFO"
     assert logs[0][1] == "summary"
