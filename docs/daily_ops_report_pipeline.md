@@ -1,5 +1,11 @@
 # Daily Operations Report Pipeline
 
+Historical note: this document is superseded by
+`docs/data_review_excel_spec.md` for the detailed workbook contract and by
+`docs/daily_ops_report_generator_plan.md` for the current CLI path. Keep the
+safety notes below as historical context; do not treat the older `daily_ops_*`
+file names as the active naming contract.
+
 ## Purpose
 
 The daily operations report package gives ChatGPT a safe, repeatable input for reviewing auto-trading operations without changing the trading system.
@@ -11,12 +17,18 @@ The package is read-only. It must never submit orders, call KIS, call Telegram, 
 The daily package is written under `reports/analysis/` and is not committed:
 
 ```text
-reports/analysis/daily_ops_YYYY-MM-DD.xlsx
-reports/analysis/daily_ops_YYYY-MM-DD.md
-reports/analysis/daily_ops_YYYY-MM-DD.json
+reports/analysis/auto_trading_review_YYYY-MM-DD.xlsx
+reports/analysis/daily_ops_summary_YYYY-MM-DD.md
+reports/analysis/daily_ops_metrics_YYYY-MM-DD.json
 ```
 
-`YYYY-MM-DD` is the KST trading date or analysis end date.
+The current skeleton CLI is:
+
+```powershell
+python -m trading_bot export-daily-ops-report --date YYYY-MM-DD --output-dir reports/analysis
+```
+
+`YYYY-MM-DD` is the completed trading date or analysis end date.
 
 ## Read-Only DB Scope
 
