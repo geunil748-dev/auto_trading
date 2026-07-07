@@ -13,38 +13,45 @@ This plan follows `docs/data_review_excel_spec.md` and intentionally does not im
 - Trading impact: none.
 - Generated files are expected under `reports/analysis/` at runtime, but this plan does not create or commit generated output files.
 
-## Proposed CLI command
+## Current CLI command
 
-Proposed command name:
-
-```bash
-python -m auto_trading.reports.daily_ops_report generate --trade-date YYYY-MM-DD --output-dir reports/analysis
-```
-
-Optional implementation may expose an equivalent script entry point:
+The current safe skeleton uses the existing `trading_bot` module CLI:
 
 ```bash
-auto-trading-daily-ops-report --trade-date YYYY-MM-DD --output-dir reports/analysis
+python -m trading_bot export-daily-ops-report --date YYYY-MM-DD --output-dir reports/analysis
 ```
+
+No separate console script is currently required. If one is added later, it
+should delegate to the same `trading_bot` CLI path instead of introducing a
+second behavior contract.
+
+The current skeleton writes placeholder Markdown and JSON files only. A future
+full implementation may add the Excel workbook described below, but it must keep
+the same read-only and no-generated-files-in-git boundaries.
 
 ### Inputs
 
 Required:
 
-- `--trade-date YYYY-MM-DD`: report date, normally the completed US market trading date.
+- `--date YYYY-MM-DD`: report date, normally the completed US market trading date.
 - `--output-dir reports/analysis`: local output directory for generated artifacts.
 
 Optional:
 
 - `--start-date YYYY-MM-DD`: analysis window start date. If omitted, use the same default period defined by `docs/data_review_excel_spec.md` for operations review, normally recent two weeks unless the operator overrides it.
-- `--end-date YYYY-MM-DD`: analysis window end date. Defaults to `--trade-date`.
+- `--end-date YYYY-MM-DD`: analysis window end date. Defaults to `--date`.
 - `--timezone America/New_York`: market/reporting timezone used for after-close date boundaries.
 - `--db-path PATH`: local SQLite database path or local read-only database connection alias. The command must not print the raw path if it contains sensitive account or user information.
 - `--dry-run`: validate date range and planned output paths without querying data or creating files.
 
 ### Outputs
 
-For `--trade-date 2026-06-23`, the command creates exactly these report package files:
+For `--date 2026-06-23`, the current skeleton creates:
+
+- `reports/analysis/daily_ops_summary_2026-06-23.md`
+- `reports/analysis/daily_ops_metrics_2026-06-23.json`
+
+A full implementation should create this complete report package:
 
 - `reports/analysis/auto_trading_review_2026-06-23.xlsx`
 - `reports/analysis/daily_ops_summary_2026-06-23.md`
@@ -250,7 +257,7 @@ triggering or Slack delivery before proposing code changes.
 
 ## Follow-up implementation PR steps
 
-1. Add a read-only reporting module and CLI entry point for `daily_ops_report generate`.
+1. Extend the existing read-only reporting module behind `python -m trading_bot export-daily-ops-report`.
 2. Add a database adapter that opens the local database in read-only mode and rejects non-SELECT SQL.
 3. Reuse the workbook sheet and column definitions from `docs/data_review_excel_spec.md`.
 4. Generate the Markdown summary with the required PASS / WARN / FAIL, funnel, runner, noisy-universe, and data-quality sections.

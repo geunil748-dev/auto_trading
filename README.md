@@ -49,6 +49,11 @@ For automatic server updates from `origin/main`, see
 For sharing one KIS access token across the real and test servers, see
 [docs/kis_token_cache.md](docs/kis_token_cache.md).
 
+For future real-trading WebSocket support, `src/trading_bot/adapters/kis_websocket.py`
+and the `KIS_REAL_WS_*` environment settings are intentionally reserved. Current
+runtime paths still use the verified REST/polling integrations unless a separate
+approved WebSocket implementation is added.
+
 For DB preflight/init/repair command boundaries, see
 [docs/db_migration_repair.md](docs/db_migration_repair.md).
 
@@ -166,6 +171,9 @@ Trading event logging is split into three roles:
 - `bot_log`: human-facing operational messages used by existing monitor/report paths.
 - `trading_event_log`: append-only analytical event stream for screening, buy-block,
   order protection, order failure, fills, sell signals, and notifications.
+
+For the active event model and timeline API contract, see
+[docs/logging_event_model.md](docs/logging_event_model.md).
 
 New decision/reject reasons should be recorded through
 `trading_bot.trading_event_logger` so `trading_event_log`, existing
