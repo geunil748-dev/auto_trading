@@ -10,6 +10,45 @@ It is analysis-only and must not change live trading behavior by itself.
 - Compare STOP_LOSS losses by entry reason, candidate source, ranking mode, strategy version, early price path, spread, and opening gap.
 - Treat all outputs as evidence for a later human-reviewed proposal.
 
+## Standalone File Tool
+
+Use `tools/analyze_stop_loss_loss_reduction.py` only with a manually supplied local JSON file that already contains exported trade rows. The tool does not connect to DB, does not read `.env`, and is not wired into `python -m trading_bot`, scheduler, monitor backend, repositories, or report exporters.
+
+Example JSON output:
+
+```powershell
+python tools/analyze_stop_loss_loss_reduction.py `
+  --input tests/fixtures/stop_loss_loss_reduction_rows.json `
+  --output reports/analysis/stop_loss_loss_reduction_sample.json `
+  --format json `
+  --create-dirs
+```
+
+Example Markdown output:
+
+```powershell
+python tools/analyze_stop_loss_loss_reduction.py `
+  --input tests/fixtures/stop_loss_loss_reduction_rows.json `
+  --output reports/analysis/stop_loss_loss_reduction_sample.md `
+  --format markdown `
+  --create-dirs
+```
+
+The output parent directory must already exist unless `--create-dirs` is passed. Generated outputs under `reports/analysis/` are runtime analysis artifacts and must not be committed.
+
+The tool prints only a short row/count summary. It writes the analysis payload to the requested output path and must not be used as automatic proof that stop loss, risk, order, or scheduler behavior should change.
+
+### Safe Input Contract
+
+The input JSON must be a list of row objects. Each row must include:
+
+- `trade_date` or `tradeDate`
+- `ticker` or `symbol`
+- `final_exit_reason`, `finalExitReason`, or `exit_reason`
+- `final_profit_rate`, `finalProfitRate`, or `profit_rate`
+
+Optional context fields include `snapshots` or `snapshotProfits`, `entry_reason`, `candidate_source`, `ranking_selection_mode`, `strategy_version`, `opening_gap`, and `bid_ask_spread_rate`.
+
 ## Explicit Non-Scope
 
 - Do not modify trading decisions, risk guards, order submission, sell/fill handling, scheduler timing, KIS code, DB schema, or monitor backend runtime.
