@@ -15,6 +15,9 @@ class RealTradingControl:
     mock_trading: bool
     env_enabled: bool
     emergency_stop: bool
+    auto_trading_enabled: bool
+    order_execution_enabled: bool
+    order_protection_fail_closed: bool
     manual_enabled: bool
     max_order_krw: int
     max_daily_order_krw: int
@@ -37,7 +40,12 @@ class RealTradingControl:
             "appMode": self.app_mode,
             "mockTrading": self.mock_trading,
             "envEnabled": self.env_enabled,
+            "realTradingEnabled": self.env_enabled,
             "emergencyStop": self.emergency_stop,
+            "realEmergencyStop": self.emergency_stop,
+            "realAutoTradingEnabled": self.auto_trading_enabled,
+            "realOrderExecutionEnabled": self.order_execution_enabled,
+            "realOrderProtectionFailClosed": self.order_protection_fail_closed,
             "manualEnabled": self.manual_enabled,
             "ordersUnlocked": self.orders_unlocked,
             "maxOrderKrw": self.max_order_krw,
@@ -54,6 +62,9 @@ def load_real_trading_control(
         mock_trading=settings.mock_trading,
         env_enabled=settings.real_trading_enabled,
         emergency_stop=settings.real_emergency_stop,
+        auto_trading_enabled=settings.real_auto_trading_enabled,
+        order_execution_enabled=settings.real_order_execution_enabled,
+        order_protection_fail_closed=settings.real_order_protection_fail_closed,
         manual_enabled=_read_manual_enabled(path),
         max_order_krw=settings.real_max_order_krw,
         max_daily_order_krw=settings.real_max_daily_order_krw,

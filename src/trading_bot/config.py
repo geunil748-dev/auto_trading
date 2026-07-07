@@ -192,6 +192,9 @@ class TradingSettings:
     unfilled_cancel_after_seconds: int = 60
     news_cache_ttl_minutes: int = 30
     real_trading_enabled: bool = False
+    real_auto_trading_enabled: bool = False
+    real_order_execution_enabled: bool = False
+    real_order_protection_fail_closed: bool = True
     real_max_order_krw: int = 100000
     real_max_daily_order_krw: int = 300000
     real_emergency_stop: bool = True
@@ -247,6 +250,8 @@ def load_settings() -> TradingSettings:
     app_mode = _app_mode_env()
     mock_trading = _bool_env("MOCK_TRADING", True)
     real_trading_requested = _bool_env("REAL_TRADING_ENABLED", False)
+    real_auto_trading_requested = _bool_env("REAL_AUTO_TRADING_ENABLED", False)
+    real_order_execution_requested = _bool_env("REAL_ORDER_EXECUTION_ENABLED", False)
     market_below_ma20_bypass_requested = _bool_env(
         "ALLOW_MARKET_BELOW_MA20_BYPASS",
         False,
@@ -388,6 +393,16 @@ def load_settings() -> TradingSettings:
             0.5,
         ),
         real_trading_enabled=real_trading_requested if app_mode == APP_MODE_REAL else False,
+        real_auto_trading_enabled=(
+            real_auto_trading_requested if app_mode == APP_MODE_REAL else False
+        ),
+        real_order_execution_enabled=(
+            real_order_execution_requested if app_mode == APP_MODE_REAL else False
+        ),
+        real_order_protection_fail_closed=_bool_env(
+            "REAL_ORDER_PROTECTION_FAIL_CLOSED",
+            True,
+        ),
         real_max_order_krw=_int_env("REAL_MAX_ORDER_KRW", 100000),
         real_max_daily_order_krw=_int_env("REAL_MAX_DAILY_ORDER_KRW", 300000),
         real_emergency_stop=(

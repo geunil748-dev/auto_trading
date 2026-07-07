@@ -35,12 +35,18 @@ def test_load_real_kis_settings_uses_dedicated_real_env(monkeypatch) -> None:
 def test_load_settings_keeps_real_trading_locked_by_default(monkeypatch) -> None:
     monkeypatch.delenv("APP_MODE", raising=False)
     monkeypatch.delenv("REAL_TRADING_ENABLED", raising=False)
+    monkeypatch.delenv("REAL_AUTO_TRADING_ENABLED", raising=False)
+    monkeypatch.delenv("REAL_ORDER_EXECUTION_ENABLED", raising=False)
+    monkeypatch.delenv("REAL_ORDER_PROTECTION_FAIL_CLOSED", raising=False)
     monkeypatch.delenv("REAL_EMERGENCY_STOP", raising=False)
 
     settings = load_settings()
 
     assert settings.app_mode == "test"
     assert settings.real_trading_enabled is False
+    assert settings.real_auto_trading_enabled is False
+    assert settings.real_order_execution_enabled is False
+    assert settings.real_order_protection_fail_closed is True
     assert settings.real_emergency_stop is True
     assert settings.real_max_order_krw == 100000
     assert settings.real_max_daily_order_krw == 300000
@@ -49,6 +55,9 @@ def test_load_settings_keeps_real_trading_locked_by_default(monkeypatch) -> None
 def test_load_settings_reads_real_trading_safety_limits(monkeypatch) -> None:
     monkeypatch.setenv("APP_MODE", "real")
     monkeypatch.setenv("REAL_TRADING_ENABLED", "true")
+    monkeypatch.setenv("REAL_AUTO_TRADING_ENABLED", "true")
+    monkeypatch.setenv("REAL_ORDER_EXECUTION_ENABLED", "true")
+    monkeypatch.setenv("REAL_ORDER_PROTECTION_FAIL_CLOSED", "false")
     monkeypatch.setenv("REAL_EMERGENCY_STOP", "false")
     monkeypatch.setenv("REAL_MAX_ORDER_KRW", "50000")
     monkeypatch.setenv("REAL_MAX_DAILY_ORDER_KRW", "150000")
@@ -56,6 +65,9 @@ def test_load_settings_reads_real_trading_safety_limits(monkeypatch) -> None:
     settings = load_settings()
 
     assert settings.real_trading_enabled is True
+    assert settings.real_auto_trading_enabled is True
+    assert settings.real_order_execution_enabled is True
+    assert settings.real_order_protection_fail_closed is False
     assert settings.real_emergency_stop is False
     assert settings.real_max_order_krw == 50000
     assert settings.real_max_daily_order_krw == 150000
@@ -64,12 +76,16 @@ def test_load_settings_reads_real_trading_safety_limits(monkeypatch) -> None:
 def test_load_settings_test_mode_ignores_real_trading_unlock(monkeypatch) -> None:
     monkeypatch.setenv("APP_MODE", "test")
     monkeypatch.setenv("REAL_TRADING_ENABLED", "true")
+    monkeypatch.setenv("REAL_AUTO_TRADING_ENABLED", "true")
+    monkeypatch.setenv("REAL_ORDER_EXECUTION_ENABLED", "true")
     monkeypatch.setenv("REAL_EMERGENCY_STOP", "false")
 
     settings = load_settings()
 
     assert settings.app_mode == "test"
     assert settings.real_trading_enabled is False
+    assert settings.real_auto_trading_enabled is False
+    assert settings.real_order_execution_enabled is False
     assert settings.real_emergency_stop is True
 
 

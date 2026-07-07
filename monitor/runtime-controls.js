@@ -20,7 +20,12 @@ window.runtimeControls = (() => {
       appMode: "test",
       mockTrading: true,
       envEnabled: false,
+      realTradingEnabled: false,
       emergencyStop: true,
+      realEmergencyStop: true,
+      realAutoTradingEnabled: false,
+      realOrderExecutionEnabled: false,
+      realOrderProtectionFailClosed: true,
       manualEnabled: false,
       ordersUnlocked: false,
       maxOrderKrw: 0,
@@ -56,6 +61,9 @@ window.runtimeControls = (() => {
     }
     if (!realTrading.manualEnabled) {
       return "화면 버튼이 꺼져 있어 실투자 주문이 막혀 있습니다.";
+    }
+    if (!realTrading.realOrderExecutionEnabled) {
+      return "REAL_ORDER_EXECUTION_ENABLED가 꺼져 있어 실투자 주문 API 호출이 막혀 있습니다.";
     }
     return `실투자 주문 대기 중입니다. 1회 ${formatKrw(realTrading.maxOrderKrw)} / 일일 ${formatKrw(realTrading.maxDailyOrderKrw)} 한도`;
   }

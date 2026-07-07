@@ -49,10 +49,11 @@ For automatic server updates from `origin/main`, see
 For sharing one KIS access token across the real and test servers, see
 [docs/kis_token_cache.md](docs/kis_token_cache.md).
 
-For future real-trading WebSocket support, `src/trading_bot/adapters/kis_websocket.py`
-and the `KIS_REAL_WS_*` environment settings are intentionally reserved. Current
-runtime paths still use the verified REST/polling integrations unless a separate
-approved WebSocket implementation is added.
+For future real-trading WebSocket support,
+`src/trading_bot/adapters/kis_websocket_real.py` and the `KIS_REAL_WS_*`
+environment settings are intentionally reserved. Current runtime paths still use
+the verified REST/polling integrations unless a separate approved WebSocket
+implementation is added.
 
 For DB preflight/init/repair command boundaries, see
 [docs/db_migration_repair.md](docs/db_migration_repair.md).
@@ -132,7 +133,9 @@ APP_MODE=test
 order-capable paths still remain locked unless `REAL_TRADING_ENABLED=true`,
 `REAL_EMERGENCY_STOP=false`, and the runtime manual unlock are all satisfied.
 `APP_MODE=real` alone never opens real orders; `APP_MODE=test` ignores real
-unlock flags and remains mock/test only.
+unlock flags and remains mock/test only. Actual real-order submission also
+requires `REAL_ORDER_EXECUTION_ENABLED=true`; the current real command path is
+read-only/stubbed by default.
 
 테스트/모의 서버에서 주문/체결 표본을 늘려야 할 때만 나스닥 20일선 전역
 진입 차단(`MARKET_BELOW_MA20`)을 우회할 수 있습니다.
@@ -242,7 +245,48 @@ Inspect mapped KIS real-account state without submitting orders after setting
 ```powershell
 $env:PYTHONPATH='src'
 python -m trading_bot kis-account --real
+python -m trading_bot real-account
+python -m trading_bot real-preflight
+python -m trading_bot real-preflight --check-account
 ```
+
+Real-trading command separation:
+
+- `mock-*`, `dry-run-live`, `poll-exits-live`, and `run-scheduler` always use
+  the mock order/account path. `APP_MODE=real` does not turn these commands into
+  real-order commands.
+- `real-account` and `real-dry-run-live` use real settings/read-only account
+  inputs, but do not submit orders.
+- `real-buy-live`, `real-sell-exits-live`, and `run-real-scheduler` are staged
+  real-path skeletons in this release. They report planned work or skip status
+  and keep actual KIS real-order API submission disabled.
+- `real-preflight` prints a redacted JSON checklist for app mode, real KIS
+  configuration, token environment, DB reachability, manual unlock state, and
+  mock/real state-path isolation. Use `--check-account` only when you want a
+  read-only real-account API check.
+
+Real-order execution is staged:
+
+1. Read-only real account and real dry-run.
+2. Manual single-order preparation behind guard checks.
+3. Automatic real scheduler preparation behind a separate kill switch.
+
+The required real-order gates are `APP_MODE=real`, `REAL_TRADING_ENABLED=true`,
+`REAL_EMERGENCY_STOP=false`, runtime manual unlock, order limits, order
+protection, and `REAL_ORDER_EXECUTION_ENABLED=true`. Automatic real scheduler
+execution additionally requires `REAL_AUTO_TRADING_ENABLED=true`. The real
+WebSocket client is a skeleton and is not connected to automatic trading.
+
+State and heartbeat files are separated by default:
+
+- mock monitor state: `monitor/state.json`
+- real read-only state: `monitor/real_state.json`
+- mock scheduler heartbeat: `monitor/scheduler_heartbeat.json`
+- real scheduler heartbeat: `monitor/real_scheduler_heartbeat.json`
+
+`real-dry-run-live` writes its plan state to `monitor/real_state.json` unless
+`--monitor-state` is provided. Its repository is read-only/no-op by default, so
+it does not write candidate/scoring/trade rows into the mock operating DB path.
 
 Run live-data screening/scoring as a dry run with no order submission and update
 the monitor JSON:
@@ -453,7 +497,10 @@ candidate exhaustion.
 열리지 않도록 설계되어 있습니다. 현재 스케줄러와 `mock-*` CLI 주문 경로는
 KIS 모의투자 submitter만 사용하며, 실투자 주문 submitter가 추가될 경우에도
 `real_trading_guard`의 모드/비상정지/수동잠금/한도 검사를 먼저 통과해야
-합니다.
+합니다. 실주문 API 호출은 `REAL_ORDER_EXECUTION_ENABLED=false` 기본값에서
+차단되며, 현재 `run-real-scheduler`는 read-only skeleton입니다.
+실투자 점검은 `real-preflight`로 수행하며, 민감정보는 존재 여부만 표시하고
+원문 app key, secret, 계좌번호, token 값은 출력하지 않습니다.
 
 ### 후보 수집과 후보 평가
 

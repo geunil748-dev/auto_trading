@@ -31,6 +31,11 @@ from trading_bot.composition import (
     build_mock_sell_executor,
     collect_mock_list_intents,
 )
+from trading_bot.composition_real import (
+    build_real_live_dry_run,
+    build_real_live_exit_poll,
+    build_real_readonly_account,
+)
 from trading_bot.config import (
     CANDIDATE_MODE_FIXED,
     CANDIDATE_MODE_HYBRID,
@@ -87,6 +92,12 @@ from trading_bot.ranking_mode_compare import (
     summarize_ranking_mode_archive,
     write_compare_payload,
 )
+from trading_bot.real_scheduler_runner import run_real_scheduler
+from trading_bot.real_preflight import (
+    MOCK_MONITOR_STATE_PATH,
+    REAL_MONITOR_STATE_PATH,
+    real_preflight,
+)
 from trading_bot.trade_summary_export import export_trade_summary
 from trading_bot.trading_event_analysis import (
     analyze_trading_events,
@@ -112,21 +123,33 @@ def main() -> None:
     ranking.add_argument("--limit", type=int, default=20)
     account = subparsers.add_parser("kis-account")
     account.add_argument("--real", action="store_true")
+    subparsers.add_parser("real-account")
+    real_preflight_parser = subparsers.add_parser("real-preflight")
+    real_preflight_parser.add_argument("--check-account", action="store_true")
+    real_preflight_parser.add_argument("--real-monitor-state", type=Path, default=REAL_MONITOR_STATE_PATH)
+    real_preflight_parser.add_argument("--mock-monitor-state", type=Path, default=MOCK_MONITOR_STATE_PATH)
     dry_run = subparsers.add_parser("dry-run-live")
     dry_run.add_argument("--monitor-state", type=Path)
+    real_dry_run = subparsers.add_parser("real-dry-run-live")
+    real_dry_run.add_argument("--monitor-state", type=Path, default=REAL_MONITOR_STATE_PATH)
     mock_buy = subparsers.add_parser("mock-buy-live")
     mock_buy.add_argument("--monitor-state", type=Path)
+    real_buy = subparsers.add_parser("real-buy-live")
+    real_buy.add_argument("--monitor-state", type=Path, default=REAL_MONITOR_STATE_PATH)
     mock_list = subparsers.add_parser("mock-buy-list")
     mock_list.add_argument("--limit", type=int, default=3)
     refresh_monitor = subparsers.add_parser("refresh-monitor-live")
     refresh_monitor.add_argument("--monitor-state", type=Path, default=Path("monitor/state.json"))
     scheduler = subparsers.add_parser("run-scheduler")
     scheduler.add_argument("--monitor-state", type=Path, default=Path("monitor/state.json"))
+    real_scheduler = subparsers.add_parser("run-real-scheduler")
+    real_scheduler.add_argument("--monitor-state", type=Path, default=REAL_MONITOR_STATE_PATH)
     monitor_server = subparsers.add_parser("serve-monitor")
     monitor_server.add_argument("--host", default="127.0.0.1")
     monitor_server.add_argument("--port", type=int, default=8000)
     subparsers.add_parser("poll-exits-live")
     subparsers.add_parser("mock-sell-exits-live")
+    subparsers.add_parser("real-sell-exits-live")
     backtest_compare = subparsers.add_parser("backtest-compare")
     backtest_compare.add_argument("--years", type=int, default=10)
     backtest_compare.add_argument("--initial-equity", type=float, default=10000.0)
@@ -519,6 +542,26 @@ def main() -> None:
         print(json.dumps(account.__dict__, indent=2))
         return
 
+    if args.command == "real-account":
+        account = build_real_readonly_account(load_real_kis_settings()).current_account()
+        print(json.dumps(account.__dict__, indent=2))
+        return
+
+    if args.command == "real-preflight":
+        print(
+            json.dumps(
+                real_preflight(
+                    check_account=args.check_account,
+                    real_state_path=args.real_monitor_state,
+                    mock_state_path=args.mock_monitor_state,
+                ),
+                indent=2,
+                ensure_ascii=False,
+                default=str,
+            )
+        )
+        return
+
     if args.command in {"dry-run-live", "mock-buy-live"}:
         settings = load_settings()
         kis_settings = load_kis_settings()
@@ -548,6 +591,33 @@ def main() -> None:
                 default=str,
             )
         )
+        return
+
+    if args.command in {"real-dry-run-live", "real-buy-live"}:
+        settings = load_settings()
+        kis_settings = load_real_kis_settings()
+        runtime, _repository = build_real_live_dry_run(settings, kis_settings)
+        result = runtime.run()
+        state = state_from_dry_run(result)
+        args.monitor_state.parent.mkdir(parents=True, exist_ok=True)
+        args.monitor_state.write_text(
+            json.dumps(state, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        payload = {
+            "blocked_reason": result.scoring.blocked_reason,
+            "targets": len(result.scoring.targets),
+            "selected": len(result.scoring.selected),
+            "buy_intents": [item.__dict__ for item in result.buy_intents],
+            "submitted_real_orders": [],
+            "order_submission": "read_only" if args.command == "real-dry-run-live" else "blocked",
+            "reason": (
+                "REAL_DRY_RUN_ONLY"
+                if args.command == "real-dry-run-live"
+                else "REAL_ORDER_SUBMISSION_DISABLED_IN_THIS_STAGE"
+            ),
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
         return
 
     if args.command == "mock-buy-list":
@@ -583,6 +653,10 @@ def main() -> None:
         run_scheduler(args.monitor_state)
         return
 
+    if args.command == "run-real-scheduler":
+        run_real_scheduler(args.monitor_state)
+        return
+
     if args.command == "serve-monitor":
         serve_monitor(args.host, args.port)
         return
@@ -603,6 +677,27 @@ def main() -> None:
                     "submitted_mock_sells": [item.__dict__ for item in trades],
                 },
                 indent=2,
+                default=str,
+            )
+        )
+        return
+
+    if args.command == "real-sell-exits-live":
+        settings = load_settings()
+        kis_settings = load_real_kis_settings()
+        accounts, monitor, _repository = build_real_live_exit_poll(settings, kis_settings)
+        positions, exits = monitor.poll(accounts.positions())
+        print(
+            json.dumps(
+                {
+                    "positions": [item.__dict__ for item in positions],
+                    "sell_intents": [item.__dict__ for item in exits],
+                    "submitted_real_sells": [],
+                    "order_submission": "blocked",
+                    "reason": "REAL_ORDER_SUBMISSION_DISABLED_IN_THIS_STAGE",
+                },
+                indent=2,
+                ensure_ascii=False,
                 default=str,
             )
         )
