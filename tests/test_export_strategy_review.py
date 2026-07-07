@@ -3,11 +3,14 @@ from __future__ import annotations
 from datetime import date
 
 from tools.export_strategy_review import (
+    _safe_error,
     candidate_orders_sql,
     export_sheets,
     pnl_by_exit_reason_sql,
+    sanitize_value,
     summary_reconciliation_sql,
 )
+from tools.strategy_review_sanitize import sanitize_value as moved_sanitize_value
 
 
 def _columns() -> dict[str, list[str]]:
@@ -77,6 +80,12 @@ def test_summary_reconciliation_sql_compares_fill_and_summary_totals() -> None:
     assert "trade_summary_profit_usd" in sql
     assert "fill_vs_daily_run_diff" in sql
     assert "fill_vs_trade_summary_diff" in sql
+
+
+def test_sanitize_helpers_remain_reexported_from_export_module() -> None:
+    assert sanitize_value is moved_sanitize_value
+    assert sanitize_value("API_KEY=secret token") == "API_KEY=<redacted> token"
+    assert "secret" not in _safe_error("DB_PASSWORD=secret")
 
 
 def test_export_sheets_includes_reconciliation_sheet(monkeypatch) -> None:
