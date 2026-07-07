@@ -1,0 +1,161 @@
+/* 페이지별 패널 배치 */
+:root {
+  --panel: var(--surface);
+  --panel-2: #101923;
+  --border: var(--line);
+  --accent: var(--teal);
+  --danger: var(--red);
+  --warning: var(--amber);
+  --success: var(--green);
+  --setting-radius: 8px;
+  --setting-gap: 12px;
+  --settings-paper: var(--bg);
+  --settings-paper-card: var(--surface);
+  --settings-paper-border: var(--line);
+  --settings-paper-muted: var(--muted);
+  --settings-paper-text: var(--text);
+  --settings-paper-field: #101c27;
+  --settings-paper-tile: rgb(88 199 213 / 13%);
+  --settings-paper-tile-border: rgb(88 199 213 / 52%);
+}
+
+.work-grid {
+  display: grid;
+  grid-template-columns: minmax(560px, 1.4fr) minmax(360px, 1fr);
+  gap: 18px;
+  margin-top: 18px;
+}
+
+body[data-page="dashboard"] .logs,
+body[data-page="dashboard"] .orders,
+body[data-page="dashboard"] .fills,
+body[data-page="dashboard"] .candidate-history,
+body[data-page="dashboard"] .trading-stats-panel,
+body[data-page="dashboard"] .run-summary,
+body[data-page="dashboard"] .entry-reason-stats,
+body[data-page="dashboard"] .backtest-panel,
+body[data-page="dashboard"] .settings-panel {
+  display: none;
+}
+
+body[data-page="dashboard"] .work-grid {
+  grid-template-columns: minmax(320px, 1fr);
+}
+
+body[data-page="activity"] .account-summary,
+body[data-page="activity"] .account-error,
+body[data-page="activity"] .candidates,
+body[data-page="activity"] .holdings,
+body[data-page="activity"] .candidate-history,
+body[data-page="activity"] .trading-stats-panel,
+body[data-page="activity"] .run-summary,
+body[data-page="activity"] .entry-reason-stats,
+body[data-page="activity"] .backtest-panel,
+body[data-page="activity"] .settings-panel {
+  display: none;
+}
+
+body[data-page="activity"] .work-grid {
+  grid-template-columns: minmax(320px, 1fr);
+}
+
+body[data-page="activity"] .logs,
+body[data-page="activity"] .orders,
+body[data-page="activity"] .fills {
+  min-height: 190px;
+}
+
+body[data-page="candidateHistory"] .account-summary,
+body[data-page="candidateHistory"] .account-error,
+body[data-page="candidateHistory"] .candidates,
+body[data-page="candidateHistory"] .holdings,
+body[data-page="candidateHistory"] .logs,
+body[data-page="candidateHistory"] .orders,
+body[data-page="candidateHistory"] .fills,
+body[data-page="candidateHistory"] .trading-stats-panel,
+body[data-page="candidateHistory"] .run-summary,
+body[data-page="candidateHistory"] .entry-reason-stats,
+body[data-page="candidateHistory"] .backtest-panel,
+body[data-page="candidateHistory"] .settings-panel {
+  display: none;
+}
+
+body[data-page="candidateHistory"] .work-grid {
+  grid-template-columns: minmax(320px, 1fr);
+}
+
+body[data-page="candidateHistory"] .candidate-history {
+  min-height: 250px;
+}
+
+body[data-page="tradingStats"] .account-summary,
+body[data-page="tradingStats"] .account-error,
+body[data-page="tradingStats"] .history-bar,
+body[data-page="tradingStats"] .candidates,
+body[data-page="tradingStats"] .holdings,
+body[data-page="tradingStats"] .candidate-history,
+body[data-page="tradingStats"] .run-summary,
+body[data-page="tradingStats"] .entry-reason-stats,
+body[data-page="tradingStats"] .backtest-panel,
+body[data-page="tradingStats"] .settings-panel,
+body[data-page="tradingStats"] .logs,
+body[data-page="tradingStats"] .orders,
+body[data-page="tradingStats"] .fills {
+  display: none;
+}
+
+body[data-page="tradingStats"] .work-grid {
+  grid-template-columns: minmax(320px, 1fr);
+}
+
+body[data-page="tradingStats"] .trading-stats-panel {
+  min-height: 250px;
+}
+
+body[data-page="runSummary"] .account-summary,
+body[data-page="runSummary"] .account-error,
+body[data-page="runSummary"] .candidates,
+body[data-page="runSummary"] .holdings,
+body[data-page="runSummary"] .candidate-history,
+body[data-page="runSummary"] .trading-stats-panel,
+body[data-page="runSummary"] .logs,
+body[data-page="runSummary"] .orders,
+body[data-page="runSummary"] .fills,
+body[data-page="runSummary"] .entry-reason-stats,
+body[data-page="runSummary"] .backtest-panel,
+body[data-page="runSummary"] .settings-panel {
+  display: none;
+}
+
+body[data-page="runSummary"] .work-grid {
+  grid-template-columns: minmax(320px, 1fr);
+}
+
+body[data-page="runSummary"] .run-summary {
+  min-height: 250px;
+}
+
+body:not([data-page="dailySummary"]) .daily-summary-panel {
+  display: none;
+}
+
+body[data-page="dailySummary"] .account-summary,
+body[data-page="dailySummary"] .account-error,
+body[data-page="dailySummary"] .history-bar,
+body[data-page="dailySummary"] .candidates,
+body[data-page="dailySummary"] .holdings,
+body[data-page="dailySummary"] .candidate-history,
+body[data-page="dailySummary"] .trading-stats-panel,
+body[data-page="dailySummary"] .run-summary,
+body[data-page="dailySummary"] .entry-reason-stats,
+body[data-page="dailySummary"] .backtest-panel,
+body[data-page="dailySummary"] .settings-panel,
+body[data-page="dailySummary"] .logs,
+body[data-page="dailySummary"] .orders,
+body[data-page="dailySummary"] .fills {
+  display: none;
+}
+
+body[data-page="dailySummary"] .work-grid {
+  grid-template-columns: minmax(320px, 1fr);
+}
