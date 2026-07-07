@@ -67,17 +67,7 @@ class YahooMarketContextSource:
 
     def market_context(self) -> MarketContext:
         series = self._market_series()
-        fx_closes = _close_values(self.ticker_factory(FX_SYMBOL).history(period="5d"))
-        if len(fx_closes) < 2 or fx_closes[-2] <= 0:
-            logger.warning(
-                "MARKET_CONTEXT_DEGRADED_USED symbol=%s close_count=%s "
-                "fallback_period=5d degraded=true reason=FX_HISTORY_INSUFFICIENT",
-                FX_SYMBOL,
-                len(fx_closes),
-            )
-            fx_change_rate = 0.0
-        else:
-            fx_change_rate = (fx_closes[-1] - fx_closes[-2]) / fx_closes[-2]
+        fx_change_rate = _fx_change_rate(self.ticker_factory)
         context = MarketContext(
             nasdaq_price_usd=series.closes[-1],
             nasdaq_ma20_usd=sum(series.closes[-NASDAQ_MA_WINDOW:]) / NASDAQ_MA_WINDOW,
@@ -229,6 +219,34 @@ def _close_values(history: Any) -> list[float]:
         if math.isfinite(number):
             result.append(number)
     return result
+
+
+def _fx_change_rate(ticker_factory: Callable[[str], Any]) -> float:
+    try:
+        fx_closes = _close_values(ticker_factory(FX_SYMBOL).history(period="5d"))
+    except Exception as exc:
+        _log_fx_fallback("FX_HISTORY_FETCH_FAILED", 0, type(exc).__name__)
+        return 0.0
+    if len(fx_closes) < 2:
+        _log_fx_fallback("FX_HISTORY_INSUFFICIENT", len(fx_closes))
+        return 0.0
+    previous_close = fx_closes[-2]
+    current_close = fx_closes[-1]
+    if previous_close <= 0 or current_close <= 0:
+        _log_fx_fallback("FX_HISTORY_INVALID_PRICE", len(fx_closes))
+        return 0.0
+    return (current_close - previous_close) / previous_close
+
+
+def _log_fx_fallback(reason: str, close_count: int, exception_name: str = "-") -> None:
+    logger.warning(
+        "MARKET_CONTEXT_FX_FALLBACK: FX 조회 실패로 fx_change_rate=0.0 fallback 적용 "
+        "symbol=%s close_count=%s reason=%s exception=%s",
+        FX_SYMBOL,
+        close_count,
+        reason,
+        exception_name,
+    )
 
 
 def _save_last_good_market_context(path: Path, context: MarketContext) -> None:

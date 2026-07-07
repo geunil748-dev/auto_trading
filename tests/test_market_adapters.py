@@ -230,6 +230,138 @@ def test_yahoo_market_context_calculates_nasdaq_ma20_and_fx_change(tmp_path) -> 
     assert round(context.fx_change_rate, 4) == 0.02
 
 
+def test_yahoo_market_context_fx_ticker_error_falls_back_to_zero(
+    caplog,
+    tmp_path,
+) -> None:
+    class History(dict):
+        pass
+
+    class Ticker:
+        def history(self, period: str) -> History:
+            assert period == "1mo"
+            return History(Close=[float(value) for value in range(1, 22)])
+
+    def ticker_factory(symbol: str):
+        if symbol == "USDKRW=X":
+            raise RuntimeError("fx source unavailable")
+        return Ticker()
+
+    with caplog.at_level(logging.WARNING):
+        context = YahooMarketContextSource(
+            ticker_factory=ticker_factory,
+            cache_path=tmp_path / "last_good_market_context.json",
+        ).market_context()
+
+    assert context.fx_change_rate == 0.0
+    assert context.nasdaq_price_usd == 21
+    assert "MARKET_CONTEXT_FX_FALLBACK" in caplog.text
+    assert "FX 조회 실패로 fx_change_rate=0.0 fallback 적용" in caplog.text
+    assert "RuntimeError" in caplog.text
+
+
+def test_yahoo_market_context_fx_history_error_falls_back_to_zero(
+    caplog,
+    tmp_path,
+) -> None:
+    class History(dict):
+        pass
+
+    class NasdaqTicker:
+        def history(self, period: str) -> History:
+            assert period == "1mo"
+            return History(Close=[float(value) for value in range(1, 22)])
+
+    class FxTicker:
+        def history(self, period: str) -> History:
+            assert period == "5d"
+            raise RuntimeError("fx history unavailable")
+
+    tickers = {
+        "^IXIC": NasdaqTicker(),
+        "USDKRW=X": FxTicker(),
+    }
+
+    with caplog.at_level(logging.WARNING):
+        context = YahooMarketContextSource(
+            ticker_factory=tickers.__getitem__,
+            cache_path=tmp_path / "last_good_market_context.json",
+        ).market_context()
+
+    assert context.fx_change_rate == 0.0
+    assert "MARKET_CONTEXT_FX_FALLBACK" in caplog.text
+    assert "reason=FX_HISTORY_FETCH_FAILED" in caplog.text
+    assert "RuntimeError" in caplog.text
+
+
+def test_yahoo_market_context_fx_empty_history_falls_back_to_zero(
+    caplog,
+    tmp_path,
+) -> None:
+    class History(dict):
+        pass
+
+    class Ticker:
+        def __init__(self, closes: list[float]) -> None:
+            self.closes = closes
+
+        def history(self, period: str) -> History:
+            return History(Close=self.closes)
+
+    tickers = {
+        "^IXIC": Ticker([float(value) for value in range(1, 22)]),
+        "USDKRW=X": Ticker([]),
+    }
+
+    with caplog.at_level(logging.WARNING):
+        context = YahooMarketContextSource(
+            ticker_factory=tickers.__getitem__,
+            cache_path=tmp_path / "last_good_market_context.json",
+        ).market_context()
+
+    assert context.fx_change_rate == 0.0
+    assert "MARKET_CONTEXT_FX_FALLBACK" in caplog.text
+    assert "reason=FX_HISTORY_INSUFFICIENT" in caplog.text
+
+
+def test_yahoo_market_context_fx_invalid_history_falls_back_to_zero(
+    caplog,
+    tmp_path,
+) -> None:
+    class History(dict):
+        pass
+
+    class Ticker:
+        def __init__(self, history) -> None:
+            self.item_history = history
+
+        def history(self, period: str):
+            return self.item_history
+
+    fx_histories = [
+        History(AdjClose=[1300.0, 1326.0]),
+        History(Close=[float("nan"), 1326.0]),
+        History(Close=[1300.0]),
+        History(Close=[0.0, 1326.0]),
+        History(Close=[1300.0, 0.0]),
+    ]
+
+    for index, fx_history in enumerate(fx_histories):
+        caplog.clear()
+        tickers = {
+            "^IXIC": Ticker(History(Close=[float(value) for value in range(1, 22)])),
+            "USDKRW=X": Ticker(fx_history),
+        }
+        with caplog.at_level(logging.WARNING):
+            context = YahooMarketContextSource(
+                ticker_factory=tickers.__getitem__,
+                cache_path=tmp_path / f"last_good_market_context_{index}.json",
+            ).market_context()
+
+        assert context.fx_change_rate == 0.0
+        assert "MARKET_CONTEXT_FX_FALLBACK" in caplog.text
+
+
 def test_yahoo_market_context_uses_fallback_period_when_one_month_is_short(
     caplog,
     tmp_path,
