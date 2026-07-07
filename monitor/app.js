@@ -1,6 +1,26 @@
 import { createApiClient } from "./js/apiClient.js";
 import { readStoredMonitorToken, removeStoredMonitorToken, storeMonitorToken } from "./js/auth.js";
 import {
+  compactHashText,
+  dailyLogCount,
+  dailySummaryMetric,
+  dailySummaryTrade,
+  escapeHtml,
+  formatCountInput,
+  formatPercentInput,
+  formatPriceInput,
+  formatRatioInput,
+  formatScoreInput,
+  hasDisplayValue,
+  moneyOrDash,
+  moneyText,
+  negativeRatioText,
+  numericStat,
+  percentOrDash,
+  percentText,
+  profitClass,
+} from "./js/formatters.js";
+import {
   conditionModeLabel,
   conditionStatusLabel,
   conditionTypeLabel,
@@ -872,26 +892,6 @@ function syncVwapMa20Controls() {
   document.querySelector(".condition-row-vwap")?.classList.toggle("is-disabled", !enabled);
 }
 
-function formatPercentInput(value) {
-  return Number(value).toFixed(1).replace(/\.0$/, "");
-}
-
-function formatScoreInput(value) {
-  return Number(value).toFixed(1).replace(/\.0$/, "");
-}
-
-function formatPriceInput(value) {
-  return Number(value).toFixed(2).replace(/\.00$/, "");
-}
-
-function formatRatioInput(value) {
-  return Number(value).toFixed(2).replace(/0$/, "").replace(/\.0$/, "");
-}
-
-function formatCountInput(value) {
-  return String(Math.trunc(Number(value)));
-}
-
 function selectedHistoryDate() {
   return (historyDateInput?.value || todayText()).trim();
 }
@@ -1001,16 +1001,6 @@ function renderTradingStats(stats = emptyTradingStats) {
 
 function tradingRateText(days, rate, totalDays) {
   return `${percentText(rate)} (${numericStat(days)}/${numericStat(totalDays)}일)`;
-}
-
-function percentText(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? `${number.toFixed(1)}%` : "-";
-}
-
-function numericStat(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : 0;
 }
 
 function renderTables(accountState) {
@@ -1520,73 +1510,12 @@ function exitReasonText(value) {
   return exitReasonLabel(value);
 }
 
-function compactHashText(value, visibleLength = 12) {
-  const text = String(value || "").trim();
-  if (!text) return "-";
-  if (text.length <= visibleLength) return text;
-  return `${text.slice(0, visibleLength)}...`;
-}
-
 function dailySummaryTextForDisplay(value) {
   return translateDailySummaryText(value);
 }
 
-function moneyText(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "$0.00";
-  const sign = number < 0 ? "-" : "";
-  return `${sign}$${Math.abs(number).toFixed(2)}`;
-}
-
-function moneyOrDash(value) {
-  return hasDisplayValue(value) ? moneyText(value) : "-";
-}
-
-function profitClass(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number) || number === 0) return "";
-  return number > 0 ? "positive" : "negative";
-}
-
-function percentOrDash(value) {
-  return hasDisplayValue(value) ? percentText(value) : "-";
-}
-
 function countText(value) {
   return hasDisplayValue(value) ? `${value}건` : "-";
-}
-
-function hasDisplayValue(value) {
-  return value !== null && value !== undefined && value !== "" && value !== "-";
-}
-
-function dailySummaryMetric(source, paths) {
-  for (const path of paths) {
-    const value = readSummaryPath(source, path);
-    if (hasDisplayValue(value)) return value;
-  }
-  return "-";
-}
-
-function readSummaryPath(source, path) {
-  if (!source || typeof source !== "object") return undefined;
-  let value = source;
-  for (const key of String(path).split(".")) {
-    if (!value || typeof value !== "object" || !(key in value)) return undefined;
-    value = value[key];
-  }
-  return value;
-}
-
-function dailyLogCount(payload, level) {
-  const explicit = dailySummaryMetric(payload, [
-    `${String(level).toLowerCase()}Count`,
-    `${String(level).toUpperCase()}Count`,
-  ]);
-  if (hasDisplayValue(explicit) && explicit !== "-") return explicit;
-  const logs = Array.isArray(payload.importantLogs) ? payload.importantLogs : [];
-  const normalized = String(level).toUpperCase();
-  return logs.filter((item) => String(item.level || "").toUpperCase() === normalized).length;
 }
 
 function sampleText(summary, payload) {
@@ -1594,18 +1523,6 @@ function sampleText(summary, payload) {
   const count = stats.sampleCount;
   const suffix = hasDisplayValue(count) ? ` (${count}/30건)` : "";
   return summary.sampleSufficient ? `충분${suffix}` : `부족${suffix}`;
-}
-
-function negativeRatioText(negativeCount, sampleCount) {
-  const negative = Number(negativeCount);
-  const sample = Number(sampleCount);
-  if (!Number.isFinite(negative) || !Number.isFinite(sample) || sample <= 0) return "-";
-  return `${(negative / sample * 100).toFixed(1)}%`;
-}
-
-function dailySummaryTrade(payload, paths) {
-  const trade = dailySummaryMetric(payload, paths);
-  return trade && typeof trade === "object" && !Array.isArray(trade) ? trade : {};
 }
 
 function renderEntryReasonRow(item) {
@@ -1775,14 +1692,4 @@ function tickerNames(accountState) {
 
 function setText(selector, value) {
   document.querySelector(selector).textContent = value || "-";
-}
-
-function escapeHtml(value) {
-  return String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  })[char]);
 }
