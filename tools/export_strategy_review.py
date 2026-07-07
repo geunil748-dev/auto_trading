@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from collections.abc import Iterable, Sequence
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import date, datetime
-from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +33,21 @@ except ModuleNotFoundError:  # pragma: no cover - direct script execution fallba
         _xml_text,
     )
 
+try:
+    from tools.strategy_review_sanitize import (  # noqa: E402
+        SENSITIVE_PATTERNS,
+        _redacted_match,
+        _safe_error,
+        sanitize_value,
+    )
+except ModuleNotFoundError:  # pragma: no cover - direct script execution fallback
+    from strategy_review_sanitize import (  # type: ignore[no-redef]  # noqa: E402
+        SENSITIVE_PATTERNS,
+        _redacted_match,
+        _safe_error,
+        sanitize_value,
+    )
+
 TARGET_TABLES = (
     "fill_history",
     "trade_history",
@@ -50,16 +63,6 @@ TARGET_TABLES = (
 )
 
 DEFAULT_DATE_FROM = "2026-05-20"
-
-SENSITIVE_PATTERNS = (
-    re.compile(r"(?i)\bBearer\s+[^\s,;\"'}]+"),
-    re.compile(
-        r"(?i)\b([A-Z_]*(TOKEN|SECRET|PASSWORD|API_KEY|APP_KEY|APPSECRET|"
-        r"ACCOUNT_NO|ACCOUNT_PRODUCT|CANO|ACNT_PRDT_CD|DB_PASSWORD|DSN|"
-        r"BEARER|CHAT_ID)[A-Z_]*)\s*[:=]\s*[^,\s;\"'}]+"
-    ),
-    re.compile(r"(?i)\b(authorization)\s*[:=]\s*[^,\s;\"'}]+"),
-)
 
 
 @dataclass
@@ -918,34 +921,6 @@ def final_metrics(results: list[SheetResult]) -> dict[str, Any]:
             reverse=True,
         )[:10],
     }
-
-
-def sanitize_value(value: Any) -> Any:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float, Decimal)):
-        return value
-    if isinstance(value, (date, datetime)):
-        return value.isoformat(sep=" ") if isinstance(value, datetime) else value.isoformat()
-    text = str(value)
-    for pattern in SENSITIVE_PATTERNS:
-        text = pattern.sub(lambda match: _redacted_match(match), text)
-    return text
-
-
-def _redacted_match(match: re.Match[str]) -> str:
-    text = match.group(0)
-    if "=" in text:
-        return text.split("=", 1)[0] + "=<redacted>"
-    if ":" in text:
-        return text.split(":", 1)[0] + ":<redacted>"
-    return "<redacted>"
-
-
-def _safe_error(text: str) -> str:
-    return str(sanitize_value(text))
 
 
 def _parse_date(value: str) -> date:
