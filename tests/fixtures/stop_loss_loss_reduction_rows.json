@@ -1,0 +1,69 @@
+[
+  {
+    "trade_date": "2026-06-16",
+    "ticker": "PULL",
+    "final_exit_reason": "STOP_LOSS",
+    "final_profit_rate": "-5.06%",
+    "realized_profit_usd": -50.6,
+    "snapshots": {
+      "5": "+2.25%",
+      "10": "+0.84%",
+      "30": "-2.25%",
+      "60": "-5.00%"
+    },
+    "entry_reason": "OPENING_BREAKOUT",
+    "candidate_source": "auto",
+    "ranking_selection_mode": "intersection",
+    "strategy_version": "v1",
+    "opening_gap": "0.20%",
+    "bid_ask_spread_rate": "0.20%"
+  },
+  {
+    "trade_date": "2026-06-16",
+    "ticker": "WEAK",
+    "final_exit_reason": "STOP_LOSS",
+    "final_profit_rate": -0.0516,
+    "realized_profit_usd": -51.6,
+    "snapshots": {
+      "5": "-1.10%",
+      "10": "-2.00%",
+      "30": "-4.00%"
+    },
+    "entry_reason": "OPENING_BREAKOUT",
+    "candidate_source": "manual_buy_list",
+    "ranking_selection_mode": "composite",
+    "strategy_version": "v1",
+    "opening_gap": "3.50%",
+    "bid_ask_spread_rate": "1.20%"
+  },
+  {
+    "trade_date": "2026-06-16",
+    "ticker": "WINR",
+    "final_exit_reason": "TRAILING_STOP",
+    "final_profit_rate": 0.031,
+    "realized_profit_usd": 31.0,
+    "snapshots": {
+      "5": "1.00%",
+      "30": "3.20%"
+    },
+    "entry_reason": "OPENING_BREAKOUT",
+    "candidate_source": "auto",
+    "ranking_selection_mode": "intersection",
+    "strategy_version": "v1"
+  },
+  {
+    "trade_date": "2026-06-17",
+    "ticker": "FLAT",
+    "final_exit_reason": "EOD",
+    "final_profit_rate": 0.0,
+    "realized_profit_usd": 0.0,
+    "snapshots": {
+      "5": "0.00%",
+      "30": "0.00%"
+    },
+    "entry_reason": "MANUAL_WATCHLIST",
+    "candidate_source": "manual_buy_list",
+    "ranking_selection_mode": "manual",
+    "strategy_version": "v1"
+  }
+]
