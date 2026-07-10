@@ -125,6 +125,24 @@ def analyze_trading_events(
             if _text(item.get("stage")).upper() == "NOTIFICATION"
             and "FAILED" in _text(item.get("event_type")).upper()
         ),
+        "auditFunnel": {
+            "candidate_evaluation_count": _event_count(items, "BUY_ALLOWED")
+            + _event_count(items, "BUY_BLOCKED"),
+            "buy_allowed_count": _event_count(items, "BUY_ALLOWED"),
+            "executor_entry_count": _event_count(items, "EXECUTOR_ENTERED"),
+            "order_intent_created_count": _event_count(items, "ORDER_INTENT_CREATED"),
+            "submit_order_call_count": _event_count(items, "SUBMIT_ORDER_CALLED"),
+            "broker_order_accepted_count": _event_count(items, "ORDER_SUBMIT_SUCCEEDED"),
+            "broker_order_rejected_count": _event_count(items, "BROKER_ORDER_REJECTED"),
+            "order_submit_exception_count": _event_count(items, "ORDER_SUBMIT_EXCEPTION"),
+            "order_not_submitted_count": _event_count(items, "BUY_NOT_SUBMITTED")
+            + sum(
+                1
+                for item in items
+                if _text(item.get("event_type")).upper() == "ORDER_PROTECTION_BLOCKED"
+                and _bool(item.get("is_blocking"))
+            ),
+        },
     }
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(),

@@ -103,10 +103,12 @@ def test_buy_intent_executor_marks_candidate_evaluation_order_submitted() -> Non
     assert repository.candidate_evaluations[0].order_submitted is True
     assert repository.candidate_evaluations[0].order_id == "1001"
     assert [event.event_type for event in repository.trading_events] == [
+        "EXECUTOR_ENTERED",
+        "SUBMIT_ORDER_CALLED",
         "ORDER_SUBMIT_SUCCEEDED",
         "ORDER_RECONCILIATION_MATCHED",
     ]
-    assert repository.trading_events[0].order_no == "1001"
+    assert repository.trading_events[2].order_no == "1001"
     assert len(repository.logs) == 1
     assert repository.logs[0].module == "execution"
 
@@ -157,13 +159,22 @@ def test_buy_intent_executor_records_failures_and_continues() -> None:
     assert repository.logs[2].level == "INFO"
     assert "OK" in repository.logs[2].message
     assert "FAIL" not in repository.logs[2].message
-    assert [item.reason_code for item in repository.trading_events[:2]] == [
+    failures = [
+        item
+        for item in repository.trading_events
+        if item.event_type in {"ORDER_SUBMIT_EXCEPTION", "ORDER_SUBMIT_FAILED"}
+    ]
+    assert [item.reason_code for item in failures] == [
         "API_ERROR",
         "ORDER_FAILED",
     ]
     assert [item.event_type for item in repository.trading_events] == [
+        "EXECUTOR_ENTERED",
+        "SUBMIT_ORDER_CALLED",
+        "ORDER_SUBMIT_EXCEPTION",
         "ORDER_SUBMIT_FAILED",
-        "ORDER_SUBMIT_FAILED",
+        "EXECUTOR_ENTERED",
+        "SUBMIT_ORDER_CALLED",
         "ORDER_SUBMIT_SUCCEEDED",
         "ORDER_RECONCILIATION_MISSING_TRADE_RECORD",
         "ORDER_RECONCILIATION_MATCHED",
@@ -192,13 +203,21 @@ def test_buy_intent_executor_retries_temporary_api_errors() -> None:
     assert calls == 2
     assert trades[0].retry_count == 1
     assert [item.reject_reason for item in repository.logs[:2]] == ["API_ERROR", "RETRY"]
-    assert [item.reason_code for item in repository.trading_events[:2]] == [
+    failures = [
+        item
+        for item in repository.trading_events
+        if item.event_type in {"ORDER_SUBMIT_EXCEPTION", "ORDER_RETRY"}
+    ]
+    assert [item.reason_code for item in failures] == [
         "API_ERROR",
         "RETRY",
     ]
     assert [item.event_type for item in repository.trading_events] == [
-        "ORDER_SUBMIT_FAILED",
+        "EXECUTOR_ENTERED",
+        "SUBMIT_ORDER_CALLED",
+        "ORDER_SUBMIT_EXCEPTION",
         "ORDER_RETRY",
+        "SUBMIT_ORDER_CALLED",
         "ORDER_SUBMIT_SUCCEEDED",
         "ORDER_RECONCILIATION_MATCHED",
     ]
@@ -220,5 +239,28 @@ def test_buy_intent_executor_blocks_wide_bid_ask_spread() -> None:
     assert submitted == []
     assert trades == []
     assert repository.logs[0].reject_reason == "BID_ASK_SPREAD_TOO_WIDE"
-    assert repository.trading_events[0].event_type == "ORDER_PROTECTION_BLOCKED"
-    assert repository.trading_events[0].is_blocking is True
+    assert repository.trading_events[1].event_type == "ORDER_PROTECTION_BLOCKED"
+    assert repository.trading_events[1].is_blocking is True
+
+
+def test_buy_intent_executor_records_broker_rejection_separately() -> None:
+    repository = Repository()
+
+    trades = BuyIntentExecutor(
+        submit_order=lambda intent: {
+            "rt_cd": "1",
+            "msg_cd": "APBK0919",
+            "msg1": "주문이 거절되었습니다.",
+        },
+        repository=repository,
+        today=lambda: date(2026, 5, 22),
+    ).execute([BuyIntent("AAA", 1, 10, 10, 0.01, run_id="run-1")])
+
+    assert trades == []
+    assert [event.event_type for event in repository.trading_events[:3]] == [
+        "EXECUTOR_ENTERED",
+        "SUBMIT_ORDER_CALLED",
+        "BROKER_ORDER_REJECTED",
+    ]
+    assert repository.trading_events[2].reason_code == "APBK0919"
+    assert repository.trading_events[2].run_id == "run-1"

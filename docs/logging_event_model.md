@@ -51,9 +51,14 @@ value to a real column only when it is repeatedly used across analysis queries.
 
 - `BUY_ALLOWED`
 - `BUY_BLOCKED`
+- `ORDER_INTENT_CREATED`
+- `EXECUTOR_ENTERED`
 - `BUY_NOT_SUBMITTED`
 - `ORDER_PROTECTION_BLOCKED`
+- `SUBMIT_ORDER_CALLED`
 - `ORDER_SUBMIT_SUCCEEDED`
+- `BROKER_ORDER_REJECTED`
+- `ORDER_SUBMIT_EXCEPTION`
 - `ORDER_SUBMIT_FAILED`
 - `ORDER_RETRY`
 - `FILL_SAVED`
@@ -61,6 +66,12 @@ value to a real column only when it is repeatedly used across analysis queries.
 - `SELL_ORDER_SUBMITTED`
 - `CANDIDATE_LIST_TELEGRAM_SENT`
 - `FILL_NOTIFICATION_SKIPPED_DUPLICATE`
+
+`SUBMIT_ORDER_CALLED` is written immediately before the submitter function is
+called, including retry calls. `EXECUTOR_ENTERED` and `ORDER_INTENT_CREATED`
+must not be interpreted as broker API calls. A returned broker rejection is
+`BROKER_ORDER_REJECTED`; an exception raised during the call is
+`ORDER_SUBMIT_EXCEPTION`.
 
 ## Adding A New Reject Reason
 

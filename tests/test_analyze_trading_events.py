@@ -152,3 +152,32 @@ def test_analyze_trading_events_summarizes_and_filters_text() -> None:
     assert payload["byReasonCode"]["NO_ORDER_UNFILLED_ORDER"] == 1
     assert "통합 매매 이벤트 분석" in text
     assert "NO_ORDER_UNFILLED_ORDER" in text
+
+
+def test_analyze_trading_events_counts_each_order_stage_independently() -> None:
+    event_types = [
+        "BUY_ALLOWED",
+        "BUY_BLOCKED",
+        "ORDER_INTENT_CREATED",
+        "EXECUTOR_ENTERED",
+        "SUBMIT_ORDER_CALLED",
+        "ORDER_SUBMIT_SUCCEEDED",
+        "BROKER_ORDER_REJECTED",
+        "ORDER_SUBMIT_EXCEPTION",
+        "BUY_NOT_SUBMITTED",
+    ]
+    payload = analyze_trading_events(
+        [{"event_type": event_type} for event_type in event_types]
+    )
+
+    assert payload["summary"]["auditFunnel"] == {
+        "candidate_evaluation_count": 2,
+        "buy_allowed_count": 1,
+        "executor_entry_count": 1,
+        "order_intent_created_count": 1,
+        "submit_order_call_count": 1,
+        "broker_order_accepted_count": 1,
+        "broker_order_rejected_count": 1,
+        "order_submit_exception_count": 1,
+        "order_not_submitted_count": 1,
+    }

@@ -122,7 +122,7 @@ def test_sell_intent_executor_records_failures_and_continues() -> None:
     assert "FAIL" not in repository.logs[2].message
     assert [item.event_type for item in repository.trading_events] == [
         "EXIT_SIGNAL",
-        "ORDER_SUBMIT_FAILED",
+        "ORDER_SUBMIT_EXCEPTION",
         "ORDER_SUBMIT_FAILED",
         "EXIT_SIGNAL",
         "SELL_ORDER_SUBMITTED",

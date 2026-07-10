@@ -11,10 +11,13 @@ from trading_bot.ports import DailyRepository
 from trading_bot.performance_analysis import split_entry_reason, strategy_label, tag_label
 from trading_bot.strategy_metadata import strategy_metadata_from_settings
 from trading_bot.trading_event_logger import (
+    record_broker_order_rejected,
+    record_executor_entered,
     record_order_reconciliation,
     record_order_protection_blocked,
     record_order_submit_failed,
     record_order_submitted,
+    record_submit_order_called,
 )
 
 OrderSubmitter = Callable[[BuyIntent], dict[str, object]]
@@ -45,6 +48,12 @@ class BuyIntentExecutor:
         trades: list[TradeRecord] = []
         strategy_metadata = strategy_metadata_from_settings(self.settings)
         for intent in submitted:
+            record_executor_entered(
+                self.repository,
+                intent,
+                trade_date=self.today(),
+                fallback_bot_log=False,
+            )
             protection_log = buy_order_protection_log(intent, self.settings, self.quote_reader)
             if protection_log is not None and protection_log.reject_reason != "QUOTE_LOOKUP_FAILED":
                 record_order_protection_blocked(
@@ -71,6 +80,15 @@ class BuyIntentExecutor:
             if submitted_result is None:
                 continue
             retry_count, response = submitted_result
+            if not _broker_order_accepted(response):
+                record_broker_order_rejected(
+                    self.repository,
+                    intent,
+                    trade_date=self.today(),
+                    response=response,
+                    fallback_bot_log=False,
+                )
+                continue
             order_id = _order_id(response)
             _mark_candidate_evaluation_order_submitted(
                 self.repository,
@@ -124,6 +142,13 @@ class BuyIntentExecutor:
         max_retries = max(0, int(self.settings.max_order_retry_count))
         for attempt in range(max_retries + 1):
             try:
+                record_submit_order_called(
+                    self.repository,
+                    intent,
+                    trade_date=self.today(),
+                    attempt=attempt,
+                    fallback_bot_log=False,
+                )
                 response = self.submit_order(intent)
                 return attempt, response
             except Exception as error:
@@ -198,6 +223,11 @@ class BuyIntentExecutor:
                 )
                 self.retry_sleep(max(0, self.settings.order_retry_delay_seconds))
         return None
+
+
+def _broker_order_accepted(response: dict[str, object]) -> bool:
+    response_code = response.get("rt_cd")
+    return response_code is None or str(response_code).strip() == "0"
 
 
 def _buy_log(intents: list[BuyIntent]) -> str:
