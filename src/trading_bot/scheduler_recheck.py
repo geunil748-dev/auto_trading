@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from uuid import uuid4
 
 from trading_bot.config import TradingSettings
-from trading_bot.config import CONDITION_MODE_HARD_FILTER
 from trading_bot.entry_planner import plan_buy_intents
 from trading_bot.models import BuyIntent
 from trading_bot.runtime import DryRunResult
@@ -46,6 +46,7 @@ def recheck_fixed_watchlist(
         trade_date=scoring_trade_date(latest_result.scoring),
         source="fixed_recheck",
         source_by_ticker=_source_by_ticker(latest_result.scoring, selected, "fixed_recheck"),
+        run_id=uuid4().hex,
         entry_reason_tags=_bypass_tags(latest_result.scoring),
     )
     return DryRunResult(account, latest_result.scoring, tuple(intents))
@@ -78,6 +79,7 @@ def hybrid_recheck(
             selected,
             "hybrid_recheck",
         ),
+        run_id=uuid4().hex,
         entry_reason_tags=(
             _bypass_tags(refreshed.scoring) or _bypass_tags(opening_result.scoring)
         ),
@@ -109,9 +111,6 @@ def _fixed_recheck_settings(settings: TradingSettings) -> TradingSettings:
     return replace(
         settings,
         min_total_score=max(settings.min_total_score, 60.0),
-        breakout_close_condition_mode=CONDITION_MODE_HARD_FILTER,
-        volume_increase_condition_mode=CONDITION_MODE_HARD_FILTER,
-        pullback_rebreak_condition_mode=CONDITION_MODE_HARD_FILTER,
     )
 
 
@@ -143,6 +142,7 @@ def plan_buy_intents_with_evaluation(
     trade_date,
     source: str,
     source_by_ticker=None,
+    run_id: str | None = None,
     entry_reason_tags: tuple[str, ...] = (),
 ) -> list[BuyIntent]:
     try:
@@ -155,6 +155,7 @@ def plan_buy_intents_with_evaluation(
             trade_date=trade_date,
             source=source,
             source_by_ticker=source_by_ticker,
+            run_id=run_id,
             entry_reason_tags=entry_reason_tags,
         )
     except TypeError as exc:

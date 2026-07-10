@@ -208,6 +208,158 @@ def record_buy_not_submitted(
     return event_saved
 
 
+def record_order_intent_created(
+    repository: object | None,
+    intent: BuyIntent,
+    *,
+    trade_date: date | None = None,
+    run_id: str | None = None,
+    source: str | None = None,
+    fallback_bot_log: bool = False,
+) -> bool:
+    target_date = trade_date or current_trade_date()
+    resolved_run_id = run_id or intent.run_id
+    resolved_source = source or intent.source
+    return record_trading_event(
+        repository,
+        TradingEvent(
+            event_time=_utcnow(),
+            trade_date=target_date,
+            run_id=resolved_run_id,
+            correlation_id=_correlation_id(target_date, intent.ticker, resolved_run_id),
+            ticker=intent.ticker,
+            side="BUY",
+            stage="ENTRY_PLANNER",
+            event_type="ORDER_INTENT_CREATED",
+            severity="INFO",
+            decision="ORDER_INTENT_CREATED",
+            buy_allowed=True,
+            quantity=intent.quantity,
+            price_usd=intent.limit_price_usd,
+            order_value_usd=intent.order_value_usd,
+            candidate_source=resolved_source,
+            message=f"order_intent_created symbol={intent.ticker}",
+            details_json={"entry_reason": intent.entry_reason},
+        ),
+        fallback_bot_log=fallback_bot_log,
+    )
+
+
+def record_executor_entered(
+    repository: object | None,
+    intent: BuyIntent,
+    *,
+    trade_date: date | None = None,
+    fallback_bot_log: bool = False,
+) -> bool:
+    return _record_buy_order_stage(
+        repository,
+        intent,
+        trade_date=trade_date,
+        event_type="EXECUTOR_ENTERED",
+        stage="ORDER_EXECUTOR",
+        fallback_bot_log=fallback_bot_log,
+    )
+
+
+def record_submit_order_called(
+    repository: object | None,
+    intent: BuyIntent,
+    *,
+    trade_date: date | None = None,
+    attempt: int = 0,
+    fallback_bot_log: bool = False,
+) -> bool:
+    return _record_buy_order_stage(
+        repository,
+        intent,
+        trade_date=trade_date,
+        event_type="SUBMIT_ORDER_CALLED",
+        stage="ORDER_SUBMISSION",
+        details={"attempt": attempt},
+        fallback_bot_log=fallback_bot_log,
+    )
+
+
+def record_broker_order_rejected(
+    repository: object | None,
+    intent: BuyIntent,
+    *,
+    trade_date: date | None = None,
+    response: Mapping[str, Any] | None = None,
+    fallback_bot_log: bool = False,
+) -> bool:
+    target_date = trade_date or current_trade_date()
+    reason = str((response or {}).get("msg_cd") or "BROKER_ORDER_REJECTED")
+    _safe_mark_candidate_not_submitted(repository, intent.ticker, target_date, reason)
+    return record_trading_event(
+        repository,
+        TradingEvent(
+            event_time=_utcnow(),
+            trade_date=target_date,
+            run_id=intent.run_id,
+            correlation_id=_correlation_id(target_date, intent.ticker, intent.run_id),
+            ticker=intent.ticker,
+            side="BUY",
+            stage="ORDER_SUBMISSION",
+            event_type="BROKER_ORDER_REJECTED",
+            severity="ERROR",
+            decision="BROKER_ORDER_REJECTED",
+            reason_code=reason,
+            is_blocking=True,
+            is_final_decision=True,
+            order_submitted=False,
+            buy_allowed=True,
+            quantity=intent.quantity,
+            price_usd=intent.limit_price_usd,
+            order_value_usd=intent.order_value_usd,
+            candidate_source=intent.source,
+            message=f"broker_order_rejected symbol={intent.ticker} reason={reason}",
+            details_json={
+                "response_code": (response or {}).get("rt_cd"),
+                "response_message": (response or {}).get("msg1"),
+            },
+        ),
+        fallback_bot_log=fallback_bot_log,
+    )
+
+
+def _record_buy_order_stage(
+    repository: object | None,
+    intent: BuyIntent,
+    *,
+    trade_date: date | None,
+    event_type: str,
+    stage: str,
+    details: Mapping[str, Any] | None = None,
+    fallback_bot_log: bool,
+) -> bool:
+    target_date = trade_date or current_trade_date()
+    return record_trading_event(
+        repository,
+        TradingEvent(
+            event_time=_utcnow(),
+            trade_date=target_date,
+            run_id=intent.run_id,
+            correlation_id=_correlation_id(target_date, intent.ticker, intent.run_id),
+            ticker=intent.ticker,
+            side="BUY",
+            stage=stage,
+            event_type=event_type,
+            severity="INFO",
+            decision=event_type,
+            buy_allowed=True,
+            quantity=intent.quantity,
+            price_usd=intent.limit_price_usd,
+            order_value_usd=intent.order_value_usd,
+            candidate_source=intent.source,
+            message=f"{event_type.lower()} symbol={intent.ticker}",
+            details_json=dict(details or {}),
+        ),
+        fallback_bot_log=fallback_bot_log,
+    )
+
+
 def record_order_protection_blocked(
     repository: object | None,
     intent: BuyIntent,
@@ -267,13 +419,24 @@ def record_order_submit_failed(
     is_final = reason_code == "ORDER_FAILED"
     if side.upper() == "BUY" and is_final:
         _safe_mark_candidate_not_submitted(repository, intent.ticker, target_date, reason_code)
-    event_type = "ORDER_RETRY" if reason_code == "RETRY" else "ORDER_SUBMIT_FAILED"
+    event_type = (
+        "ORDER_RETRY"
+        if reason_code == "RETRY"
+        else "ORDER_SUBMIT_EXCEPTION"
+        if reason_code == "API_ERROR"
+        else "ORDER_SUBMIT_FAILED"
+    )
     return record_trading_event(
         repository,
         TradingEvent(
             event_time=_utcnow(),
             trade_date=target_date,
-            correlation_id=_correlation_id(target_date, intent.ticker, None),
+            run_id=getattr(intent, "run_id", None),
+            correlation_id=_correlation_id(
+                target_date,
+                intent.ticker,
+                getattr(intent, "run_id", None),
+            ),
             ticker=intent.ticker,
             side=side.upper(),
             stage="ORDER_SUBMISSION" if side.upper() == "BUY" else "SELL_EXECUTION",
@@ -311,7 +474,8 @@ def record_order_submitted(
         TradingEvent(
             event_time=_utcnow(),
             trade_date=target_date,
-            correlation_id=_correlation_id(target_date, intent.ticker, None),
+            run_id=intent.run_id,
+            correlation_id=_correlation_id(target_date, intent.ticker, intent.run_id),
             order_id=order_id,
             order_no=order_id,
             ticker=intent.ticker,
@@ -322,6 +486,7 @@ def record_order_submitted(
             decision="ORDER_SUBMIT_SUCCEEDED",
             order_submitted=True,
             buy_allowed=True,
+            candidate_source=intent.source,
             quantity=intent.quantity,
             price_usd=intent.limit_price_usd,
             order_value_usd=intent.order_value_usd,

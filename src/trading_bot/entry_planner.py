@@ -19,7 +19,10 @@ from trading_bot.models import AccountState, BreakoutInput, BotLog, BuyIntent, C
 from trading_bot.risk import MARKET_BELOW_MA20_BYPASSED, position_entry_gate
 from trading_bot.scoring import position_fraction_for_score
 from trading_bot.strategy import breakout_triggered
-from trading_bot.trading_event_logger import record_candidate_evaluation_event
+from trading_bot.trading_event_logger import (
+    record_candidate_evaluation_event,
+    record_order_intent_created,
+)
 
 ENTRY_REASON_MAX_LENGTH = 80
 
@@ -180,16 +183,25 @@ def plan_buy_intents(
                 entry_reason_tags,
             ),
         )
-        intents.append(
-            BuyIntent(
-                ticker=score.ticker,
-                quantity=quantity,
-                limit_price_usd=breakout.last_price_usd,
-                order_value_usd=filled_value,
-                allocation_fraction=fraction,
-                entry_reason=reason,
-                entry_reason_detail=detail,
-            )
+        intent = BuyIntent(
+            ticker=score.ticker,
+            quantity=quantity,
+            limit_price_usd=breakout.last_price_usd,
+            order_value_usd=filled_value,
+            allocation_fraction=fraction,
+            entry_reason=reason,
+            entry_reason_detail=detail,
+            run_id=run_id,
+            source=evaluation_source,
+        )
+        intents.append(intent)
+        record_order_intent_created(
+            repository,
+            intent,
+            trade_date=trade_date,
+            run_id=run_id,
+            source=evaluation_source,
+            fallback_bot_log=False,
         )
         invested += filled_value
         cash -= filled_value
@@ -254,19 +266,27 @@ def _entry_timing_evaluation(
         logs,
     )
     volume_increase_percent = _volume_increase_percent(breakout)
-    volume_increase_insufficient = volume_increase_percent is None
+    volume_data_available = volume_increase_percent is not None
     volume_pass = (
-        volume_increase_percent is not None
-        and volume_increase_percent >= settings.min_5m_volume_increase_percent
+        None
+        if not volume_data_available
+        else volume_increase_percent >= settings.min_5m_volume_increase_percent
     )
-    _apply_condition(
-        volume_pass,
-        _condition_mode(settings.require_5m_volume_increase, settings.volume_increase_condition_mode),
-        "VOLUME_INCREASE_FAILED",
-        hard,
-        soft,
-        logs,
+    volume_mode = _condition_mode(
+        settings.require_5m_volume_increase,
+        settings.volume_increase_condition_mode,
     )
+    if volume_data_available:
+        _apply_condition(
+            bool(volume_pass),
+            volume_mode,
+            "VOLUME_INCREASE_FAILED",
+            hard,
+            soft,
+            logs,
+        )
+    elif volume_mode == CONDITION_MODE_HARD_FILTER:
+        hard.append("VOLUME_DATA_UNAVAILABLE")
     vwap_pass = _vwap_pass(breakout)
     ma20_pass = _ma20_pass(breakout)
     vwap_ma20_status = _vwap_ma20_evaluation_status(breakout, settings)
@@ -305,11 +325,25 @@ def _entry_timing_evaluation(
             "overheat_pass": overheat_pass,
             "breakout_close_pass": hold_pass and close_pass,
             "volume_increase_pass": volume_pass,
+            "volume_condition_result": (
+                "UNKNOWN" if volume_pass is None else "PASS" if volume_pass else "FAIL"
+            ),
+            "volume_data_available": volume_data_available,
+            "volume_data_missing_reason": (
+                breakout.volume_data_missing_reason or _volume_missing_reason(breakout)
+                if not volume_data_available
+                else None
+            ),
+            "data_quality_warning": (
+                "VOLUME_DATA_UNAVAILABLE" if not volume_data_available else None
+            ),
             "recent_5m_volume": breakout.current_5m_volume,
             "previous_5m_volume": breakout.previous_5m_average_volume,
             "volume_increase_percent": volume_increase_percent,
             "min5mVolumeIncreasePercent": settings.min_5m_volume_increase_percent,
-            "volume_increase_insufficient": volume_increase_insufficient,
+            "volume_increase_insufficient": bool(
+                volume_data_available and volume_pass is False
+            ),
             "current_price": breakout.last_price_usd,
             "vwap_usd": breakout.vwap_usd,
             "intraday_ma20_usd": breakout.intraday_ma20_usd,
@@ -388,6 +422,18 @@ def _volume_increase_percent(breakout: BreakoutInput) -> float | None:
         (breakout.current_5m_volume - breakout.previous_5m_average_volume)
         / breakout.previous_5m_average_volume
     ) * 100
+
+
+def _volume_missing_reason(breakout: BreakoutInput) -> str:
+    if breakout.current_5m_volume is None:
+        return "CURRENT_5M_VOLUME_NULL"
+    if breakout.current_5m_volume < 0:
+        return "INVALID_VOLUME_VALUE"
+    if breakout.previous_5m_average_volume is None:
+        return "PREVIOUS_VOLUME_HISTORY_EMPTY"
+    if breakout.previous_5m_average_volume <= 0:
+        return "INVALID_VOLUME_VALUE"
+    return "VOLUME_DATA_UNAVAILABLE"
 
 
 def _above_vwap_or_ma20(breakout: BreakoutInput) -> bool:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from uuid import uuid4
 
 from trading_bot.config import TradingSettings
 from trading_bot.entry_planner import plan_buy_intents
@@ -50,6 +51,7 @@ class DryRunRuntime:
                 item.ticker: scoring.candidate_source(item.ticker)
                 for item in scoring.selected
             },
+            run_id=uuid4().hex,
             entry_reason_tags=(
                 (scoring.bypass_reason,) if scoring.bypass_reason else ()
             ),

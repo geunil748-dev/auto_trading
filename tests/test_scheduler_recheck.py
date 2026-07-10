@@ -4,6 +4,7 @@ from trading_bot.config import TradingSettings
 from trading_bot.models import AccountState, BuyIntent, ScoreRecord
 from trading_bot.runtime import DryRunResult
 from trading_bot.scheduler_recheck import (
+    _fixed_recheck_settings,
     append_entry_reason,
     fixed_recheck_selected_scores,
     fixed_opening_result,
@@ -12,6 +13,30 @@ from trading_bot.scheduler_recheck import (
     recheck_fixed_watchlist,
     tag_mode_intents,
 )
+
+
+def test_fixed_recheck_preserves_configured_condition_policies() -> None:
+    soft = _fixed_recheck_settings(
+        TradingSettings(
+            breakout_close_condition_mode="SOFT_SCORE",
+            volume_increase_condition_mode="SOFT_SCORE",
+            pullback_rebreak_condition_mode="SOFT_SCORE",
+        )
+    )
+    hard = _fixed_recheck_settings(
+        TradingSettings(
+            breakout_close_condition_mode="HARD_FILTER",
+            volume_increase_condition_mode="HARD_FILTER",
+            pullback_rebreak_condition_mode="HARD_FILTER",
+        )
+    )
+
+    assert soft.volume_increase_condition_mode == "SOFT_SCORE"
+    assert soft.breakout_close_condition_mode == "SOFT_SCORE"
+    assert soft.pullback_rebreak_condition_mode == "SOFT_SCORE"
+    assert hard.volume_increase_condition_mode == "HARD_FILTER"
+    assert hard.breakout_close_condition_mode == "HARD_FILTER"
+    assert hard.pullback_rebreak_condition_mode == "HARD_FILTER"
 
 
 class Latest:

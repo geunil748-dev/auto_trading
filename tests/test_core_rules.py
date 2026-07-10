@@ -673,14 +673,51 @@ def test_entry_planner_records_insufficient_5m_volume_data_without_zero_division
     assert [item.ticker for item in intents] == ["ZERO"]
     evaluation = repository.candidate_evaluations[0]
     assert evaluation.buy_allowed is True
-    assert evaluation.soft_score_adjustment == -5.0
+    assert evaluation.soft_score_adjustment == 0.0
     condition_json = json.loads(evaluation.condition_result_json)
     assert condition_json["recent_5m_volume"] == 10_000
     assert condition_json["previous_5m_volume"] == 0
     assert condition_json["volume_increase_percent"] is None
     assert condition_json["min5mVolumeIncreasePercent"] == 5.0
-    assert condition_json["volume_increase_pass"] is False
-    assert condition_json["volume_increase_insufficient"] is True
+    assert condition_json["volume_increase_pass"] is None
+    assert condition_json["volume_condition_result"] == "UNKNOWN"
+    assert condition_json["volume_data_available"] is False
+    assert condition_json["volume_data_missing_reason"] == "INVALID_VOLUME_VALUE"
+    assert condition_json["data_quality_warning"] == "VOLUME_DATA_UNAVAILABLE"
+    assert condition_json["volume_increase_insufficient"] is False
+    assert "VOLUME_INCREASE_FAILED" not in condition_json["failed_soft_reasons"]
+
+
+def test_entry_planner_hard_filter_blocks_missing_volume_as_data_unavailable() -> None:
+    repository = InMemoryDailyRepository()
+    settings = entry_test_settings(
+        require_5m_volume_increase=True,
+        volume_increase_condition_mode="HARD_FILTER",
+    )
+    intents = plan_buy_intents(
+        [ScoreRecord("MISSING", 95, 90)],
+        {
+            "MISSING": BreakoutInput(
+                last_price_usd=12.5,
+                open_price_usd=10,
+                previous_high_usd=12,
+                previous_low_usd=8,
+                volume_data_missing_reason="CURRENT_5M_VOLUME_NULL",
+            )
+        },
+        account(),
+        settings,
+        repository=repository,
+        trade_date=date(2026, 5, 22),
+    )
+
+    assert intents == []
+    evaluation = repository.candidate_evaluations[0]
+    assert evaluation.buy_block_reason == "VOLUME_DATA_UNAVAILABLE"
+    condition_json = json.loads(evaluation.condition_result_json)
+    assert condition_json["volume_condition_result"] == "UNKNOWN"
+    assert condition_json["volume_data_missing_reason"] == "CURRENT_5M_VOLUME_NULL"
+    assert "VOLUME_INCREASE_FAILED" not in condition_json["failed_hard_reasons"]
 
 
 def test_entry_planner_hard_filter_blocks_failed_5m_volume_increase() -> None:

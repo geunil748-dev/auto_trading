@@ -16,6 +16,8 @@ QUOTE_PATH = "/uapi/overseas-price/v1/quotations/price"
 QUOTE_TR_ID = "HHDFS00000300"
 DAILY_PRICE_PATH = "/uapi/overseas-price/v1/quotations/dailyprice"
 DAILY_PRICE_TR_ID = "HHDFS76240000"
+INTRADAY_PRICE_PATH = "/uapi/overseas-price/v1/quotations/inquire-time-itemchartprice"
+INTRADAY_PRICE_TR_ID = "HHDFS76950200"
 BALANCE_PATH = "/uapi/overseas-stock/v1/trading/inquire-balance"
 ORDER_PATH = "/uapi/overseas-stock/v1/trading/order"
 ORDER_CANCEL_PATH = "/uapi/overseas-stock/v1/trading/order-rvsecncl"
@@ -98,6 +100,28 @@ class KisOverseasClient:
                 "GUBN": "0",
                 "BYMD": bymd,
                 "MODP": "0",
+            },
+        )
+        return list(_output_rows(payload))
+
+    def intraday_prices(
+        self,
+        ticker: str,
+        interval_minutes: int = 5,
+    ) -> list[dict[str, Any]]:
+        payload = self.http.get(
+            INTRADAY_PRICE_PATH,
+            INTRADAY_PRICE_TR_ID,
+            {
+                "AUTH": "",
+                "EXCD": self.exchange_code,
+                "SYMB": ticker.strip().upper(),
+                "NMIN": str(interval_minutes),
+                "PINC": "1",
+                "NEXT": "",
+                "NREC": "120",
+                "FILL": "",
+                "KEYB": "",
             },
         )
         return list(_output_rows(payload))

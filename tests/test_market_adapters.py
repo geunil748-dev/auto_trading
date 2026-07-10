@@ -6,6 +6,11 @@ from trading_bot.adapters.chart_history import YahooChartScorer
 from trading_bot.adapters.breakout_history import KisBreakoutHistory
 from trading_bot.adapters.context import YFINANCE_HISTORY_TIMEOUT_SECONDS, YahooMarketContextSource
 from trading_bot.adapters.market_data import KisDailyVolumeHistory, KisScreeningMarketData
+from trading_bot.adapters.kis_overseas import (
+    INTRADAY_PRICE_PATH,
+    INTRADAY_PRICE_TR_ID,
+    KisOverseasClient,
+)
 from trading_bot.chart_models import PriceBar
 from trading_bot.chart_scoring import chart_pattern_score
 from trading_bot.models import RankedStock
@@ -66,6 +71,27 @@ def test_kis_screening_market_data_maps_quote_and_volume_history(monkeypatch) ->
     assert kis.gainers_limit == 220
     assert kis.volume_limit == 230
     assert kis.trade_value_limit == 240
+
+
+def test_kis_overseas_client_requests_five_minute_chart_rows() -> None:
+    calls = []
+
+    class Http:
+        def get(self, path, tr_id, params):
+            calls.append((path, tr_id, params))
+            return {"output2": [{"evol": "100"}]}
+
+    rows = KisOverseasClient(Http(), exchange_code="NAS").intraday_prices(
+        " aaa ",
+        interval_minutes=5,
+    )
+
+    assert rows == [{"evol": "100"}]
+    path, tr_id, params = calls[0]
+    assert (path, tr_id) == (INTRADAY_PRICE_PATH, INTRADAY_PRICE_TR_ID)
+    assert params["EXCD"] == "NAS"
+    assert params["SYMB"] == "AAA"
+    assert params["NMIN"] == "5"
 
 
 def test_kis_screening_market_data_reads_open_from_daily_price_when_quote_omits_it() -> None:
@@ -819,6 +845,46 @@ def test_chart_pattern_score_stays_in_range_for_uptrend() -> None:
     ]
 
     assert 0 <= chart_pattern_score(bars) <= 100
+
+
+def test_kis_breakout_history_maps_current_and_completed_five_minute_volumes() -> None:
+    class Kis:
+        def quote(self, _: str) -> dict[str, str]:
+            return {"last": "12.50", "open": "11.00"}
+
+        def daily_prices(self, _: str) -> list[dict[str, str]]:
+            return [{"high": "12.00", "low": "8.00"}]
+
+        def intraday_prices(self, ticker: str, interval_minutes: int) -> list[dict[str, str]]:
+            assert (ticker, interval_minutes) == ("AAA", 5)
+            return [
+                {"xymd": "20260710", "xhms": "094000", "last": "12.50", "evol": "150"},
+                {"xymd": "20260710", "xhms": "093500", "last": "12.40", "evol": "100"},
+                {"xymd": "20260710", "xhms": "093000", "last": "12.20", "evol": "80"},
+            ]
+
+    result = KisBreakoutHistory(Kis()).breakout_input("AAA")
+    assert result.current_5m_volume == 150
+    assert result.previous_5m_average_volume == 90
+    assert result.recent_5m_close_usd == 12.4
+    assert result.volume_data_missing_reason is None
+
+
+def test_kis_breakout_history_records_market_data_api_error_without_faking_zero() -> None:
+    class Kis:
+        def quote(self, _: str) -> dict[str, str]:
+            return {"last": "12.50", "open": "11.00"}
+
+        def daily_prices(self, _: str) -> list[dict[str, str]]:
+            return [{"high": "12.00", "low": "8.00"}]
+
+        def intraday_prices(self, _: str, interval_minutes: int) -> list[dict[str, str]]:
+            raise TimeoutError("market data timeout")
+
+    result = KisBreakoutHistory(Kis()).breakout_input("AAA")
+    assert result.current_5m_volume is None
+    assert result.previous_5m_average_volume is None
+    assert result.volume_data_missing_reason == "MARKET_DATA_API_ERROR"
 
 
 def test_yahoo_chart_scorer_reads_ohlc_history() -> None:
