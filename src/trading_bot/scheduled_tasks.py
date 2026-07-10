@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from zoneinfo import ZoneInfo
@@ -908,12 +909,17 @@ def trading_cycle_skip_reason(monitor_state: Path) -> str | None:
                 cursor.fetchall()
         except Exception:
             reasons.append("db_connected=false")
-    age_seconds = _state_age_seconds(monitor_state)
+    freshness = _state_freshness(monitor_state)
+    age_seconds = freshness["age_seconds"]
     if age_seconds is None:
         reasons.append("state=missing")
     elif age_seconds > 600:
         reasons.append(
             f"state=stale age_seconds={age_seconds} "
+            f"state_freshness_source={freshness['source']} "
+            f"state_last_updated={freshness['last_updated'] or '-'} "
+            f"state_file_mtime={freshness['file_mtime'] or '-'} "
+            "stale_threshold_seconds=600 state_fresh=false "
             "recovery=inspect_scheduler_state_write"
         )
     if not reasons:
@@ -930,9 +936,53 @@ def _guarded_trading_skip(
 
 
 def _state_age_seconds(path: Path) -> int | None:
+    return _state_freshness(path)["age_seconds"]
+
+
+def _state_freshness(
+    path: Path,
+    *,
+    now: datetime | None = None,
+) -> dict[str, object]:
     if not path.exists():
-        return None
-    return max(int(datetime.now().timestamp() - path.stat().st_mtime), 0)
+        return {
+            "source": "missing",
+            "last_updated": None,
+            "file_mtime": None,
+            "age_seconds": None,
+        }
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    current = current.astimezone(timezone.utc)
+    file_mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    last_updated_text: str | None = None
+    timestamp = file_mtime
+    source = "file_mtime"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        raw_last_updated = payload.get("last_updated") if isinstance(payload, dict) else None
+        if raw_last_updated not in (None, ""):
+            last_updated_text = str(raw_last_updated)
+            parsed = datetime.fromisoformat(last_updated_text.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+                source = "last_updated_naive_utc"
+            else:
+                source = "last_updated"
+            timestamp = parsed.astimezone(timezone.utc)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        logging.getLogger(__name__).warning(
+            "state_last_updated_parse_failed path=%s error=%s fallback=file_mtime",
+            path,
+            type(exc).__name__,
+        )
+    return {
+        "source": source,
+        "last_updated": last_updated_text,
+        "file_mtime": file_mtime.isoformat(),
+        "age_seconds": max(int((current - timestamp).total_seconds()), 0),
+    }
 
 
 def _remembered_highs(
