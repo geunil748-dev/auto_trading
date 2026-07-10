@@ -228,7 +228,9 @@ def test_retry_stale_mock_buy_orders_returns_state_and_logs(monkeypatch) -> None
     assert retry_logs[0][1] == "미체결 재주문"
     assert "재주문 1건" in retry_logs[0][2]
     assert latest.cancelled_orders == cancelled
-    assert latest.intraday_entry_rounds == 1
+    assert latest.intraday_entry_rounds == 0
+    assert latest.unfilled_reorder_count == 1
+    assert latest.unfilled_reorder_tickers == {"AAA"}
     assert latest.buy_tickers == {"AAA"}
     assert executor.intents[0].entry_reason.endswith("+UNFILLED_REORDER")
 

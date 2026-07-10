@@ -71,7 +71,9 @@ def retry_stale_mock_buy_orders(
     intents = apply_stop_loss_entry_guards_func(intents, repository, settings)
     trades = build_mock_buy_executor_func(kis_settings, repository, settings).execute(intents)
     if trades:
-        latest.intraday_entry_rounds += 1
+        latest.unfilled_reorder_count = getattr(latest, "unfilled_reorder_count", 0) + 1
+        latest.unfilled_reorder_tickers = getattr(latest, "unfilled_reorder_tickers", set())
+        latest.unfilled_reorder_tickers.update(item.ticker for item in intents)
         latest.buy_tickers.update(item.ticker for item in intents)
     return (
         state_from_dry_run(latest.result),

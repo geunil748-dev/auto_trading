@@ -131,6 +131,9 @@ class BreakoutInput:
     recent_5m_close_usd: float | None = None
     current_5m_volume: float | None = None
     previous_5m_average_volume: float | None = None
+    previous_5m_candle_count: int | None = None
+    volume_data_source: str | None = None
+    volume_data_missing_reason: str | None = None
     vwap_usd: float | None = None
     intraday_ma20_usd: float | None = None
     pulled_back_after_breakout: bool | None = None

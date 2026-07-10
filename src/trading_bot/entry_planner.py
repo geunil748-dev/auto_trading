@@ -227,6 +227,7 @@ BUY_BLOCK_REASON_LABELS = {
     "ORDER_NOT_SUBMITTED": "주문 미제출",
     "OVERHEAT_LIMIT_EXCEEDED": "과열 제한 초과",
     "VOLUME_INCREASE_FAILED": "5분 거래량 증가 미충족",
+    "VOLUME_INCREASE_DATA_MISSING": "5분 거래량 데이터 없음",
     "VWAP_MA20_FAILED": "VWAP/MA20 조건 미충족",
     "VWAP_MA20_DATA_MISSING": "VWAP/MA20 데이터 없음",
     "PULLBACK_REBREAK_FAILED": "눌림 후 재돌파 미충족",
@@ -302,19 +303,27 @@ def _entry_timing_evaluation(
         logs,
     )
     volume_increase_percent = _volume_increase_percent(breakout)
-    volume_increase_insufficient = volume_increase_percent is None
+    volume_data_available = volume_increase_percent is not None
+    volume_increase_insufficient = not volume_data_available
     volume_pass = (
         volume_increase_percent is not None
         and volume_increase_percent >= settings.min_5m_volume_increase_percent
     )
-    _apply_condition(
-        volume_pass,
-        _condition_mode(settings.require_5m_volume_increase, settings.volume_increase_condition_mode),
-        "VOLUME_INCREASE_FAILED",
-        hard,
-        soft,
-        logs,
+    configured_volume_mode = _condition_mode(
+        settings.require_5m_volume_increase, settings.volume_increase_condition_mode
     )
+    configured_missing_mode = _condition_mode(
+        settings.require_5m_volume_increase, settings.volume_data_missing_condition_mode
+    )
+    effective_missing_mode = (
+        CONDITION_MODE_HARD_FILTER
+        if settings.app_mode == "real" or settings.real_trading_enabled
+        else configured_missing_mode
+    )
+    if volume_data_available:
+        _apply_condition(volume_pass, configured_volume_mode, "VOLUME_INCREASE_FAILED", hard, soft, logs)
+    else:
+        _apply_condition(False, effective_missing_mode, "VOLUME_INCREASE_DATA_MISSING", hard, soft, logs)
     vwap_pass = _vwap_pass(breakout)
     ma20_pass = _ma20_pass(breakout)
     vwap_ma20_status = _vwap_ma20_evaluation_status(breakout, settings)
@@ -353,10 +362,24 @@ def _entry_timing_evaluation(
             "overheat_pass": overheat_pass,
             "breakout_close_pass": hold_pass and close_pass,
             "volume_increase_pass": volume_pass,
+            "volume_data_available": volume_data_available,
+            "volume_data_missing_reason": breakout.volume_data_missing_reason or _volume_missing_reason(breakout),
+            "volume_data_source": breakout.volume_data_source,
+            "current_5m_volume": breakout.current_5m_volume,
+            "previous_5m_average_volume": breakout.previous_5m_average_volume,
+            "previous_5m_candle_count": breakout.previous_5m_candle_count,
             "recent_5m_volume": breakout.current_5m_volume,
             "previous_5m_volume": breakout.previous_5m_average_volume,
             "volume_increase_percent": volume_increase_percent,
             "min5mVolumeIncreasePercent": settings.min_5m_volume_increase_percent,
+            "min_5m_volume_increase_percent": settings.min_5m_volume_increase_percent,
+            "configured_volume_increase_condition_mode": configured_volume_mode,
+            "effective_volume_increase_condition_mode": configured_volume_mode,
+            "configured_volume_data_missing_condition_mode": configured_missing_mode,
+            "effective_volume_data_missing_condition_mode": effective_missing_mode,
+            "volume_data_missing_bypassed": (
+                not volume_data_available and effective_missing_mode != CONDITION_MODE_HARD_FILTER
+            ),
             "volume_increase_insufficient": volume_increase_insufficient,
             "current_price": breakout.last_price_usd,
             "vwap_usd": breakout.vwap_usd,
@@ -436,6 +459,16 @@ def _volume_increase_percent(breakout: BreakoutInput) -> float | None:
         (breakout.current_5m_volume - breakout.previous_5m_average_volume)
         / breakout.previous_5m_average_volume
     ) * 100
+
+
+def _volume_missing_reason(breakout: BreakoutInput) -> str | None:
+    if breakout.current_5m_volume is None:
+        return "CURRENT_5M_VOLUME_MISSING"
+    if breakout.previous_5m_average_volume is None:
+        return "PREVIOUS_5M_AVERAGE_VOLUME_MISSING"
+    if breakout.previous_5m_average_volume <= 0:
+        return "PREVIOUS_5M_AVERAGE_VOLUME_NOT_POSITIVE"
+    return None
 
 
 def _above_vwap_or_ma20(breakout: BreakoutInput) -> bool:

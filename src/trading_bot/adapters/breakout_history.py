@@ -20,4 +20,6 @@ class KisBreakoutHistory:
             open_price_usd=_opening_price(self.kis, ticker, quote, daily),
             previous_high_usd=_required_float(previous, "high", "HIGH", "high_price", "HIGH_PRICE"),
             previous_low_usd=_required_float(previous, "low", "LOW", "low_price", "LOW_PRICE"),
+            volume_data_source="KIS_QUOTE_DAILY_ONLY",
+            volume_data_missing_reason="INTRADAY_CANDLE_SOURCE_UNAVAILABLE",
         )

@@ -687,6 +687,50 @@ def test_entry_planner_records_insufficient_5m_volume_data_without_zero_division
     assert condition_json["volume_increase_insufficient"] is True
 
 
+def test_entry_planner_separates_missing_volume_from_actual_failure() -> None:
+    repository = InMemoryDailyRepository()
+    settings = entry_test_settings(
+        require_5m_volume_increase=True,
+        volume_increase_condition_mode="HARD_FILTER",
+        volume_data_missing_condition_mode="HARD_FILTER",
+    )
+
+    plan_buy_intents(
+        [ScoreRecord("MISSING", 95, 90)],
+        {"MISSING": BreakoutInput(12.5, 10, 12, 8, current_5m_volume=None,
+                                  previous_5m_average_volume=100_000)},
+        account(), settings, repository=repository, trade_date=date(2026, 7, 10),
+    )
+
+    evaluation = repository.candidate_evaluations[0]
+    assert evaluation.buy_block_reason == "VOLUME_INCREASE_DATA_MISSING"
+    condition_json = json.loads(evaluation.condition_result_json)
+    assert condition_json["volume_data_available"] is False
+    assert condition_json["volume_data_missing_reason"] == "CURRENT_5M_VOLUME_MISSING"
+
+
+def test_real_mode_always_hard_blocks_missing_volume_data() -> None:
+    repository = InMemoryDailyRepository()
+    settings = entry_test_settings(
+        app_mode="real",
+        require_5m_volume_increase=True,
+        volume_data_missing_condition_mode="LOG_ONLY",
+    )
+
+    intents = plan_buy_intents(
+        [ScoreRecord("REAL", 95, 90)],
+        {"REAL": BreakoutInput(12.5, 10, 12, 8)},
+        account(), settings, repository=repository, trade_date=date(2026, 7, 10),
+    )
+
+    assert intents == []
+    evaluation = repository.candidate_evaluations[0]
+    assert evaluation.buy_block_reason == "VOLUME_INCREASE_DATA_MISSING"
+    condition_json = json.loads(evaluation.condition_result_json)
+    assert condition_json["configured_volume_data_missing_condition_mode"] == "LOG_ONLY"
+    assert condition_json["effective_volume_data_missing_condition_mode"] == "HARD_FILTER"
+
+
 def test_entry_planner_hard_filter_blocks_failed_5m_volume_increase() -> None:
     repository = InMemoryDailyRepository()
     settings = entry_test_settings(

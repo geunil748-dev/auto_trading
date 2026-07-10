@@ -174,6 +174,7 @@ class TradingSettings:
     require_5m_volume_increase: bool = True
     min_5m_volume_increase_percent: float = 5.0
     volume_increase_condition_mode: str = CONDITION_MODE_SOFT_SCORE
+    volume_data_missing_condition_mode: str = CONDITION_MODE_SOFT_SCORE
     require_vwap_or_ma20: bool = False
     vwap_ma20_condition_mode: str = CONDITION_MODE_HARD_FILTER
     vwap_ma20_condition_type: str = VWAP_MA20_OR
@@ -335,6 +336,12 @@ def load_settings() -> TradingSettings:
         volume_increase_condition_mode=_condition_mode_env(
             "VOLUME_INCREASE_CONDITION_MODE",
             CONDITION_MODE_SOFT_SCORE,
+        ),
+        volume_data_missing_condition_mode=_condition_mode_env(
+            "VOLUME_DATA_MISSING_CONDITION_MODE",
+            CONDITION_MODE_HARD_FILTER
+            if app_mode == APP_MODE_REAL or real_trading_requested
+            else CONDITION_MODE_SOFT_SCORE,
         ),
         require_vwap_or_ma20=_bool_env("REQUIRE_VWAP_OR_MA20", False),
         vwap_ma20_condition_mode=_condition_mode_env(
