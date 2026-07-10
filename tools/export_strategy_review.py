@@ -151,6 +151,7 @@ def _create_strategy_review_workbook(
             if result.error:
                 failures.append((result.name, result.error))
             results.append(result)
+        results.append(_daily_activity_sheet(results))
 
     writer = SimpleXlsxWriter()
     for result in results:
@@ -415,7 +416,7 @@ def raw_table_sheet(
         return SheetResult(sheet_name, [], f"{table}: no requested columns or table missing")
     if date_column not in columns_by_table.get(table, []):
         return SheetResult(sheet_name, [], f"{table}.{date_column}: date column missing")
-    where = [f"{q(date_column)} BETWEEN ? AND ?"]
+    where = [f"CONVERT(date, {q(date_column)}) BETWEEN ? AND ?"]
     params: list[Any] = [date_from, date_to]
     if not include_real and table in MOCK_FILTER_TABLES and "is_mock" in columns_by_table.get(table, []):
         where.append("[is_mock] = 1")
@@ -460,7 +461,7 @@ def fetch_rows(
     for row in rows:
         result.append(
             {
-                column: sanitize_value(value)
+                column: _normalized_export_value(column, value)
                 for column, value in zip(columns, row, strict=False)
             }
         )
@@ -960,7 +961,61 @@ def final_metrics(results: list[SheetResult]) -> dict[str, Any]:
             key=lambda row: _num(row.get("count")),
             reverse=True,
         )[:10],
+        "daily_activity_counts": _daily_activity_counts(by_name),
     }
+
+
+def _daily_activity_counts(
+    by_name: dict[str, SheetResult],
+) -> dict[str, dict[str, int]]:
+    counts: dict[str, dict[str, int]] = {}
+    for sheet_name, metric_name in (
+        ("order_snapshot", "orders"),
+        ("fill_history", "fills"),
+        ("trade_history", "trades"),
+    ):
+        for row in by_name.get(sheet_name, SheetResult(sheet_name, [])).rows:
+            key = _trade_date_key(row.get("trade_date"))
+            if key is None:
+                continue
+            daily = counts.setdefault(key, {"orders": 0, "fills": 0, "trades": 0})
+            daily[metric_name] += 1
+    return dict(sorted(counts.items()))
+
+
+def _daily_activity_sheet(results: list[SheetResult]) -> SheetResult:
+    by_name = {result.name: result for result in results}
+    rows = [
+        {"trade_date": trade_date, **counts}
+        for trade_date, counts in _daily_activity_counts(by_name).items()
+    ]
+    return SheetResult("daily_activity_counts", rows)
+
+
+def _normalized_export_value(column: str, value: Any) -> Any:
+    if column in {"trade_date", "trading_date", "order_date", "fill_date"}:
+        return _trade_date_key(value)
+    return sanitize_value(value)
+
+
+def _trade_date_key(value: Any) -> str | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    text = str(value).strip()
+    if len(text) >= 10:
+        prefix = text[:10]
+        try:
+            return date.fromisoformat(prefix).isoformat()
+        except ValueError:
+            pass
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date().isoformat()
+    except ValueError:
+        return text
 
 
 def _parse_date(value: str) -> date:

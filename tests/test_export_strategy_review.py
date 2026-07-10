@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 from tools.export_strategy_review import (
     SheetResult,
+    _daily_activity_sheet,
+    _trade_date_key,
     _safe_error,
     candidate_orders_sql,
     event_summary_sql,
     export_sheets,
     export_strategy_review_workbook_with_results,
+    final_metrics,
     pnl_by_exit_reason_sql,
     sanitize_value,
     summary_reconciliation_sql,
@@ -224,3 +227,42 @@ def test_event_summary_sql_uses_trading_event_log_only() -> None:
 
     assert "FROM dbo.[trading_event_log]" in sql
     assert "bot_log" not in sql.lower()
+
+
+def test_trade_date_key_normalizes_supported_values_without_timezone_day_shift() -> None:
+    assert _trade_date_key(date(2026, 7, 6)) == "2026-07-06"
+    assert _trade_date_key(datetime(2026, 7, 6, 23, 30)) == "2026-07-06"
+    assert _trade_date_key(datetime(2026, 7, 6, 23, 30, tzinfo=timezone.utc)) == "2026-07-06"
+    assert _trade_date_key("2026-07-06 00:00:00 UTC") == "2026-07-06"
+
+
+def test_final_metrics_counts_orders_fills_and_trades_by_normalized_trade_date() -> None:
+    results = [
+            SheetResult(
+                "order_snapshot",
+                [{"trade_date": value} for value in (
+                    date(2026, 7, 6),
+                    datetime(2026, 7, 6, 1),
+                    "2026-07-06",
+                    "2026-07-06 23:59:59",
+                )],
+            ),
+            SheetResult(
+                "fill_history",
+                [{"trade_date": "2026-07-06"}, {"trade_date": datetime(2026, 7, 6, 2)}],
+            ),
+            SheetResult(
+                "trade_history",
+                [{"trade_date": "2026-07-06"}, {"trade_date": date(2026, 7, 6)}, {"trade_date": datetime(2026, 7, 6, 3)}],
+            ),
+        ]
+    metrics = final_metrics(results)
+
+    assert metrics["daily_activity_counts"]["2026-07-06"] == {
+        "orders": 4,
+        "fills": 2,
+        "trades": 3,
+    }
+    assert _daily_activity_sheet(results).rows == [
+        {"trade_date": "2026-07-06", "orders": 4, "fills": 2, "trades": 3}
+    ]
