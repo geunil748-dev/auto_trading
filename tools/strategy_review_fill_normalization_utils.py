@@ -47,7 +47,7 @@ def prepare_fill(source: Mapping[str, Any]) -> dict[str, Any]:
         "raw": row,
         "source_id": text_value(row.get("id")),
         "trade_date": date_text(row.get("trade_date", row.get("fill_date"))),
-        "is_mock": optional_bool(row.get("is_mock")) if "is_mock" in row else None,
+        "is_mock": mode_is_mock(row),
         "ticker": ticker_text(row.get("ticker", row.get("symbol"))),
         "ticker_name": text_value(row.get("ticker_name", row.get("name"))),
         "raw_side": text_value(row.get("side")),
@@ -72,7 +72,7 @@ def prepare_trade(source: Mapping[str, Any]) -> dict[str, Any]:
         "raw": row,
         "source_id": text_value(row.get("id")),
         "trade_date": date_text(row.get("trade_date")),
-        "is_mock": optional_bool(row.get("is_mock")) if "is_mock" in row else None,
+        "is_mock": mode_is_mock(row),
         "ticker": ticker_text(row.get("ticker", row.get("symbol"))),
         "side": normalize_side(row.get("order_type", row.get("side"))),
         "order_no": text_value(row.get("order_no", row.get("orderNo"))),
@@ -244,6 +244,32 @@ def optional_bool(value: Any) -> bool | None:
     if text in {"0", "false", "no", "n", "real", "live"}:
         return False
     return None
+
+
+def mode_is_mock(row: Mapping[str, Any]) -> bool | None:
+    for field in ("is_mock", "mode"):
+        if field in row and (value := optional_bool(row.get(field))) is not None:
+            return value
+    return None
+
+
+def mode_text(row: Mapping[str, Any]) -> str:
+    value = mode_is_mock(row)
+    return "UNKNOWN" if value is None else ("MOCK" if value else "REAL")
+
+
+def is_trusted_normalized_row(row: Mapping[str, Any]) -> bool:
+    return (
+        text_value(row.get("normalization_confidence")).upper() == "HIGH"
+        and not truthy(row.get("excluded_from_trusted_pnl"))
+    )
+
+
+def is_best_effort_normalized_row(row: Mapping[str, Any]) -> bool:
+    return (
+        text_value(row.get("normalization_method")) != AMBIGUOUS_EXCLUDED
+        and not truthy(row.get("excluded_from_best_effort_pnl"))
+    )
 
 
 def truthy(value: Any) -> bool:

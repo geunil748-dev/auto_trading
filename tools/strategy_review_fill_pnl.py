@@ -13,6 +13,9 @@ try:
         date_text,
         decimal_value,
         float_value,
+        is_best_effort_normalized_row,
+        is_trusted_normalized_row,
+        mode_text,
         score_bucket,
         text_value,
         ticker_text,
@@ -21,6 +24,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - direct script fallback
     from strategy_review_fill_normalization_utils import (  # type: ignore[no-redef]
         average_decimal, candidate_sort_key, date_text, decimal_value, float_value,
+        is_best_effort_normalized_row, is_trusted_normalized_row, mode_text,
         score_bucket, text_value, ticker_text, truthy,
     )
 
@@ -28,25 +32,40 @@ except ModuleNotFoundError:  # pragma: no cover - direct script fallback
 def candidate_review_rows(
     normalized_rows: Sequence[Mapping[str, Any]],
     candidate_rows: Sequence[Mapping[str, Any]],
+    candidate_mode_default: str | None = None,
 ) -> list[dict[str, Any]]:
-    latest: dict[tuple[str, str], dict[str, Any]] = {}
+    latest: dict[tuple[str, str, str], dict[str, Any]] = {}
     for source in candidate_rows:
         row = deepcopy(dict(source))
         if not (truthy(row.get("buy_allowed")) or truthy(row.get("order_submitted"))):
             continue
+        source_mode = mode_text(row)
+        effective_mode = source_mode
+        if source_mode == "UNKNOWN" and candidate_mode_default:
+            effective_mode = mode_text({"mode": candidate_mode_default})
         key = (
             date_text(row.get("trade_date", row.get("trading_date"))),
             ticker_text(row.get("ticker", row.get("symbol"))),
+            effective_mode,
         )
         if key not in latest or candidate_sort_key(row) > candidate_sort_key(latest[key]):
             latest[key] = row
-    fills_by_key: dict[tuple[str, str], list[Mapping[str, Any]]] = defaultdict(list)
+    fills_by_key: dict[tuple[str, str, str], list[Mapping[str, Any]]] = defaultdict(list)
     for row in normalized_rows:
-        fills_by_key[(date_text(row.get("trade_date")), ticker_text(row.get("ticker")))].append(row)
+        fills_by_key[
+            (date_text(row.get("trade_date")), ticker_text(row.get("ticker")), mode_text(row))
+        ].append(row)
     result: list[dict[str, Any]] = []
     for key in sorted(latest):
         row = deepcopy(latest[key])
-        fills = fills_by_key.get(key, [])
+        source_mode = mode_text(row)
+        matched_mode = key[2]
+        mode_match_method = (
+            "EXACT"
+            if source_mode != "UNKNOWN"
+            else ("EXPORT_SCOPE_DEFAULT" if matched_mode != "UNKNOWN" else "UNKNOWN_NOT_ASSIGNED")
+        )
+        fills = fills_by_key.get((key[0], key[1], matched_mode), [])
         trusted_buys = _included(fills, "BUY", "excluded_from_trusted_pnl")
         best_buys = _included(fills, "BUY", "excluded_from_best_effort_pnl")
         trusted_sells = _included(fills, "SELL", "excluded_from_trusted_pnl")
@@ -61,6 +80,9 @@ def candidate_review_rows(
         row.update(
             trade_date=key[0],
             ticker=key[1],
+            mode=matched_mode,
+            candidate_mode=source_mode,
+            mode_match_method=mode_match_method,
             buy_fill_count=len(trusted_buys),
             sell_count=len(trusted_sells),
             sell_profit_usd=float_value(trusted_profit),
@@ -91,8 +113,8 @@ def aggregate_fill_pnl(
     result: list[dict[str, Any]] = []
     for key in sorted(groups):
         rows = groups[key]
-        trusted = [row for row in rows if not row.get("excluded_from_trusted_pnl")]
-        best = [row for row in rows if not row.get("excluded_from_best_effort_pnl")]
+        trusted = [row for row in rows if is_trusted_normalized_row(row)]
+        best = [row for row in rows if is_best_effort_normalized_row(row)]
         if not trusted and not best:
             continue
         trusted_metrics, best_metrics = _profit_metrics(trusted), _profit_metrics(best)
@@ -100,7 +122,7 @@ def aggregate_fill_pnl(
         output.update(trusted_metrics)
         output.update({f"trusted_{name}": value for name, value in trusted_metrics.items()})
         output.update({f"best_effort_{name}": value for name, value in best_metrics.items()})
-        if fields == ("ticker",):
+        if "ticker" in fields:
             output["exit_reasons"] = ",".join(
                 sorted({text_value(row.get("exit_reason")) for row in best if text_value(row.get("exit_reason"))})
             )
@@ -113,16 +135,16 @@ def aggregate_candidate_pnl(
     group_name: str,
     group_value: Callable[[Mapping[str, Any]], str],
 ) -> list[dict[str, Any]]:
-    groups: dict[tuple[str, str], list[Mapping[str, Any]]] = defaultdict(list)
+    groups: dict[tuple[str, str, str], list[Mapping[str, Any]]] = defaultdict(list)
     for row in candidate_rows:
-        groups[(date_text(row.get("trade_date")), group_value(row))].append(row)
+        groups[(date_text(row.get("trade_date")), mode_text(row), group_value(row))].append(row)
     result: list[dict[str, Any]] = []
-    for (trade_date_value, label), rows in sorted(groups.items()):
+    for (trade_date_value, mode, label), rows in sorted(groups.items()):
         trusted = _candidate_metrics(rows, "trusted_sell_count", "trusted_sell_profit_usd")
         best = _candidate_metrics(rows, "best_effort_sell_count", "best_effort_sell_profit_usd")
         if trusted["sell_count"] == 0 and best["sell_count"] == 0:
             continue
-        output = {"trade_date": trade_date_value, group_name: label, **trusted}
+        output = {"trade_date": trade_date_value, "mode": mode, group_name: label, **trusted}
         output.update({f"trusted_{name}": value for name, value in trusted.items()})
         output.update({f"best_effort_{name}": value for name, value in best.items()})
         result.append(output)
@@ -134,7 +156,12 @@ def _included(
     side: str,
     excluded_field: str,
 ) -> list[Mapping[str, Any]]:
-    return [row for row in rows if row.get("side") == side and not row.get(excluded_field)]
+    policy = (
+        is_trusted_normalized_row
+        if excluded_field == "excluded_from_trusted_pnl"
+        else is_best_effort_normalized_row
+    )
+    return [row for row in rows if row.get("side") == side and policy(row)]
 
 
 def _sum_profit(rows: Sequence[Mapping[str, Any]]) -> Decimal:

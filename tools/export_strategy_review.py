@@ -52,12 +52,18 @@ except ModuleNotFoundError:  # pragma: no cover - direct script execution fallba
 try:
     from tools.strategy_review_fill_normalization import (  # noqa: E402
         build_normalized_review,
+        is_best_effort_normalized_row,
+        is_trusted_normalized_row,
+        mode_text,
         normalize_side,
         normalized_side_sql,
     )
 except ModuleNotFoundError:  # pragma: no cover - direct script execution fallback
     from strategy_review_fill_normalization import (  # type: ignore[no-redef]  # noqa: E402
         build_normalized_review,
+        is_best_effort_normalized_row,
+        is_trusted_normalized_row,
+        mode_text,
         normalize_side,
         normalized_side_sql,
     )
@@ -368,12 +374,13 @@ def export_sheets(
         DEDUP_COLUMNS,
     )
     yield duplicate_suspects
-    yield from _normalized_sheet_results(raw_by_name, candidate_orders_raw)
+    yield from _normalized_sheet_results(raw_by_name, candidate_orders_raw, include_real)
 
 
 def _normalized_sheet_results(
     raw_by_name: dict[str, SheetResult],
     candidate_orders_raw: SheetResult,
+    include_real: bool = False,
 ) -> Iterable[SheetResult]:
     fill_history = raw_by_name.get("fill_history")
     if fill_history is None or fill_history.error:
@@ -395,6 +402,7 @@ def _normalized_sheet_results(
                 SheetResult("daily_trade_summary_report", []),
             ).rows,
             candidate_rows=candidate_orders_raw.rows,
+            candidate_mode_default=None if include_real else "MOCK",
         )
     except Exception as exc:
         error = f"{type(exc).__name__}: {_safe_error(str(exc))}"
@@ -1001,18 +1009,20 @@ def final_metrics(results: list[SheetResult]) -> dict[str, Any]:
     normalized_result = by_name.get("fill_history_normalized")
     normalized_rows = normalized_result.rows if normalized_result is not None else []
     normalized_sell_rows = [
-        row for row in normalized_rows if normalize_side(row.get("normalized_side")) == "SELL"
+        row
+        for row in normalized_rows
+        if normalize_side(row.get("normalized_side") or row.get("side")) == "SELL"
     ]
     trusted_sell_rows = [
         row
         for row in normalized_sell_rows
-        if not _bool(row.get("excluded_from_trusted_pnl"))
+        if is_trusted_normalized_row(row)
         and row.get("normalized_profit_usd") is not None
     ]
     best_effort_sell_rows = [
         row
         for row in normalized_sell_rows
-        if row.get("normalization_method") != "AMBIGUOUS_EXCLUDED"
+        if is_best_effort_normalized_row(row)
         and row.get("normalized_profit_usd") is not None
     ]
     ambiguous_sell_rows = [
@@ -1063,6 +1073,8 @@ def final_metrics(results: list[SheetResult]) -> dict[str, Any]:
         "best_effort_profit_usd": sum(
             _num(row.get("normalized_profit_usd")) for row in best_effort_sell_rows
         ),
+        "normalized_pnl_by_mode": _pnl_by_mode(trusted_sell_rows),
+        "best_effort_pnl_by_mode": _pnl_by_mode(best_effort_sell_rows),
         "ambiguous_order_count": len(ambiguous_sell_rows),
         "ambiguous_profit_usd": sum(
             _num(row.get("raw_profit_usd_sum")) for row in ambiguous_sell_rows
@@ -1078,6 +1090,19 @@ def final_metrics(results: list[SheetResult]) -> dict[str, Any]:
             key=lambda row: _num(row.get("count")),
             reverse=True,
         )[:10],
+    }
+
+
+def _pnl_by_mode(rows: Sequence[dict[str, Any]]) -> dict[str, dict[str, int | float]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(mode_text(row), []).append(row)
+    return {
+        mode: {
+            "sell_order_count": len(mode_rows),
+            "profit_usd": sum(_num(row.get("normalized_profit_usd")) for row in mode_rows),
+        }
+        for mode, mode_rows in sorted(grouped.items())
     }
 
 
@@ -1106,12 +1131,6 @@ def _num(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
-
-
-def _bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    return str(value or "").strip().lower() in {"1", "true", "yes", "y"}
 
 
 FILL_HISTORY_COLUMNS = (

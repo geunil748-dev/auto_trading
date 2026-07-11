@@ -15,6 +15,9 @@ try:
         LEGACY_CUMULATIVE_LATEST,
         NO_ORDER_NO_FALLBACK,
         SINGLE_ROW,
+        is_best_effort_normalized_row,
+        is_trusted_normalized_row,
+        mode_text,
         normalize_side,
         normalized_side_sql,
         score_bucket,
@@ -32,6 +35,7 @@ except ModuleNotFoundError:  # pragma: no cover - direct script fallback
     from strategy_review_fill_normalization_utils import (  # type: ignore[no-redef]
         AMBIGUOUS_EXCLUDED, DELTA_ROWS_SUMMED, EXACT_DUPLICATE_COLLAPSED,
         LEGACY_CUMULATIVE_LATEST, NO_ORDER_NO_FALLBACK, SINGLE_ROW,
+        is_best_effort_normalized_row, is_trusted_normalized_row, mode_text,
         normalize_side, normalized_side_sql, score_bucket, text_value,
     )
     from strategy_review_fill_pnl import (  # type: ignore[no-redef]
@@ -63,6 +67,7 @@ def build_normalized_review(
     daily_summary_rows: Sequence[Mapping[str, Any]] = (),
     trade_summary_rows: Sequence[Mapping[str, Any]] = (),
     candidate_rows: Sequence[Mapping[str, Any]] = (),
+    candidate_mode_default: str | None = None,
 ) -> NormalizedReviewResult:
     """Build deterministic analysis sheets without mutating source rows."""
     fills = [deepcopy(dict(row)) for row in fill_rows]
@@ -73,13 +78,17 @@ def build_normalized_review(
     candidates = [deepcopy(dict(row)) for row in candidate_rows]
     warnings: set[str] = set()
     normalized = match_exit_reasons(normalize_fill_groups(fills, orders, warnings), trades)
-    matched_candidates = candidate_review_rows(normalized, candidates)
+    matched_candidates = candidate_review_rows(
+        normalized, candidates, candidate_mode_default=candidate_mode_default
+    )
     return NormalizedReviewResult(
         normalized_rows=normalized,
         audit_rows=[audit_row(row) for row in normalized],
-        pnl_by_day=aggregate_fill_pnl(normalized, ("trade_date",)),
-        pnl_by_ticker=aggregate_fill_pnl(normalized, ("ticker",)),
-        pnl_by_exit_reason=aggregate_fill_pnl(normalized, ("trade_date", "exit_reason")),
+        pnl_by_day=aggregate_fill_pnl(normalized, ("trade_date", "mode")),
+        pnl_by_ticker=aggregate_fill_pnl(normalized, ("ticker", "mode")),
+        pnl_by_exit_reason=aggregate_fill_pnl(
+            normalized, ("trade_date", "mode", "exit_reason")
+        ),
         candidate_rows=matched_candidates,
         pnl_by_score_bucket=aggregate_candidate_pnl(
             matched_candidates, "score_bucket", lambda row: score_bucket(row.get("final_score"))
@@ -103,7 +112,10 @@ __all__ = [
     "NormalizedReviewResult",
     "SINGLE_ROW",
     "build_normalized_review",
+    "is_best_effort_normalized_row",
+    "is_trusted_normalized_row",
     "match_exit_reasons",
+    "mode_text",
     "normalize_side",
     "normalized_side_sql",
 ]
