@@ -1,4 +1,4 @@
-# Algo_Trading
+# auto_Trading
 
 주식 자동 매도/매수 모의투자 시스템입니다.
 
