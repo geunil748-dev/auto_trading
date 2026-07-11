@@ -88,41 +88,114 @@ class SimpleXlsxWriter:
     def _styles(self) -> str:
         return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
-<fills count="1"><fill><patternFill patternType="none"/></fill></fills>
-<borders count="1"><border/></borders>
+<numFmts count="3">
+<numFmt numFmtId="164" formatCode="&quot;$&quot;#,##0.00;[Red](&quot;$&quot;#,##0.00);-"/>
+<numFmt numFmtId="165" formatCode="0.00%;[Red](0.00%);-"/>
+<numFmt numFmtId="166" formatCode="#,##0;[Red](#,##0);-"/>
+</numFmts>
+<fonts count="2">
+<font><sz val="10"/><name val="Calibri"/></font>
+<font><b/><color rgb="FFFFFFFF"/><sz val="10"/><name val="Calibri"/></font>
+</fonts>
+<fills count="3">
+<fill><patternFill patternType="none"/></fill>
+<fill><patternFill patternType="gray125"/></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FF1F4E78"/><bgColor indexed="64"/></patternFill></fill>
+</fills>
+<borders count="2">
+<border/>
+<border><bottom style="thin"><color rgb="FF17365D"/></bottom></border>
+</borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>
+<cellXfs count="5">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment horizontal="right"/></xf>
+<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment horizontal="right"/></xf>
+<xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment horizontal="right"/></xf>
+</cellXfs>
 </styleSheet>"""
 
     def _worksheet(self, rows: list[list[Any]]) -> str:
+        headers = [str(value or "") for value in (rows[0] if rows else [])]
+        column_styles = [_column_style(header) for header in headers]
         worksheet_rows = "\n".join(
-            f'<row r="{row_index}">'
+            f'<row r="{row_index}"'
+            + (' ht="30" customHeight="1"' if row_index == 1 else "")
+            + ">"
             + "".join(
-                _cell_xml(row_index, col_index, value)
+                _cell_xml(
+                    row_index,
+                    col_index,
+                    value,
+                    1 if row_index == 1 else column_styles[col_index - 1],
+                )
                 for col_index, value in enumerate(row, start=1)
             )
             + "</row>"
             for row_index, row in enumerate(rows[:1_048_576], start=1)
         )
+        columns_xml = "".join(
+            f'<col min="{index}" max="{index}" width="{width:.1f}" customWidth="1"/>'
+            for index, width in enumerate(_column_widths(rows), start=1)
+        )
+        last_column = _column_name(max(1, len(headers)))
+        last_row = max(1, min(len(rows), 1_048_576))
+        auto_filter = f'<autoFilter ref="A1:{last_column}{last_row}"/>' if headers else ""
         return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+<sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+<sheetFormatPr defaultRowHeight="15"/>
+<cols>{columns_xml}</cols>
 <sheetData>{worksheet_rows}</sheetData>
+{auto_filter}
 </worksheet>"""
 
 
-def _cell_xml(row: int, col: int, value: Any) -> str:
+def _cell_xml(row: int, col: int, value: Any, style_id: int = 0) -> str:
     ref = f"{_column_name(col)}{row}"
+    style = f' s="{style_id}"' if style_id else ""
     if value is None:
-        return f'<c r="{ref}"/>'
+        return f'<c r="{ref}"{style}/>'
     if isinstance(value, bool):
-        return f'<c r="{ref}" t="b"><v>{1 if value else 0}</v></c>'
+        return f'<c r="{ref}"{style} t="b"><v>{1 if value else 0}</v></c>'
     if isinstance(value, Decimal):
         value = float(value)
     if isinstance(value, (int, float)) and math.isfinite(float(value)):
-        return f'<c r="{ref}" t="n"><v>{value}</v></c>'
-    return f'<c r="{ref}" t="inlineStr"><is><t>{_xml_text(str(value))}</t></is></c>'
+        return f'<c r="{ref}"{style} t="n"><v>{value}</v></c>'
+    return f'<c r="{ref}"{style} t="inlineStr"><is><t>{_xml_text(str(value))}</t></is></c>'
+
+
+def _column_widths(rows: list[list[Any]]) -> list[float]:
+    column_count = max((len(row) for row in rows), default=1)
+    widths: list[float] = []
+    for column_index in range(column_count):
+        sample = [
+            row[column_index]
+            for row in rows[:500]
+            if column_index < len(row) and row[column_index] is not None
+        ]
+        content_width = max((_display_width(str(value)) for value in sample), default=8)
+        widths.append(float(min(36, max(10, content_width + 2))))
+    return widths
+
+
+def _display_width(value: str) -> int:
+    return sum(2 if ord(char) > 127 else 1 for char in value)
+
+
+def _column_style(header: str) -> int:
+    normalized = header.strip().lower()
+    if "rate" in normalized or "percent" in normalized or normalized.endswith("_ratio"):
+        return 3
+    if any(token in normalized for token in ("profit_usd", "price", "amount", "commission", "slippage")):
+        return 2
+    if any(
+        token in normalized
+        for token in ("count", "quantity", "_qty", "distance_seconds", "source_row")
+    ):
+        return 4
+    return 0
 
 
 def _column_name(index: int) -> str:
