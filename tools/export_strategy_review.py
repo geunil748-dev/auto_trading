@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections.abc import Iterable, Sequence
 from contextlib import closing
@@ -48,6 +49,19 @@ except ModuleNotFoundError:  # pragma: no cover - direct script execution fallba
         sanitize_value,
     )
 
+try:
+    from tools.strategy_review_fill_normalization import (  # noqa: E402
+        build_normalized_review,
+        normalize_side,
+        normalized_side_sql,
+    )
+except ModuleNotFoundError:  # pragma: no cover - direct script execution fallback
+    from strategy_review_fill_normalization import (  # type: ignore[no-redef]  # noqa: E402
+        build_normalized_review,
+        normalize_side,
+        normalized_side_sql,
+    )
+
 TARGET_TABLES = (
     "fill_history",
     "trade_history",
@@ -63,6 +77,18 @@ TARGET_TABLES = (
 )
 
 DEFAULT_DATE_FROM = "2026-05-20"
+NORMALIZED_SHEET_NAMES = (
+    "fill_history_normalized",
+    "fill_normalization_audit",
+    "candidate_orders_matched",
+    "pnl_by_day_normalized",
+    "pnl_by_ticker_normalized",
+    "pnl_by_exit_reason_normalized",
+    "pnl_by_score_bucket_normalized",
+    "pnl_by_source_normalized",
+    "summary_reconciliation_normalized",
+    "fill_normalization_warnings",
+)
 
 
 @dataclass
@@ -154,8 +180,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     for result in results:
         print(f"sheet={result.name} rows={len(result.rows)} error={result.error or '-'}")
     print(f"duplicate_suspects={metrics['duplicate_suspects']}")
+    print(f"headline_pnl_basis={metrics['headline_pnl_basis']}")
     print(f"fill_history_sell_count={metrics['fill_history_sell_count']}")
     print(f"fill_history_sell_profit_usd={metrics['fill_history_sell_profit_usd']:.2f}")
+    print(f"raw_sell_row_count={metrics['raw_sell_row_count']}")
+    print(f"raw_profit_usd={metrics['raw_profit_usd']:.2f}")
+    print(f"normalized_sell_order_count={metrics['normalized_sell_order_count']}")
+    print(f"normalized_profit_usd={metrics['normalized_profit_usd']:.2f}")
+    print(f"best_effort_sell_order_count={metrics['best_effort_sell_order_count']}")
+    print(f"best_effort_profit_usd={metrics['best_effort_profit_usd']:.2f}")
+    print(f"ambiguous_order_count={metrics['ambiguous_order_count']}")
+    print(f"ambiguous_profit_usd={metrics['ambiguous_profit_usd']:.2f}")
+    print(f"data_quality_warning={metrics['data_quality_warning']}")
+    print(
+        "data_quality_warning_codes="
+        + ",".join(metrics["data_quality_warning_codes"])
+    )
     print(f"daily_run_summary_realized_profit_usd={metrics['daily_run_summary_realized_profit_usd']:.2f}")
     print(f"trading_event_log_count={metrics['trading_event_log_count']}")
     print("event_summary_top10=")
@@ -191,6 +231,7 @@ def export_sheets(
     date_to: date,
     include_real: bool,
 ) -> Iterable[SheetResult]:
+    raw_by_name: dict[str, SheetResult] = {}
     raw_specs = [
         ("fill_history", "fill_history", "trade_date", FILL_HISTORY_COLUMNS, RAW_ORDERS["fill_history"]),
         ("trade_history", "trade_history", "trade_date", TRADE_HISTORY_COLUMNS, RAW_ORDERS["trade_history"]),
@@ -214,11 +255,21 @@ def export_sheets(
     )
     for spec in raw_specs:
         include_rest = bool(spec[5]) if len(spec) > 5 else False
-        yield raw_table_sheet(connection, columns_by_table, *spec[:5], date_from, date_to, include_real, include_rest)
-    yield query_raw_sheet(
+        result = raw_table_sheet(
+            connection,
+            columns_by_table,
+            *spec[:5],
+            date_from,
+            date_to,
+            include_real,
+            include_rest,
+        )
+        raw_by_name[result.name] = result
+        yield result
+    candidate_orders_raw = query_raw_sheet(
         connection,
         columns_by_table,
-        "candidate_orders_matched",
+        "candidate_orders_matched_raw",
         candidate_orders_sql(columns_by_table),
         (
             date_from,
@@ -232,7 +283,8 @@ def export_sheets(
         ),
         CANDIDATE_ORDERS_COLUMNS,
     )
-    yield query_raw_sheet(
+    yield candidate_orders_raw
+    event_summary = query_raw_sheet(
         connection,
         columns_by_table,
         "event_summary",
@@ -240,6 +292,7 @@ def export_sheets(
         (date_from, date_to),
         EVENT_SUMMARY_COLUMNS,
     )
+    yield event_summary
     yield query_raw_sheet(
         connection,
         columns_by_table,
@@ -306,7 +359,7 @@ def export_sheets(
         (date_from, date_to, date_from, date_to, date_from, date_to),
         SUMMARY_RECONCILIATION_COLUMNS,
     )
-    yield query_raw_sheet(
+    duplicate_suspects = query_raw_sheet(
         connection,
         columns_by_table,
         "duplicate_suspects",
@@ -314,6 +367,57 @@ def export_sheets(
         (date_from, date_to),
         DEDUP_COLUMNS,
     )
+    yield duplicate_suspects
+    yield from _normalized_sheet_results(raw_by_name, candidate_orders_raw)
+
+
+def _normalized_sheet_results(
+    raw_by_name: dict[str, SheetResult],
+    candidate_orders_raw: SheetResult,
+) -> Iterable[SheetResult]:
+    fill_history = raw_by_name.get("fill_history")
+    if fill_history is None or fill_history.error:
+        detail = fill_history.error if fill_history is not None else "required sheet is missing"
+        error = f"fill_history unavailable: {_safe_error(detail)}"
+        for name in NORMALIZED_SHEET_NAMES:
+            yield SheetResult(name, [], error)
+        return
+    try:
+        review = build_normalized_review(
+            fill_history.rows,
+            order_rows=raw_by_name.get("order_snapshot", SheetResult("order_snapshot", [])).rows,
+            trade_rows=raw_by_name.get("trade_history", SheetResult("trade_history", [])).rows,
+            daily_summary_rows=raw_by_name.get(
+                "daily_run_summary", SheetResult("daily_run_summary", [])
+            ).rows,
+            trade_summary_rows=raw_by_name.get(
+                "daily_trade_summary_report",
+                SheetResult("daily_trade_summary_report", []),
+            ).rows,
+            candidate_rows=candidate_orders_raw.rows,
+        )
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {_safe_error(str(exc))}"
+        for name in NORMALIZED_SHEET_NAMES:
+            yield SheetResult(name, [], error)
+        return
+
+    rows_by_name = {
+        "fill_history_normalized": review.normalized_rows,
+        "fill_normalization_audit": review.audit_rows,
+        "candidate_orders_matched": review.candidate_rows,
+        "pnl_by_day_normalized": review.pnl_by_day,
+        "pnl_by_ticker_normalized": review.pnl_by_ticker,
+        "pnl_by_exit_reason_normalized": review.pnl_by_exit_reason,
+        "pnl_by_score_bucket_normalized": review.pnl_by_score_bucket,
+        "pnl_by_source_normalized": review.pnl_by_source,
+        "summary_reconciliation_normalized": review.reconciliation_rows,
+        "fill_normalization_warnings": [
+            {"warning_code": warning_code} for warning_code in review.warning_codes
+        ],
+    }
+    for name in NORMALIZED_SHEET_NAMES:
+        yield SheetResult(name, rows_by_name[name])
 
 
 def load_columns(connection: Any) -> dict[str, list[str]]:
@@ -413,6 +517,7 @@ def fetch_rows(
     params: Sequence[Any],
     columns: Sequence[str],
 ) -> list[dict[str, Any]]:
+    _assert_select_only(sql)
     cursor = connection.cursor()
     cursor.execute(sql, tuple(params))
     rows = cursor.fetchall()
@@ -425,6 +530,21 @@ def fetch_rows(
             }
         )
     return result
+
+
+_SQL_WRITE_PATTERN = re.compile(
+    r"\b(?:INSERT|UPDATE|DELETE|MERGE|ALTER|DROP|CREATE|TRUNCATE|EXEC|EXECUTE|INTO)\b",
+    re.IGNORECASE,
+)
+
+
+def _assert_select_only(sql: str) -> None:
+    without_comments = re.sub(r"/\*.*?\*/|--[^\r\n]*", "", sql, flags=re.DOTALL)
+    statements = [statement.strip() for statement in without_comments.split(";") if statement.strip()]
+    if len(statements) != 1 or not re.match(r"^(?:SELECT|WITH)\b", statements[0], re.IGNORECASE):
+        raise ValueError("strategy review exporter accepts one read-only SELECT statement")
+    if _SQL_WRITE_PATTERN.search(statements[0]):
+        raise ValueError("strategy review exporter rejected a non-SELECT SQL keyword")
 
 
 def select_columns(
@@ -441,15 +561,31 @@ def select_columns(
 
 
 def fill_history_dedup_sql(columns_by_table: dict[str, list[str]]) -> str:
-    required = {"trade_date", "ticker", "side", "order_no", "fill_time", "fill_price", "quantity"}
+    required = {"trade_date", "ticker", "side", "order_no", "quantity"}
     columns = set(columns_by_table.get("fill_history", []))
     if not required.issubset(columns):
         return ""
     created = "created_at" if "created_at" in columns else "fill_date" if "fill_date" in columns else "trade_date"
     id_expr = "STRING_AGG(CONVERT(NVARCHAR(50), [id]), ',')" if "id" in columns else "CAST(NULL AS NVARCHAR(MAX))"
     profit_expr = "SUM(COALESCE([profit_usd], 0))" if "profit_usd" in columns else "CAST(NULL AS FLOAT)"
+    side_expr = normalized_side_sql("[side]")
+    mock_select = "[is_mock]" if "is_mock" in columns else "CAST(NULL AS BIT)"
+    mock_group = ", [is_mock]" if "is_mock" in columns else ""
+    fill_time = "MIN([fill_time])" if "fill_time" in columns else "CAST(NULL AS NVARCHAR(50))"
+    fill_price = "MAX([fill_price])" if "fill_price" in columns else "CAST(NULL AS FLOAT)"
+    fill_time_list = (
+        "STRING_AGG(CONVERT(NVARCHAR(50), [fill_time]), ',')"
+        if "fill_time" in columns
+        else "CAST(NULL AS NVARCHAR(MAX))"
+    )
+    fill_price_list = (
+        "STRING_AGG(CONVERT(NVARCHAR(50), [fill_price]), ',')"
+        if "fill_price" in columns
+        else "CAST(NULL AS NVARCHAR(MAX))"
+    )
     return f"""
-        SELECT [trade_date], [ticker], [side], [order_no], [fill_time], [fill_price],
+        SELECT [trade_date], {mock_select} AS is_mock, [ticker], ({side_expr}) AS normalized_side,
+               [order_no], {fill_time} AS fill_time, {fill_price} AS fill_price,
                COUNT(*) AS row_count,
                SUM(COALESCE([quantity], 0)) AS sum_quantity,
                MIN([quantity]) AS min_quantity,
@@ -458,12 +594,14 @@ def fill_history_dedup_sql(columns_by_table: dict[str, list[str]]) -> str:
                MIN([{created}]) AS min_created_at,
                MAX([{created}]) AS max_created_at,
                STRING_AGG(CONVERT(NVARCHAR(50), [quantity]), ',') AS quantity_list,
+               {fill_time_list} AS fill_time_list,
+               {fill_price_list} AS fill_price_list,
                {id_expr} AS id_list
         FROM dbo.[fill_history]
         WHERE [trade_date] BETWEEN ? AND ?
-        GROUP BY [trade_date], [ticker], [side], [order_no], [fill_time], [fill_price]
+          AND COALESCE([order_no], '') <> ''
+        GROUP BY [trade_date]{mock_group}, [ticker], ({side_expr}), [order_no]
         HAVING COUNT(*) > 1
-            OR (MAX([quantity]) > MIN([quantity]) AND COALESCE([order_no], '') <> '')
         ORDER BY [trade_date], row_count DESC, [ticker], [order_no]
     """
 
@@ -504,6 +642,8 @@ def candidate_orders_sql(
         if {"trade_date", "ticker", "order_type", "exit_reason"}.issubset(th)
         else "CAST(NULL AS NVARCHAR(MAX))"
     )
+    fill_side = normalized_side_sql("[side]")
+    trade_side = normalized_side_sql("[order_type]")
     order_clause = "ORDER BY ce_latest.[trading_date], ce_latest.[symbol]" if include_order_by else ""
     return f"""
         SELECT ce_latest.[trading_date] AS trade_date,
@@ -564,7 +704,7 @@ def candidate_orders_sql(
                    {fill_entry_detail} AS entry_reason_detail
             FROM dbo.[fill_history]
             WHERE [trade_date] BETWEEN ? AND ?
-              AND (UPPER(COALESCE([side], '')) IN ('BUY', 'B') OR COALESCE([side], '') LIKE N'%留ㅼ닔%')
+              AND ({fill_side}) = 'BUY'
             GROUP BY [trade_date], [ticker]
         ) AS buy_fills
           ON buy_fills.[trade_date] = ce_latest.[trading_date]
@@ -578,7 +718,7 @@ def candidate_orders_sql(
                    {fill_entry_detail} AS entry_reason_detail
             FROM dbo.[fill_history]
             WHERE [trade_date] BETWEEN ? AND ?
-              AND (UPPER(COALESCE([side], '')) IN ('SELL', 'S') OR COALESCE([side], '') LIKE N'%매도%')
+              AND ({fill_side}) = 'SELL'
             GROUP BY [trade_date], [ticker]
         ) AS fills
           ON fills.[trade_date] = ce_latest.[trading_date]
@@ -587,7 +727,7 @@ def candidate_orders_sql(
             SELECT [trade_date], [ticker], {exit_reasons} AS exit_reasons
             FROM dbo.[trade_history]
             WHERE [trade_date] BETWEEN ? AND ?
-              AND (UPPER(COALESCE([order_type], '')) IN ('SELL', 'S') OR COALESCE([order_type], '') LIKE N'%매도%')
+              AND ({trade_side}) = 'SELL'
             GROUP BY [trade_date], [ticker]
         ) AS exits
           ON exits.[trade_date] = ce_latest.[trading_date]
@@ -614,7 +754,8 @@ def pnl_by_day_sql(columns_by_table: dict[str, list[str]]) -> str:
     columns = set(columns_by_table.get("fill_history", []))
     if not {"trade_date", "side", "profit_usd"}.issubset(columns):
         return ""
-    return """
+    fill_side = normalized_side_sql("[side]")
+    return f"""
         SELECT [trade_date],
                COUNT(*) AS sell_count,
                SUM(COALESCE([profit_usd], 0)) AS total_profit_usd,
@@ -631,7 +772,7 @@ def pnl_by_day_sql(columns_by_table: dict[str, list[str]]) -> str:
                MIN([profit_usd]) AS max_loss
         FROM dbo.[fill_history]
         WHERE [trade_date] BETWEEN ? AND ?
-          AND (UPPER(COALESCE([side], '')) IN ('SELL', 'S') OR COALESCE([side], '') LIKE N'%매도%')
+          AND ({fill_side}) = 'SELL'
         GROUP BY [trade_date]
         ORDER BY [trade_date]
     """
@@ -647,6 +788,8 @@ def pnl_by_ticker_sql(columns_by_table: dict[str, list[str]]) -> str:
         if {"trade_date", "ticker", "order_type", "exit_reason"}.issubset(th)
         else "CAST(NULL AS NVARCHAR(MAX))"
     )
+    fill_side = normalized_side_sql("fills.[side]")
+    trade_side = normalized_side_sql("[order_type]")
     return f"""
         SELECT fills.[ticker],
                COUNT(*) AS sell_count,
@@ -661,12 +804,12 @@ def pnl_by_ticker_sql(columns_by_table: dict[str, list[str]]) -> str:
             SELECT [ticker], {exit_summary} AS exit_reasons
             FROM dbo.[trade_history]
             WHERE [trade_date] BETWEEN ? AND ?
-              AND (UPPER(COALESCE([order_type], '')) IN ('SELL', 'S') OR COALESCE([order_type], '') LIKE N'%매도%')
+              AND ({trade_side}) = 'SELL'
             GROUP BY [ticker]
         ) AS exits
           ON exits.[ticker] = fills.[ticker]
         WHERE fills.[trade_date] BETWEEN ? AND ?
-          AND (UPPER(COALESCE(fills.[side], '')) IN ('SELL', 'S') OR COALESCE(fills.[side], '') LIKE N'%매도%')
+          AND ({fill_side}) = 'SELL'
         GROUP BY fills.[ticker], exits.exit_reasons
         ORDER BY total_profit_usd ASC
     """
@@ -677,6 +820,7 @@ def pnl_by_exit_reason_sql(columns_by_table: dict[str, list[str]]) -> str:
     th = set(columns_by_table.get("trade_history", []))
     if not {"trade_date", "ticker", "side", "profit_usd", "profit_rate"}.issubset(fh):
         return ""
+    fill_side = normalized_side_sql("fills.[side]")
     if {"trade_date", "ticker", "order_type", "exit_reason"}.issubset(th):
         fallback_order = "th.[created_at] DESC" if "created_at" in th else "th.[trade_date] DESC"
         time_order = fallback_order
@@ -686,6 +830,7 @@ def pnl_by_exit_reason_sql(columns_by_table: dict[str, list[str]]) -> str:
                 ABS(DATEDIFF(SECOND, TRY_CONVERT(time, th.[last_fill_time]), TRY_CONVERT(time, fills.[fill_time]))),
                 {fallback_order}
             """
+        trade_side = normalized_side_sql("th.[order_type]")
         return f"""
             SELECT fills.[trade_date],
                    COALESCE(matched.[exit_reason], 'UNKNOWN') AS exit_reason,
@@ -701,15 +846,18 @@ def pnl_by_exit_reason_sql(columns_by_table: dict[str, list[str]]) -> str:
                 FROM dbo.[trade_history] AS th
                 WHERE th.[trade_date] = fills.[trade_date]
                   AND th.[ticker] = fills.[ticker]
+                  AND ({trade_side}) = 'SELL'
                   AND th.[exit_reason] IS NOT NULL
                 ORDER BY {time_order}
             ) AS matched
             WHERE fills.[trade_date] BETWEEN ? AND ?
+              AND ({fill_side}) = 'SELL'
               AND fills.[profit_usd] IS NOT NULL
             GROUP BY fills.[trade_date], COALESCE(matched.[exit_reason], 'UNKNOWN')
             ORDER BY fills.[trade_date], total_profit_usd ASC
         """
-    return """
+    fallback_side = normalized_side_sql("[side]")
+    return f"""
         SELECT [trade_date],
                'UNKNOWN' AS exit_reason,
                COUNT(*) AS sell_count,
@@ -720,66 +868,10 @@ def pnl_by_exit_reason_sql(columns_by_table: dict[str, list[str]]) -> str:
                AVG(COALESCE([profit_rate], 0)) AS avg_profit_rate
         FROM dbo.[fill_history]
         WHERE [trade_date] BETWEEN ? AND ?
+          AND ({fallback_side}) = 'SELL'
           AND [profit_usd] IS NOT NULL
         GROUP BY [trade_date]
         ORDER BY [trade_date]
-    """
-    if not {"trade_date", "ticker", "order_type", "exit_reason"}.issubset(th):
-        return """
-            SELECT 'UNKNOWN' AS exit_reason,
-                   COUNT(*) AS sell_count,
-                   SUM(COALESCE([profit_usd], 0)) AS total_profit_usd,
-                   AVG(COALESCE([profit_usd], 0)) AS avg_profit_usd,
-                   CAST(SUM(CASE WHEN COALESCE([profit_usd], 0) > 0 THEN 1 ELSE 0 END) AS FLOAT)
-                        / NULLIF(COUNT(*), 0) AS win_rate,
-                   AVG(COALESCE([profit_rate], 0)) AS avg_profit_rate
-            FROM dbo.[fill_history]
-            WHERE [trade_date] BETWEEN ? AND ?
-              AND (UPPER(COALESCE([side], '')) IN ('SELL', 'S') OR COALESCE([side], '') LIKE N'%留ㅻ룄%')
-        """
-    fallback_order = "th.[created_at] DESC" if "created_at" in th else "th.[trade_date] DESC"
-    time_order = fallback_order
-    if "last_fill_time" in th and "fill_time" in fh:
-        time_order = f"""
-            CASE WHEN ISNULL(th.[last_fill_time], '') = ISNULL(fills.[fill_time], '') THEN 0 ELSE 1 END,
-            ABS(DATEDIFF(SECOND, TRY_CONVERT(time, th.[last_fill_time]), TRY_CONVERT(time, fills.[fill_time]))),
-            {fallback_order}
-        """
-    return f"""
-        SELECT COALESCE(matched.[exit_reason], 'UNKNOWN') AS exit_reason,
-               COUNT(*) AS sell_count,
-               SUM(COALESCE(fills.[profit_usd], 0)) AS total_profit_usd,
-               AVG(COALESCE(fills.[profit_usd], 0)) AS avg_profit_usd,
-               CAST(SUM(CASE WHEN COALESCE(fills.[profit_usd], 0) > 0 THEN 1 ELSE 0 END) AS FLOAT)
-                    / NULLIF(COUNT(*), 0) AS win_rate,
-               AVG(COALESCE(fills.[profit_rate], 0)) AS avg_profit_rate
-        FROM dbo.[fill_history] AS fills
-        OUTER APPLY (
-            SELECT TOP (1) th.[exit_reason]
-            FROM dbo.[trade_history] AS th
-            WHERE th.[trade_date] = fills.[trade_date]
-              AND th.[ticker] = fills.[ticker]
-              AND (UPPER(COALESCE(th.[order_type], '')) IN ('SELL', 'S') OR COALESCE(th.[order_type], '') LIKE N'%留ㅻ룄%')
-            ORDER BY {time_order}
-        ) AS matched
-        WHERE fills.[trade_date] BETWEEN ? AND ?
-          AND (UPPER(COALESCE(fills.[side], '')) IN ('SELL', 'S') OR COALESCE(fills.[side], '') LIKE N'%留ㅻ룄%')
-        GROUP BY COALESCE(matched.[exit_reason], 'UNKNOWN')
-        ORDER BY total_profit_usd ASC
-    """
-    return """
-        SELECT COALESCE([exit_reason], 'UNKNOWN') AS exit_reason,
-               COUNT(*) AS sell_count,
-               SUM(COALESCE([profit_usd], 0)) AS total_profit_usd,
-               AVG(COALESCE([profit_usd], 0)) AS avg_profit_usd,
-               CAST(SUM(CASE WHEN COALESCE([profit_usd], 0) > 0 THEN 1 ELSE 0 END) AS FLOAT)
-                    / NULLIF(COUNT(*), 0) AS win_rate,
-               AVG(COALESCE([profit_rate], 0)) AS avg_profit_rate
-        FROM dbo.[trade_history]
-        WHERE [trade_date] BETWEEN ? AND ?
-          AND (UPPER(COALESCE([order_type], '')) IN ('SELL', 'S') OR COALESCE([order_type], '') LIKE N'%매도%')
-        GROUP BY COALESCE([exit_reason], 'UNKNOWN')
-        ORDER BY total_profit_usd ASC
     """
 
 
@@ -842,6 +934,7 @@ def summary_reconciliation_sql(columns_by_table: dict[str, list[str]]) -> str:
     dtr = set(columns_by_table.get("daily_trade_summary_report", []))
     if not {"trade_date", "side", "profit_usd"}.issubset(fh):
         return ""
+    fill_side = normalized_side_sql("[side]")
     daily_run = (
         """
         SELECT [trade_date],
@@ -889,7 +982,7 @@ def summary_reconciliation_sql(columns_by_table: dict[str, list[str]]) -> str:
                    SUM(COALESCE([profit_usd], 0)) AS fill_history_sell_profit_usd
             FROM dbo.[fill_history]
             WHERE [trade_date] BETWEEN ? AND ?
-              AND (UPPER(COALESCE([side], '')) IN ('SELL', 'S') OR COALESCE([side], '') LIKE N'%留ㅻ룄%')
+              AND ({fill_side}) = 'SELL'
             GROUP BY [trade_date]
         ) AS fills
         FULL OUTER JOIN ({daily_run}) AS run_summary
@@ -902,15 +995,80 @@ def summary_reconciliation_sql(columns_by_table: dict[str, list[str]]) -> str:
 
 def final_metrics(results: list[SheetResult]) -> dict[str, Any]:
     by_name = {result.name: result for result in results}
-    fill_rows = by_name.get("fill_history", SheetResult("fill_history", [])).rows
-    sell_rows = [row for row in fill_rows if _is_sell(row.get("side"))]
+    raw_result = by_name.get("fill_history", SheetResult("fill_history", []))
+    fill_rows = raw_result.rows
+    raw_sell_rows = [row for row in fill_rows if _is_sell(row.get("side"))]
+    normalized_result = by_name.get("fill_history_normalized")
+    normalized_rows = normalized_result.rows if normalized_result is not None else []
+    normalized_sell_rows = [
+        row for row in normalized_rows if normalize_side(row.get("normalized_side")) == "SELL"
+    ]
+    trusted_sell_rows = [
+        row
+        for row in normalized_sell_rows
+        if not _bool(row.get("excluded_from_trusted_pnl"))
+        and row.get("normalized_profit_usd") is not None
+    ]
+    best_effort_sell_rows = [
+        row
+        for row in normalized_sell_rows
+        if row.get("normalization_method") != "AMBIGUOUS_EXCLUDED"
+        and row.get("normalized_profit_usd") is not None
+    ]
+    ambiguous_sell_rows = [
+        row
+        for row in normalized_sell_rows
+        if row.get("normalization_method") == "AMBIGUOUS_EXCLUDED"
+    ]
+    warning_rows = by_name.get(
+        "fill_normalization_warnings", SheetResult("fill_normalization_warnings", [])
+    ).rows
+    warning_codes = {
+        str(row.get("warning_code"))
+        for row in warning_rows
+        if row.get("warning_code")
+    }
+    duplicate_suspects = len(
+        by_name.get("duplicate_suspects", SheetResult("", [])).rows
+    )
+    if duplicate_suspects:
+        warning_codes.add("DUPLICATE_SUSPECTS_PRESENT")
+    if raw_result.error:
+        warning_codes.add("RAW_FILL_HISTORY_UNAVAILABLE")
+    if normalized_result is not None and not normalized_result.error:
+        headline_rows = trusted_sell_rows
+        headline_basis = "TRUSTED_NORMALIZED"
+    else:
+        headline_rows = raw_sell_rows
+        headline_basis = "RAW_FALLBACK"
+        warning_codes.add("NORMALIZED_PNL_UNAVAILABLE_RAW_FALLBACK")
     daily_rows = by_name.get("daily_run_summary", SheetResult("daily_run_summary", [])).rows
     event_rows = by_name.get("trading_event_log", SheetResult("trading_event_log", [])).rows
     event_summary = by_name.get("event_summary", SheetResult("event_summary", [])).rows
     return {
-        "duplicate_suspects": len(by_name.get("duplicate_suspects", SheetResult("", [])).rows),
-        "fill_history_sell_count": len(sell_rows),
-        "fill_history_sell_profit_usd": sum(_num(row.get("profit_usd")) for row in sell_rows),
+        "duplicate_suspects": duplicate_suspects,
+        "fill_history_sell_count": len(headline_rows),
+        "fill_history_sell_profit_usd": sum(
+            _num(row.get("normalized_profit_usd", row.get("profit_usd")))
+            for row in headline_rows
+        ),
+        "headline_pnl_basis": headline_basis,
+        "raw_sell_row_count": len(raw_sell_rows),
+        "raw_profit_usd": sum(_num(row.get("profit_usd")) for row in raw_sell_rows),
+        "normalized_sell_order_count": len(trusted_sell_rows),
+        "normalized_profit_usd": sum(
+            _num(row.get("normalized_profit_usd")) for row in trusted_sell_rows
+        ),
+        "best_effort_sell_order_count": len(best_effort_sell_rows),
+        "best_effort_profit_usd": sum(
+            _num(row.get("normalized_profit_usd")) for row in best_effort_sell_rows
+        ),
+        "ambiguous_order_count": len(ambiguous_sell_rows),
+        "ambiguous_profit_usd": sum(
+            _num(row.get("raw_profit_usd_sum")) for row in ambiguous_sell_rows
+        ),
+        "data_quality_warning": bool(warning_codes),
+        "data_quality_warning_codes": sorted(warning_codes),
         "daily_run_summary_realized_profit_usd": sum(
             _num(row.get("realized_profit_usd")) for row in daily_rows
         ),
@@ -938,8 +1096,7 @@ def q(identifier: str) -> str:
 
 
 def _is_sell(value: Any) -> bool:
-    text = str(value or "").strip().upper()
-    return text in {"SELL", "S"} or "매도" in str(value or "")
+    return normalize_side(value) == "SELL"
 
 
 def _num(value: Any) -> float:
@@ -951,6 +1108,12 @@ def _num(value: Any) -> float:
         return 0.0
 
 
+def _bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y"}
+
+
 FILL_HISTORY_COLUMNS = (
     "id", "trade_date", "fill_date", "fill_time", "ticker", "ticker_name", "side",
     "quantity", "fill_price", "fill_amount", "profit_usd", "profit_rate", "order_no",
@@ -959,7 +1122,7 @@ FILL_HISTORY_COLUMNS = (
     "fill_notification_sent_at",
 )
 TRADE_HISTORY_COLUMNS = (
-    "id", "trade_date", "ticker", "ticker_name", "order_type", "order_price",
+    "id", "trade_date", "ticker", "ticker_name", "order_type", "order_no", "order_price",
     "exec_price", "entry_price", "quantity", "profit_usd", "profit_krw",
     "profit_rate", "exit_reason", "entry_reason", "entry_reason_detail", "is_mock",
     "order_status", "retry_count", "order_qty", "filled_qty", "remaining_qty",
@@ -1054,9 +1217,10 @@ MOCK_FILTER_TABLES = {
     "daily_run_summary",
 }
 DEDUP_COLUMNS = (
-    "trade_date", "ticker", "side", "order_no", "fill_time", "fill_price",
+    "trade_date", "is_mock", "ticker", "normalized_side", "order_no", "fill_time", "fill_price",
     "row_count", "sum_quantity", "min_quantity", "max_quantity", "sum_profit_usd",
-    "min_created_at", "max_created_at", "quantity_list", "id_list",
+    "min_created_at", "max_created_at", "quantity_list", "fill_time_list",
+    "fill_price_list", "id_list",
 )
 CANDIDATE_ORDERS_COLUMNS = (
     "trade_date", "ticker", "source", "final_score", "selection_score",
