@@ -1092,18 +1092,25 @@ _CANDIDATE_REASON_TEXT = {
     "BUY_ALLOWED": "매수 허용",
     "BREAKOUT_NOT_TRIGGERED": "돌파 미발생",
     "BREAKOUT_CLOSE_FAILED": "5분봉 종가 돌파 미충족",
+    "BREAKOUT_HOLD_FAILED": "돌파 유지 시간 미충족",
+    "BREAKOUT_CLOSE_DATA_MISSING": "5분봉 종가 데이터 없음",
+    "BREAKOUT_HOLD_DATA_MISSING": "돌파 유지 시간 데이터 없음",
     "FINAL_SCORE_BELOW_THRESHOLD": "최종 점수 기준 미달",
     "ORDER_NOT_SUBMITTED": "주문 미제출",
     "OVERHEAT_LIMIT_EXCEEDED": "과열 제한 초과",
     "VOLUME_INCREASE_FAILED": "5분 거래량 증가 미충족",
+    "VOLUME_INCREASE_DATA_MISSING": "5분 거래량 데이터 없음",
     "VWAP_MA20_FAILED": "VWAP/MA20 조건 미충족",
     "VWAP_MA20_DATA_MISSING": "VWAP/MA20 데이터 없음",
     "PULLBACK_REBREAK_FAILED": "눌림 후 재돌파 미충족",
+    "PULLBACK_REBREAK_DATA_MISSING": "눌림 후 재돌파 데이터 없음",
+    "REQUIRED_INTRADAY_DATA_MISSING": "필수 장중 데이터 없음",
 }
 
 _CANDIDATE_STATUS_TEXT = {
     "DISABLED": "비활성화",
     "SKIPPED_NO_DATA": "데이터 없음으로 건너뜀",
+    "NO_DATA": "데이터 없음",
     "PASS": "통과",
     "FAIL": "실패",
 }
@@ -1111,6 +1118,7 @@ _CANDIDATE_STATUS_TEXT = {
 _CANDIDATE_CONDITION_MODE_TEXT = {
     "HARD_FILTER": "하드필터",
     "SOFT_SCORE": "소프트점수",
+    "LOG_ONLY": "로그만",
     "OFF": "꺼짐",
 }
 

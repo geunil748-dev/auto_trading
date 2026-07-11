@@ -532,9 +532,8 @@ def main() -> None:
             )
         trades = []
         if args.command == "mock-buy-live":
-            trades = build_mock_buy_executor(kis_settings, repository).execute(
-                result.buy_intents
-            )
+            executor = build_mock_buy_executor(kis_settings, repository, settings)
+            trades = executor.execute(result.buy_intents)
         print(
             json.dumps(
                 {
@@ -554,7 +553,8 @@ def main() -> None:
         settings = load_settings()
         kis_settings = load_kis_settings()
         intents, repository = collect_mock_list_intents(settings, kis_settings, args.limit)
-        trades = build_mock_buy_executor(kis_settings, repository).execute(intents)
+        executor = build_mock_buy_executor(kis_settings, repository, settings)
+        trades = executor.execute(intents)
         print(
             json.dumps(
                 {
@@ -594,7 +594,11 @@ def main() -> None:
         positions, exits = monitor.poll(accounts.positions())
         trades = []
         if args.command == "mock-sell-exits-live":
-            trades = build_mock_sell_executor(kis_settings, repository).execute(exits)
+            trades = build_mock_sell_executor(
+                kis_settings,
+                repository,
+                settings,
+            ).execute(exits)
         print(
             json.dumps(
                 {

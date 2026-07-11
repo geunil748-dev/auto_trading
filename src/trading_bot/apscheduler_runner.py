@@ -13,6 +13,8 @@ from trading_bot.scheduled_tasks import live_mock_tasks, trading_cycle_skip_reas
 
 
 def run_scheduler(monitor_state: Path) -> None:
+    # 환경변수 오류는 heartbeat나 job 등록 전에 즉시 드러나야 한다.
+    load_settings()
     try:
         from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
         from apscheduler.schedulers.blocking import BlockingScheduler

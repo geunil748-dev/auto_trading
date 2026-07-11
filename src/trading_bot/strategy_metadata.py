@@ -8,6 +8,7 @@ from trading_bot.config import (
     CANDIDATE_MODE_FIXED,
     STRATEGY_PRESET_CURRENT,
     TradingSettings,
+    resolve_intraday_missing_data_policy,
 )
 
 
@@ -22,6 +23,11 @@ def settings_snapshot(settings: TradingSettings) -> dict[str, object]:
     return {
         "strategyVersion": strategy_version_from_settings(settings),
         "candidateSelectionMode": settings.candidate_selection_mode,
+        "intradayMissingDataPolicy": resolve_intraday_missing_data_policy(
+            settings.intraday_missing_data_policy,
+            app_mode=settings.app_mode,
+            mock_trading=settings.mock_trading,
+        ),
         "strategyPreset": settings.strategy_preset,
         "allowRelaxedCandidateFilter": bool(settings.allow_relaxed_candidate_filter),
         "enablePyramiding": bool(settings.enable_pyramiding),

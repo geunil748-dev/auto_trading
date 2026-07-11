@@ -104,6 +104,14 @@ CONDITION_MODES = {
     CONDITION_MODE_SOFT_SCORE,
     CONDITION_MODE_HARD_FILTER,
 }
+INTRADAY_MISSING_DATA_POLICY_AUTO = "AUTO"
+INTRADAY_MISSING_DATA_POLICY_LOG_ONLY = "LOG_ONLY"
+INTRADAY_MISSING_DATA_POLICY_BLOCK = "BLOCK"
+INTRADAY_MISSING_DATA_POLICIES = {
+    INTRADAY_MISSING_DATA_POLICY_AUTO,
+    INTRADAY_MISSING_DATA_POLICY_LOG_ONLY,
+    INTRADAY_MISSING_DATA_POLICY_BLOCK,
+}
 VWAP_MA20_OR = "OR"
 VWAP_MA20_AND = "AND"
 VWAP_MA20_VWAP_ONLY = "VWAP_ONLY"
@@ -122,6 +130,7 @@ VWAP_MA20_TYPES = {
 class TradingSettings:
     app_mode: str = APP_MODE_TEST
     mock_trading: bool = True
+    intraday_missing_data_policy: str = INTRADAY_MISSING_DATA_POLICY_AUTO
     min_price_usd: float = MIN_PRICE_USD_FLOOR
     max_price_usd: float = 300.0
     gainer_ranking_limit: int = 100
@@ -246,6 +255,14 @@ def load_settings() -> TradingSettings:
 
     app_mode = _app_mode_env()
     mock_trading = _bool_env("MOCK_TRADING", True)
+    intraday_missing_data_policy = resolve_intraday_missing_data_policy(
+        os.getenv(
+            "INTRADAY_MISSING_DATA_POLICY",
+            INTRADAY_MISSING_DATA_POLICY_AUTO,
+        ),
+        app_mode=app_mode,
+        mock_trading=mock_trading,
+    )
     real_trading_requested = _bool_env("REAL_TRADING_ENABLED", False)
     market_below_ma20_bypass_requested = _bool_env(
         "ALLOW_MARKET_BELOW_MA20_BYPASS",
@@ -256,6 +273,7 @@ def load_settings() -> TradingSettings:
     settings = _validate_candidate_evaluation_settings(TradingSettings(
         app_mode=app_mode,
         mock_trading=mock_trading,
+        intraday_missing_data_policy=intraday_missing_data_policy,
         min_price_usd=_min_price_env("MIN_PRICE_USD", MIN_PRICE_USD_FLOOR),
         max_price_usd=_float_env("MAX_PRICE_USD", 300.0),
         gainer_ranking_limit=_ranking_limit_env("GAINER_RANKING_LIMIT", 100),
@@ -428,6 +446,11 @@ def runtime_risk_settings_payload(
         "maxRankedEvaluationCandidates": current.max_ranked_evaluation_candidates,
         "targetFilteredCandidates": current.target_filtered_candidates,
         "candidateEvalTimeoutSeconds": current.candidate_eval_timeout_seconds,
+        "intradayMissingDataPolicy": resolve_intraday_missing_data_policy(
+            current.intraday_missing_data_policy,
+            app_mode=current.app_mode,
+            mock_trading=current.mock_trading,
+        ),
         "minOpeningPriceChangePercent": current.min_opening_price_change * 100,
         "minVolumeRatio": current.min_volume_ratio,
         "maxOpeningGapPercent": current.max_opening_gap * 100,
@@ -1008,6 +1031,26 @@ def _ranking_selection_mode_env() -> str:
 
 def _condition_mode_env(name: str, default: str) -> str:
     return _validate_condition_mode(os.getenv(name, default))
+
+
+def resolve_intraday_missing_data_policy(
+    policy: str,
+    *,
+    app_mode: str,
+    mock_trading: bool,
+) -> str:
+    value = str(policy).strip().upper()
+    if value not in INTRADAY_MISSING_DATA_POLICIES:
+        raise ValueError(
+            "INTRADAY_MISSING_DATA_POLICY must be AUTO, LOG_ONLY, or BLOCK"
+        )
+    if app_mode == APP_MODE_REAL or not (
+        app_mode == APP_MODE_TEST and mock_trading
+    ):
+        return INTRADAY_MISSING_DATA_POLICY_BLOCK
+    if value == INTRADAY_MISSING_DATA_POLICY_AUTO:
+        return INTRADAY_MISSING_DATA_POLICY_LOG_ONLY
+    return value
 
 
 def _vwap_ma20_type_env() -> str:

@@ -126,6 +126,7 @@ Runtime mode defaults to mock-investment operation:
 
 ```powershell
 APP_MODE=test
+MOCK_TRADING=true
 ```
 
 `APP_MODE=real` is required before real KIS settings can be loaded. Real
@@ -478,10 +479,21 @@ VWAP/장중 20선 조건은 UI, 설정 저장, 후보 평가, 로그/DB 저장 �
 `BreakoutInput.intraday_ma20_usd`를 채우는 실시간 데이터 공급은 아직
 연결되어 있지 않습니다.
 
-따라서 VWAP/장중 20선 조건을 켜더라도 데이터가 없으면
-`SKIPPED_NO_DATA`로 기록되고 매수 차단 조건으로 작동하지 않습니다. 실제
-필터로 쓰려면 KIS 또는 다른 데이터 소스에서 장중 분봉을 가져와 VWAP와
-장중 20선을 계산한 뒤 `BreakoutInput`에 넣는 구현이 필요합니다.
+장중 조건 데이터 누락은 실제 조건 실패와 분리해 `NO_DATA`로 기록합니다.
+`INTRADAY_MISSING_DATA_POLICY=AUTO`는 `APP_MODE=test`와
+`MOCK_TRADING=true`가 모두 적용된 경우에만 `LOG_ONLY`로 해석되어 다른 하드
+조건이 통과하면 분석용 모의 표본을 허용합니다. 그 외에는 `BLOCK`이며,
+`APP_MODE=real`에서는 `LOG_ONLY`를 요청해도 항상 `BLOCK`으로 강제됩니다.
+이 정책은 환경변수 전용이며 monitor runtime 설정으로 변경할 수 없으므로 값 변경
+후 scheduler를 다시 시작해야 합니다.
+VWAP/장중 20선의 기존 호환 상태 `SKIPPED_NO_DATA`도 표준 `NO_DATA` 상태와
+함께 남습니다. 실제 필터 값을 계산하려면 별도 PR에서 KIS 또는 다른 데이터
+소스의 장중 분봉을 `BreakoutInput`에 연결해야 합니다.
+
+후보평가 JSON과 이벤트 상세에는 누락 feature, feature별 `*_DATA_MISSING`,
+적용 정책과 `COMPLETE`/`INCOMPLETE` 데이터 품질 상태가 함께 저장됩니다.
+`data_quality_status`는 추적 대상 원시 feature 전체의 완전성을,
+`required_data_quality_status`는 현재 활성 조건에 필요한 데이터 완전성을 뜻합니다.
 
 ### 주문, 체결, 보유 저장
 

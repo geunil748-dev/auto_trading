@@ -12,6 +12,12 @@ class Sentiment(Enum):
     POSITIVE = 1
 
 
+class IntradayConditionState(str, Enum):
+    PASS = "PASS"
+    FAIL = "FAIL"
+    NO_DATA = "NO_DATA"
+
+
 @dataclass(frozen=True)
 class NewsRecord:
     ticker: str
@@ -127,7 +133,7 @@ class BreakoutInput:
     open_price_usd: float
     previous_high_usd: float
     previous_low_usd: float
-    minutes_above_breakout: float = 0.0
+    minutes_above_breakout: float | None = None
     recent_5m_close_usd: float | None = None
     current_5m_volume: float | None = None
     previous_5m_average_volume: float | None = None

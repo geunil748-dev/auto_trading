@@ -7,15 +7,30 @@ from datetime import UTC, date, datetime
 
 from trading_bot.config import (
     CONDITION_MODE_HARD_FILTER,
+    CONDITION_MODE_LOG_ONLY,
     CONDITION_MODE_OFF,
     CONDITION_MODE_SOFT_SCORE,
+    INTRADAY_MISSING_DATA_POLICY_BLOCK,
     VWAP_MA20_AND,
     VWAP_MA20_MA20_ONLY,
     VWAP_MA20_OFF,
     VWAP_MA20_VWAP_ONLY,
     TradingSettings,
+    resolve_intraday_missing_data_policy,
 )
-from trading_bot.models import AccountState, BreakoutInput, BotLog, BuyIntent, CandidateEvaluation, ScoreRecord
+from trading_bot.intraday_data_quality import (
+    evaluate_intraday_data_quality,
+    missing_data_block_reason,
+)
+from trading_bot.models import (
+    AccountState,
+    BotLog,
+    BreakoutInput,
+    BuyIntent,
+    CandidateEvaluation,
+    IntradayConditionState,
+    ScoreRecord,
+)
 from trading_bot.risk import MARKET_BELOW_MA20_BYPASSED, position_entry_gate
 from trading_bot.scoring import position_fraction_for_score
 from trading_bot.strategy import breakout_triggered
@@ -216,20 +231,30 @@ class EntryTimingEvaluation:
     failed_soft_reasons: tuple[str, ...] = ()
     failed_log_reasons: tuple[str, ...] = ()
     failed_hard_reasons: tuple[str, ...] = ()
-    condition_results: Mapping[str, bool | None] | None = None
+    missing_data_reasons: tuple[str, ...] = ()
+    available_features: tuple[str, ...] = ()
+    missing_features: tuple[str, ...] = ()
+    intraday_missing_data_policy: str = ""
+    condition_results: Mapping[str, object] | None = None
 
 
 BUY_BLOCK_REASON_LABELS = {
     "BUY_ALLOWED": "매수 허용",
     "BREAKOUT_NOT_TRIGGERED": "돌파 미발생",
     "BREAKOUT_CLOSE_FAILED": "5분봉 종가 돌파 미충족",
+    "BREAKOUT_HOLD_FAILED": "돌파 유지 시간 미충족",
+    "BREAKOUT_CLOSE_DATA_MISSING": "5분봉 종가 데이터 없음",
+    "BREAKOUT_HOLD_DATA_MISSING": "돌파 유지 시간 데이터 없음",
     "FINAL_SCORE_BELOW_THRESHOLD": "최종 점수 기준 미달",
     "ORDER_NOT_SUBMITTED": "주문 미제출",
     "OVERHEAT_LIMIT_EXCEEDED": "과열 제한 초과",
     "VOLUME_INCREASE_FAILED": "5분 거래량 증가 미충족",
+    "VOLUME_INCREASE_DATA_MISSING": "5분 거래량 데이터 없음",
     "VWAP_MA20_FAILED": "VWAP/MA20 조건 미충족",
     "VWAP_MA20_DATA_MISSING": "VWAP/MA20 데이터 없음",
     "PULLBACK_REBREAK_FAILED": "눌림 후 재돌파 미충족",
+    "PULLBACK_REBREAK_DATA_MISSING": "눌림 후 재돌파 데이터 없음",
+    "REQUIRED_INTRADAY_DATA_MISSING": "필수 장중 데이터 없음",
     "INVALID_ORDER_VALUE": "주문 금액 오류",
     "INVALID_ACCOUNT_EQUITY": "계좌 평가금액 오류",
     "POSITION_EXPOSURE_LIMIT": "종목별 노출 한도 초과",
@@ -248,12 +273,14 @@ BUY_BLOCK_REASON_LABELS = {
 VWAP_MA20_STATUS_LABELS = {
     "DISABLED": "비활성화",
     "SKIPPED_NO_DATA": "데이터 없음으로 건너뜀",
+    "NO_DATA": "데이터 없음",
     "PASS": "통과",
     "FAIL": "실패",
 }
 
 CONDITION_MODE_LABELS = {
     CONDITION_MODE_HARD_FILTER: "하드필터",
+    CONDITION_MODE_LOG_ONLY: "로그만",
     CONDITION_MODE_SOFT_SCORE: "소프트점수",
     CONDITION_MODE_OFF: "꺼짐",
 }
@@ -275,6 +302,7 @@ def _entry_timing_evaluation(
     hard: list[str] = []
     soft: list[str] = []
     logs: list[str] = []
+    intraday = evaluate_intraday_data_quality(breakout, threshold, settings)
 
     overheat_pass = _price_change_from_open(breakout) <= settings.max_entry_price_change
     _apply_condition(
@@ -285,98 +313,62 @@ def _entry_timing_evaluation(
         soft,
         logs,
     )
-    hold_pass = not (
-        settings.breakout_hold_minutes > 0
-        and breakout.minutes_above_breakout > 0
-        and breakout.minutes_above_breakout < settings.breakout_hold_minutes
+    confirmation_failed_reason = None
+    if intraday.close_state is IntradayConditionState.FAIL:
+        confirmation_failed_reason = "BREAKOUT_CLOSE_FAILED"
+    elif intraday.hold_state is IntradayConditionState.FAIL:
+        confirmation_failed_reason = "BREAKOUT_HOLD_FAILED"
+    if confirmation_failed_reason:
+        _apply_condition(
+            False,
+            intraday.confirmation_mode,
+            confirmation_failed_reason,
+            hard,
+            soft,
+            logs,
     )
-    close_pass = not (
-        breakout.recent_5m_close_usd is not None and breakout.recent_5m_close_usd < threshold
-    )
-    _apply_condition(
-        hold_pass and close_pass,
-        _condition_mode(settings.require_5m_close_above_breakout, settings.breakout_close_condition_mode),
-        "BREAKOUT_CLOSE_FAILED",
-        hard,
-        soft,
-        logs,
-    )
-    volume_increase_percent = _volume_increase_percent(breakout)
-    volume_increase_insufficient = volume_increase_percent is None
-    volume_pass = (
-        volume_increase_percent is not None
-        and volume_increase_percent >= settings.min_5m_volume_increase_percent
-    )
-    _apply_condition(
-        volume_pass,
-        _condition_mode(settings.require_5m_volume_increase, settings.volume_increase_condition_mode),
+    _apply_condition_state(
+        intraday.volume_state,
+        intraday.volume_mode,
         "VOLUME_INCREASE_FAILED",
         hard,
         soft,
         logs,
     )
-    vwap_pass = _vwap_pass(breakout)
-    ma20_pass = _ma20_pass(breakout)
-    vwap_ma20_status = _vwap_ma20_evaluation_status(breakout, settings)
-    vwap_ma20_pass = None
-    if vwap_ma20_status == "PASS":
-        vwap_ma20_pass = True
-    elif vwap_ma20_status == "FAIL":
-        vwap_ma20_pass = False
-    _apply_condition(
-        vwap_ma20_status != "FAIL",
-        _condition_mode(settings.require_vwap_or_ma20, settings.vwap_ma20_condition_mode),
+    _apply_condition_state(
+        intraday.vwap_ma20_state,
+        intraday.vwap_ma20_mode,
         "VWAP_MA20_FAILED",
         hard,
         soft,
         logs,
     )
-    pullback_pass = not (
-        breakout.pulled_back_after_breakout is not None
-        and not breakout.pulled_back_after_breakout
-    )
-    _apply_condition(
-        pullback_pass,
-        _condition_mode(settings.require_pullback_rebreak, settings.pullback_rebreak_condition_mode),
+    _apply_condition_state(
+        intraday.pullback_state,
+        intraday.pullback_mode,
         "PULLBACK_REBREAK_FAILED",
         hard,
         soft,
         logs,
     )
+    if intraday.missing_data_reasons:
+        if intraday.policy == INTRADAY_MISSING_DATA_POLICY_BLOCK:
+            hard.append(missing_data_block_reason(intraday.missing_data_reasons))
+        else:
+            logs.extend(intraday.missing_data_reasons)
     return EntryTimingEvaluation(
         allowed=not hard,
         score_adjustment=-5.0 * len(soft),
         failed_soft_reasons=tuple(soft),
         failed_log_reasons=tuple(logs),
         failed_hard_reasons=tuple(hard),
+        missing_data_reasons=intraday.missing_data_reasons,
+        available_features=intraday.available_features,
+        missing_features=intraday.missing_features,
+        intraday_missing_data_policy=intraday.policy,
         condition_results={
             "overheat_pass": overheat_pass,
-            "breakout_close_pass": hold_pass and close_pass,
-            "volume_increase_pass": volume_pass,
-            "recent_5m_volume": breakout.current_5m_volume,
-            "previous_5m_volume": breakout.previous_5m_average_volume,
-            "volume_increase_percent": volume_increase_percent,
-            "min5mVolumeIncreasePercent": settings.min_5m_volume_increase_percent,
-            "volume_increase_insufficient": volume_increase_insufficient,
-            "current_price": breakout.last_price_usd,
-            "vwap_usd": breakout.vwap_usd,
-            "intraday_ma20_usd": breakout.intraday_ma20_usd,
-            "vwap_data_available": _has_vwap_data(breakout),
-            "intraday_ma20_data_available": _has_ma20_data(breakout),
-            "vwap_ma20_data_available": _has_vwap_ma20_data_for_type(breakout, settings),
-            "vwap_ma20_evaluation_status": vwap_ma20_status,
-            "vwap_pass": vwap_pass,
-            "ma20_pass": ma20_pass,
-            "vwap_ma20_pass": vwap_ma20_pass,
-            "vwapMa20ConditionType": settings.vwap_ma20_condition_type,
-            "vwapMa20ConditionMode": settings.vwap_ma20_condition_mode,
-            "vwap_ma20_compare_operator": ">=",
-            "ma20_source": None,
-            "ma20_interval": None,
-            "ma20_period": 20,
-            "ma20_candle_count": None,
-            "ma20_insufficient": not _has_ma20_data(breakout),
-            "pullback_rebreak_pass": pullback_pass,
+            **intraday.condition_results,
         },
     )
 
@@ -387,12 +379,6 @@ def _entry_timing_allowed(
     settings: TradingSettings,
 ) -> bool:
     return _entry_timing_evaluation(breakout, threshold, settings).allowed
-
-
-def _condition_mode(enabled: bool, mode: str) -> str:
-    if not enabled:
-        return CONDITION_MODE_OFF
-    return mode
 
 
 def _apply_condition(
@@ -413,6 +399,19 @@ def _apply_condition(
         logs.append(reason)
 
 
+def _apply_condition_state(
+    state: IntradayConditionState,
+    mode: str,
+    reason: str,
+    hard: list[str],
+    soft: list[str],
+    logs: list[str],
+) -> None:
+    if state is not IntradayConditionState.FAIL:
+        return
+    _apply_condition(False, mode, reason, hard, soft, logs)
+
+
 def _price_change_from_open(breakout: BreakoutInput) -> float:
     if breakout.open_price_usd <= 0:
         return 0.0
@@ -423,86 +422,6 @@ def _entry_price_vs_breakout(entry_price: float, threshold: float) -> float | No
     if threshold <= 0:
         return None
     return entry_price / threshold - 1.0
-
-
-def _volume_increase_percent(breakout: BreakoutInput) -> float | None:
-    if (
-        breakout.current_5m_volume is None
-        or breakout.previous_5m_average_volume is None
-        or breakout.previous_5m_average_volume <= 0
-    ):
-        return None
-    return (
-        (breakout.current_5m_volume - breakout.previous_5m_average_volume)
-        / breakout.previous_5m_average_volume
-    ) * 100
-
-
-def _above_vwap_or_ma20(breakout: BreakoutInput) -> bool:
-    refs = [
-        value
-        for value in (breakout.vwap_usd, breakout.intraday_ma20_usd)
-        if value is not None and value > 0
-    ]
-    return bool(refs) and any(breakout.last_price_usd >= value for value in refs)
-
-
-def _has_vwap_or_ma20_data(breakout: BreakoutInput) -> bool:
-    return _has_vwap_data(breakout) or _has_ma20_data(breakout)
-
-
-def _has_vwap_data(breakout: BreakoutInput) -> bool:
-    return breakout.vwap_usd is not None and breakout.vwap_usd > 0
-
-
-def _has_ma20_data(breakout: BreakoutInput) -> bool:
-    return breakout.intraday_ma20_usd is not None and breakout.intraday_ma20_usd > 0
-
-
-def _vwap_pass(breakout: BreakoutInput) -> bool | None:
-    if not _has_vwap_data(breakout):
-        return None
-    return breakout.last_price_usd >= breakout.vwap_usd
-
-
-def _ma20_pass(breakout: BreakoutInput) -> bool | None:
-    if not _has_ma20_data(breakout):
-        return None
-    return breakout.last_price_usd >= breakout.intraday_ma20_usd
-
-
-def _above_vwap_ma20_by_type(breakout: BreakoutInput, settings: TradingSettings) -> bool:
-    if settings.vwap_ma20_condition_type == VWAP_MA20_OFF:
-        return True
-    vwap_pass = bool(_vwap_pass(breakout))
-    ma20_pass = bool(_ma20_pass(breakout))
-    if settings.vwap_ma20_condition_type == VWAP_MA20_AND:
-        return vwap_pass and ma20_pass
-    if settings.vwap_ma20_condition_type == VWAP_MA20_VWAP_ONLY:
-        return vwap_pass
-    if settings.vwap_ma20_condition_type == VWAP_MA20_MA20_ONLY:
-        return ma20_pass
-    return vwap_pass or ma20_pass
-
-
-def _has_vwap_ma20_data_for_type(breakout: BreakoutInput, settings: TradingSettings) -> bool:
-    if settings.vwap_ma20_condition_type == VWAP_MA20_OFF:
-        return False
-    if settings.vwap_ma20_condition_type == VWAP_MA20_AND:
-        return _has_vwap_data(breakout) and _has_ma20_data(breakout)
-    if settings.vwap_ma20_condition_type == VWAP_MA20_VWAP_ONLY:
-        return _has_vwap_data(breakout)
-    if settings.vwap_ma20_condition_type == VWAP_MA20_MA20_ONLY:
-        return _has_ma20_data(breakout)
-    return _has_vwap_or_ma20_data(breakout)
-
-
-def _vwap_ma20_evaluation_status(breakout: BreakoutInput, settings: TradingSettings) -> str:
-    if not settings.require_vwap_or_ma20 or settings.vwap_ma20_condition_type == VWAP_MA20_OFF:
-        return "DISABLED"
-    if not _has_vwap_ma20_data_for_type(breakout, settings):
-        return "SKIPPED_NO_DATA"
-    return "PASS" if _above_vwap_ma20_by_type(breakout, settings) else "FAIL"
 
 
 def _entry_reason(
@@ -537,6 +456,8 @@ def _entry_reason(
         detail += f", soft {','.join(evaluation.failed_soft_reasons)}"
     if evaluation.failed_log_reasons:
         detail += f", log {','.join(evaluation.failed_log_reasons)}"
+    if evaluation.missing_features:
+        detail += f", missing {','.join(evaluation.missing_features)}"
     if detail_tags:
         detail += f", tags {','.join(detail_tags)}"
     return "+".join(reasons), detail
@@ -572,7 +493,12 @@ def _candidate_evaluation(
     evaluated_at: datetime,
     entry_reason_tags: tuple[str, ...] = (),
 ) -> CandidateEvaluation:
-    condition_results = dict(evaluation.condition_results or {}) if evaluation else {}
+    data_evaluation = evaluation or _entry_timing_evaluation(
+        breakout,
+        threshold,
+        settings,
+    )
+    condition_results = dict(data_evaluation.condition_results or {})
     hard_reasons = tuple(evaluation.failed_hard_reasons if evaluation else ())
     soft_reasons = tuple(evaluation.failed_soft_reasons if evaluation else ())
     final_score_pass = final_score >= settings.min_total_score
@@ -717,6 +643,11 @@ def _settings_snapshot(settings: TradingSettings) -> dict[str, object]:
         "minVolumeRatio": settings.min_volume_ratio,
         "maxOpeningGapPercent": settings.max_opening_gap * 100,
         "rankingSelectionMode": settings.ranking_selection_mode,
+        "intradayMissingDataPolicy": resolve_intraday_missing_data_policy(
+            settings.intraday_missing_data_policy,
+            app_mode=settings.app_mode,
+            mock_trading=settings.mock_trading,
+        ),
         "maxEntryPriceChange": settings.max_entry_price_change,
         "breakoutK": settings.breakout_k,
         "maxBidAskSpreadRate": settings.max_bid_ask_spread_rate,
@@ -753,29 +684,27 @@ def _safe_save_candidate_evaluation(
                 else {}
             )
             vwap_ma20_status = condition_results.get("vwap_ma20_evaluation_status", "")
+            missing_reasons = tuple(
+                str(reason)
+                for reason in condition_results.get("missing_data_reasons", [])
+                if reason
+            )
             repository.save_log(
                 BotLog(
-                    "INFO",
+                    "WARNING" if missing_reasons else "INFO",
                     "candidate_evaluation",
-                    _candidate_evaluation_saved_message(evaluation, vwap_ma20_status),
+                    _candidate_evaluation_saved_message(
+                        evaluation,
+                        vwap_ma20_status,
+                        condition_results,
+                    ),
                     symbol=evaluation.symbol,
                     reject_reason=evaluation.buy_block_reason or "",
                     actual_value=evaluation.final_score,
                     threshold_value=evaluation.min_selection_score,
                 )
             )
-            if vwap_ma20_status == "SKIPPED_NO_DATA":
-                repository.save_log(
-                    BotLog(
-                        "INFO",
-                        "entry_planner",
-                        _vwap_ma20_skipped_message(evaluation, condition_results),
-                        symbol=evaluation.symbol,
-                        reject_reason="VWAP_MA20_DATA_MISSING",
-                        actual_value=evaluation.current_price,
-                    )
-                )
-            elif vwap_ma20_status in {"PASS", "FAIL"}:
+            if vwap_ma20_status in {"PASS", "FAIL"}:
                 repository.save_log(
                     BotLog(
                         "INFO",
@@ -805,7 +734,10 @@ def _safe_save_candidate_evaluation(
 def _candidate_evaluation_saved_message(
     evaluation: CandidateEvaluation,
     vwap_ma20_status: object,
+    condition_results: Mapping[str, object],
 ) -> str:
+    missing_reasons = condition_results.get("missing_data_reasons") or []
+    missing_label = ",".join(str(reason) for reason in missing_reasons) or "-"
     return (
         "후보평가 저장: "
         f"종목={evaluation.symbol} "
@@ -815,23 +747,9 @@ def _candidate_evaluation_saved_message(
         f"매수판정={_buy_block_reason_label(evaluation.buy_block_reason)} "
         f"하드필터탈락={_value_label(evaluation.hard_filter_failed_count)} "
         f"소프트조건탈락={_value_label(evaluation.soft_condition_failed_count)} "
-        f"VWAP/MA20상태={_vwap_ma20_status_label(vwap_ma20_status)}"
-    )
-
-
-def _vwap_ma20_skipped_message(
-    evaluation: CandidateEvaluation,
-    condition_results: Mapping[str, object],
-) -> str:
-    return (
-        "VWAP/MA20 데이터 부족: "
-        f"종목={evaluation.symbol} "
-        f"현재가={_value_label(condition_results.get('current_price'))} "
-        f"조건유형={_vwap_ma20_type_label(condition_results.get('vwapMa20ConditionType'))} "
-        f"조건모드={_condition_mode_label(condition_results.get('vwapMa20ConditionMode'))} "
-        f"VWAP데이터={_bool_label(condition_results.get('vwap_data_available'))} "
-        f"장중MA20데이터={_bool_label(condition_results.get('intraday_ma20_data_available'))} "
-        f"사유={_buy_block_reason_label('VWAP_MA20_DATA_MISSING')}"
+        f"VWAP/MA20상태={_vwap_ma20_status_label(vwap_ma20_status)} "
+        f"데이터품질={condition_results.get('data_quality_status', '-')} "
+        f"데이터누락={missing_label}"
     )
 
 

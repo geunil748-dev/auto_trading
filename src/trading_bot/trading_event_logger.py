@@ -99,12 +99,22 @@ def record_candidate_evaluation_event(
 ) -> bool:
     reason = evaluation.buy_block_reason or evaluation.final_decision or ""
     event_type = "BUY_ALLOWED" if evaluation.buy_allowed else "BUY_BLOCKED"
+    condition_result = _json_or_text(evaluation.condition_result_json)
+    condition_details = condition_result if isinstance(condition_result, Mapping) else {}
+    missing_reasons = _string_list(condition_details.get("missing_data_reasons"))
+    missing_reason = _missing_data_reason(missing_reasons)
+    event_reason = reason if not evaluation.buy_allowed else missing_reason
     details = {
         "buy_block_reasons": _json_or_text(evaluation.buy_block_reasons),
-        "condition_result": _json_or_text(evaluation.condition_result_json),
+        "condition_result": condition_result,
         "hard_filter_failed_count": evaluation.hard_filter_failed_count,
         "soft_condition_failed_count": evaluation.soft_condition_failed_count,
         "source": evaluation.source,
+        "missing_data_reasons": missing_reasons,
+        "missing_features": _string_list(condition_details.get("missing_features")),
+        "intraday_missing_data_policy": condition_details.get(
+            "intraday_missing_data_policy"
+        ),
     }
     return record_trading_event(
         repository,
@@ -117,9 +127,9 @@ def record_candidate_evaluation_event(
             side="BUY",
             stage="ENTRY_PLANNER",
             event_type=event_type,
-            severity="INFO" if evaluation.buy_allowed else "WARNING",
+            severity="WARNING" if missing_reasons or not evaluation.buy_allowed else "INFO",
             decision="BUY_ALLOWED" if evaluation.buy_allowed else reason,
-            reason_code=None if evaluation.buy_allowed else reason,
+            reason_code=event_reason or None,
             is_blocking=not evaluation.buy_allowed,
             is_final_decision=True,
             order_submitted=evaluation.order_submitted,
@@ -128,7 +138,10 @@ def record_candidate_evaluation_event(
             actual_value=evaluation.final_score,
             threshold_value=evaluation.min_selection_score,
             candidate_source=evaluation.source,
-            message=f"candidate_evaluated symbol={evaluation.symbol} decision={event_type}",
+            message=(
+                f"candidate_evaluated symbol={evaluation.symbol} decision={event_type}"
+                f" missing={','.join(missing_reasons) or '-'}"
+            ),
             details_json=details,
         ),
         fallback_bot_log=fallback_bot_log,
@@ -660,6 +673,18 @@ def _json_or_text(value: str | None) -> Any:
         return json.loads(value)
     except json.JSONDecodeError:
         return value
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item) for item in value if item]
+
+
+def _missing_data_reason(reasons: list[str]) -> str:
+    if len(reasons) > 1:
+        return "REQUIRED_INTRADAY_DATA_MISSING"
+    return reasons[0] if reasons else ""
 
 
 def _is_sensitive_key(key: str) -> bool:
