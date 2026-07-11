@@ -553,10 +553,11 @@ def test_entry_planner_saves_bought_and_soft_score_evaluation() -> None:
     assert evaluation.soft_condition_failed_count == 1
     condition_json = json.loads(evaluation.condition_result_json)
     assert condition_json["failed_soft_reasons"] == ["BREAKOUT_CLOSE_FAILED"]
-    assert repository.logs[0].message == (
+    assert repository.logs[0].message.startswith(
         "후보평가 저장: 종목=SOFT 최종점수=85.5 매수허용=예 주문제출=아니오 "
         "매수판정=매수 허용 하드필터탈락=0 소프트조건탈락=1 VWAP/MA20상태=비활성화"
     )
+    assert "BREAKOUT_HOLD_DATA_MISSING" in repository.logs[0].message
     assert repository.logs[0].reject_reason == "BUY_ALLOWED"
     assert repository.trading_events[0].event_type == "BUY_ALLOWED"
 
@@ -677,14 +678,22 @@ def test_entry_planner_records_insufficient_5m_volume_data_without_zero_division
     assert [item.ticker for item in intents] == ["ZERO"]
     evaluation = repository.candidate_evaluations[0]
     assert evaluation.buy_allowed is True
-    assert evaluation.soft_score_adjustment == -5.0
+    assert evaluation.soft_score_adjustment == 0.0
     condition_json = json.loads(evaluation.condition_result_json)
     assert condition_json["recent_5m_volume"] == 10_000
     assert condition_json["previous_5m_volume"] == 0
     assert condition_json["volume_increase_percent"] is None
     assert condition_json["min5mVolumeIncreasePercent"] == 5.0
-    assert condition_json["volume_increase_pass"] is False
+    assert condition_json["volume_increase_pass"] is None
     assert condition_json["volume_increase_insufficient"] is True
+    assert condition_json["volume_increase_state"] == "NO_DATA"
+    assert condition_json["missing_data_reasons"] == [
+        "BREAKOUT_CLOSE_DATA_MISSING",
+        "BREAKOUT_HOLD_DATA_MISSING",
+        "VOLUME_INCREASE_DATA_MISSING",
+        "PULLBACK_REBREAK_DATA_MISSING",
+    ]
+    assert "VOLUME_INCREASE_FAILED" not in condition_json["failed_soft_reasons"]
 
 
 def test_entry_planner_hard_filter_blocks_failed_5m_volume_increase() -> None:

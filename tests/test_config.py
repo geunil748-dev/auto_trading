@@ -73,6 +73,46 @@ def test_load_settings_test_mode_ignores_real_trading_unlock(monkeypatch) -> Non
     assert settings.real_emergency_stop is True
 
 
+@pytest.mark.parametrize(
+    ("app_mode", "mock_trading", "policy", "expected"),
+    (
+        ("test", "true", None, "LOG_ONLY"),
+        ("test", "true", "AUTO", "LOG_ONLY"),
+        ("test", "false", "AUTO", "BLOCK"),
+        ("test", "true", "LOG_ONLY", "LOG_ONLY"),
+        ("test", "false", "LOG_ONLY", "BLOCK"),
+        ("test", "true", "BLOCK", "BLOCK"),
+        ("real", "true", "AUTO", "BLOCK"),
+        ("real", "true", "LOG_ONLY", "BLOCK"),
+    ),
+)
+def test_load_settings_resolves_intraday_missing_data_policy(
+    monkeypatch,
+    app_mode: str,
+    mock_trading: str,
+    policy: str | None,
+    expected: str,
+) -> None:
+    monkeypatch.setenv("APP_MODE", app_mode)
+    monkeypatch.setenv("MOCK_TRADING", mock_trading)
+    if policy is None:
+        monkeypatch.delenv("INTRADAY_MISSING_DATA_POLICY", raising=False)
+    else:
+        monkeypatch.setenv("INTRADAY_MISSING_DATA_POLICY", policy)
+
+    settings = load_settings()
+
+    assert settings.intraday_missing_data_policy == expected
+    assert runtime_risk_settings_payload(settings)["intradayMissingDataPolicy"] == expected
+
+
+def test_load_settings_rejects_invalid_intraday_missing_data_policy(monkeypatch) -> None:
+    monkeypatch.setenv("INTRADAY_MISSING_DATA_POLICY", "UNKNOWN")
+
+    with pytest.raises(ValueError, match="INTRADAY_MISSING_DATA_POLICY"):
+        load_settings()
+
+
 def test_load_settings_allows_market_ma20_bypass_only_in_test_mock_mode(monkeypatch) -> None:
     monkeypatch.setenv("APP_MODE", "test")
     monkeypatch.setenv("MOCK_TRADING", "true")
