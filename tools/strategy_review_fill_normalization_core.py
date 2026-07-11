@@ -23,9 +23,10 @@ try:
         group_key_text,
         integer_value,
         latest_text,
+        mode_is_mock,
+        mode_text,
         normalize_side,
         number_text,
-        optional_bool,
         order_evidence_key,
         ordered_unique,
         prepare_fill,
@@ -41,8 +42,9 @@ except ModuleNotFoundError:  # pragma: no cover - direct script fallback
         EXACT_DUPLICATE_COLLAPSED, HANGUL_RE, LEGACY_CUMULATIVE_LATEST,
         NO_ORDER_NO_FALLBACK, SINGLE_ROW, canonical, date_text, decimal_value,
         financial_signature, fill_group_key, float_value, group_key_text,
-        integer_value, latest_text, normalize_side, number_text, optional_bool,
-        order_evidence_key, ordered_unique, prepare_fill, prepared_sort_key,
+        integer_value, latest_text, normalize_side, number_text,
+        mode_is_mock, mode_text, order_evidence_key, ordered_unique, prepare_fill,
+        prepared_sort_key,
         text_value, ticker_text, weighted_value,
     )
 
@@ -156,19 +158,21 @@ def _normalize_group(
             reason = "multiple distinct rows have no deterministic cumulative-versus-delta interpretation"
     if method == AMBIGUOUS_EXCLUDED:
         warnings.add(AMBIGUOUS_WARNING)
-    if side == "SELL" and not latest["order_no"]:
+    if side == "SELL" and method == NO_ORDER_NO_FALLBACK:
         warnings.add("SELL_WITHOUT_ORDER_NO")
 
     quantity, price, amount, profit, rate = _selected_metrics(method, selected, side)
     missing_profit = side == "SELL" and method != AMBIGUOUS_EXCLUDED and profit is None
     if missing_profit:
         warnings.add("MISSING_SELL_PROFIT")
-    excluded_trusted = method in {NO_ORDER_NO_FALLBACK, AMBIGUOUS_EXCLUDED} or missing_profit
+    trusted_exclusion_reason = _trusted_exclusion_reason(method, confidence, missing_profit)
+    excluded_trusted = bool(trusted_exclusion_reason)
     excluded_best = method == AMBIGUOUS_EXCLUDED or missing_profit
     raw_profit = sum((row["profit_usd"] or Decimal("0")) for row in rows)
     return {
         "normalization_group_key": group_key_text(group_key),
         "trade_date": latest["trade_date"], "is_mock": latest["is_mock"],
+        "mode": mode_text(latest),
         "ticker": latest["ticker"], "ticker_name": latest_text(rows, "ticker_name"),
         "side": side, "normalized_side": side, "order_no": latest["order_no"],
         "fill_time": latest_text(selected or rows, "fill_time"), "quantity": quantity,
@@ -192,8 +196,23 @@ def _normalize_group(
         "trusted_profit_usd": None if excluded_trusted else profit,
         "best_effort_profit_usd": None if excluded_best else profit,
         "excluded_from_trusted_pnl": excluded_trusted,
+        "trusted_exclusion_reason": trusted_exclusion_reason,
         "excluded_from_best_effort_pnl": excluded_best,
     }
+
+
+def _trusted_exclusion_reason(method: str, confidence: str, missing_profit: bool) -> str:
+    if missing_profit:
+        return "MISSING_SELL_PROFIT"
+    if method == AMBIGUOUS_EXCLUDED:
+        return "AMBIGUOUS_EXCLUDED"
+    if confidence == "MEDIUM":
+        return "MEDIUM_CONFIDENCE_NOT_TRUSTED"
+    if confidence == "LOW":
+        return "LOW_CONFIDENCE_NOT_TRUSTED"
+    if confidence != "HIGH":
+        return "NOT_HIGH_CONFIDENCE"
+    return ""
 
 
 def _selected_metrics(
@@ -238,7 +257,7 @@ def _order_quantity_evidence(
             continue
         key = (
             date_text(row.get("trade_date", row.get("order_date"))),
-            optional_bool(row.get("is_mock")) if "is_mock" in row else None,
+            mode_is_mock(row),
             side, ticker_text(row.get("ticker", row.get("symbol"))), order_no,
         )
         result[key].add(filled)

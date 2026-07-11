@@ -27,6 +27,7 @@ def _fill(
     fill_price: float = 10.0,
     profit_usd: float | None = -1.0,
     created_at: str | None = None,
+    is_mock: bool | None = True,
 ) -> dict[str, object]:
     row: dict[str, object] = {
         "trade_date": "2026-07-10",
@@ -40,7 +41,7 @@ def _fill(
         "profit_usd": profit_usd,
         "profit_rate": None if profit_usd is None or quantity == 0 else profit_usd / (quantity * 100),
         "order_no": order_no,
-        "is_mock": True,
+        "is_mock": is_mock,
         "created_at": created_at or f"2026-07-10 10:00:{source_id or 0:02d}",
     }
     if source_id is not None:
@@ -48,14 +49,21 @@ def _fill(
     return row
 
 
-def _order(ticker: str, order_no: str, filled_qty: int, *, side: str = "SELL") -> dict[str, object]:
+def _order(
+    ticker: str,
+    order_no: str,
+    filled_qty: int,
+    *,
+    side: str = "SELL",
+    is_mock: bool | None = True,
+) -> dict[str, object]:
     return {
         "trade_date": "2026-07-10",
         "ticker": ticker,
         "side": side,
         "order_no": order_no,
         "filled_qty": filled_qty,
-        "is_mock": True,
+        "is_mock": is_mock,
     }
 
 
@@ -146,10 +154,35 @@ def test_current_delta_and_real_partial_fills_are_not_lost() -> None:
     assert rows["CUR"]["normalization_confidence"] == "MEDIUM"
     assert rows["CUR"]["normalized_quantity"] == 150
     assert rows["CUR"]["normalized_profit_usd"] == 14
+    assert rows["CUR"]["excluded_from_trusted_pnl"] is True
+    assert rows["CUR"]["excluded_from_best_effort_pnl"] is False
+    assert rows["CUR"]["trusted_exclusion_reason"] == "MEDIUM_CONFIDENCE_NOT_TRUSTED"
     assert rows["PAR"]["normalization_method"] == DELTA_ROWS_SUMMED
     assert rows["PAR"]["normalization_confidence"] == "HIGH"
     assert rows["PAR"]["normalized_quantity"] == 100
     assert rows["PAR"]["normalized_profit_usd"] == 7
+    assert rows["PAR"]["excluded_from_trusted_pnl"] is False
+    assert rows["PAR"]["trusted_exclusion_reason"] == ""
+    day = result.pnl_by_day[0]
+    assert (day["sell_count"], day["total_profit_usd"]) == (1, 7)
+    assert (day["best_effort_sell_count"], day["best_effort_total_profit_usd"]) == (2, 21)
+    audits = {row["ticker"]: row for row in result.audit_rows}
+    assert audits["CUR"]["trusted_exclusion_reason"] == "MEDIUM_CONFIDENCE_NOT_TRUSTED"
+
+
+def test_same_order_number_stays_separate_between_mock_and_real() -> None:
+    fills = [
+        _fill(1, "AAA", "O1", 10, profit_usd=5, is_mock=True),
+        _fill(2, "AAA", "O1", 20, profit_usd=-7, is_mock=False),
+    ]
+
+    rows = build_normalized_review(fills).normalized_rows
+
+    assert len(rows) == 2
+    assert {(row["mode"], row["source_id_list"]) for row in rows} == {
+        ("MOCK", "1"),
+        ("REAL", "2"),
+    }
 
 
 def test_increasing_rows_without_independent_evidence_remain_ambiguous() -> None:

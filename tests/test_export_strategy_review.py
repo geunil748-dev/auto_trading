@@ -187,7 +187,10 @@ def test_final_metrics_prefers_trusted_normalized_profit() -> None:
                         "normalized_profit_usd": 12,
                         "raw_profit_usd_sum": 30,
                         "normalization_method": "LEGACY_CUMULATIVE_LATEST",
+                        "normalization_confidence": "HIGH",
+                        "is_mock": True,
                         "excluded_from_trusted_pnl": False,
+                        "excluded_from_best_effort_pnl": False,
                     }
                 ],
             ),
@@ -201,6 +204,43 @@ def test_final_metrics_prefers_trusted_normalized_profit() -> None:
     assert metrics["fill_history_sell_profit_usd"] == 12
     assert metrics["raw_sell_row_count"] == 2
     assert metrics["raw_profit_usd"] == 30
+    assert metrics["normalized_pnl_by_mode"] == {
+        "MOCK": {"sell_order_count": 1, "profit_usd": 12}
+    }
+
+
+def test_final_metrics_excludes_medium_confidence_from_trusted_headline() -> None:
+    metrics = final_metrics(
+        [
+            SheetResult("fill_history", [{"side": "SELL", "profit_usd": 14}]),
+            SheetResult(
+                "fill_history_normalized",
+                [
+                    {
+                        "normalized_side": "SELL",
+                        "normalized_profit_usd": 14,
+                        "normalization_method": "DELTA_ROWS_SUMMED",
+                        "normalization_confidence": "MEDIUM",
+                        "is_mock": True,
+                        "excluded_from_trusted_pnl": False,
+                        "excluded_from_best_effort_pnl": False,
+                    }
+                ],
+            ),
+            SheetResult("fill_normalization_warnings", []),
+            SheetResult("duplicate_suspects", []),
+        ]
+    )
+
+    assert metrics["headline_pnl_basis"] == "TRUSTED_NORMALIZED"
+    assert metrics["normalized_sell_order_count"] == 0
+    assert metrics["normalized_profit_usd"] == 0
+    assert metrics["best_effort_sell_order_count"] == 1
+    assert metrics["best_effort_profit_usd"] == 14
+    assert metrics["normalized_pnl_by_mode"] == {}
+    assert metrics["best_effort_pnl_by_mode"] == {
+        "MOCK": {"sell_order_count": 1, "profit_usd": 14}
+    }
 
 
 def test_normalized_sheet_build_keeps_raw_fill_rows_unchanged() -> None:
@@ -264,6 +304,61 @@ def test_normalized_sheet_build_keeps_raw_fill_rows_unchanged() -> None:
     assert len(normalized.rows) == 1
     assert normalized.rows[0]["source_id_list"] == "1,2"
     assert normalized.rows[0]["normalization_method"] == "LEGACY_CUMULATIVE_LATEST"
+
+
+def test_candidate_mode_default_applies_only_to_mock_only_export() -> None:
+    raw_by_name = {
+        "fill_history": SheetResult(
+            "fill_history",
+            [
+                {
+                    "id": 1,
+                    "trade_date": "2026-07-10",
+                    "ticker": "AAA",
+                    "side": "SELL",
+                    "quantity": 1,
+                    "fill_price": 10,
+                    "fill_amount": 10,
+                    "profit_usd": 2,
+                    "order_no": "O1",
+                    "is_mock": True,
+                    "fill_time": "10:00:00",
+                }
+            ],
+        )
+    }
+    candidates = SheetResult(
+        "candidate_orders_matched_raw",
+        [
+            {
+                "id": 1,
+                "trading_date": "2026-07-10",
+                "symbol": "AAA",
+                "source": "ranked",
+                "final_score": 55,
+                "order_submitted": True,
+            }
+        ],
+    )
+
+    mock_results = list(_normalized_sheet_results(raw_by_name, candidates))
+    mixed_results = list(
+        _normalized_sheet_results(raw_by_name, candidates, include_real=True)
+    )
+    mock_candidate = next(
+        result for result in mock_results if result.name == "candidate_orders_matched"
+    ).rows[0]
+    mixed_candidate = next(
+        result for result in mixed_results if result.name == "candidate_orders_matched"
+    ).rows[0]
+
+    assert (mock_candidate["mode"], mock_candidate["trusted_sell_count"]) == ("MOCK", 1)
+    assert mock_candidate["mode_match_method"] == "EXPORT_SCOPE_DEFAULT"
+    assert (mixed_candidate["mode"], mixed_candidate["trusted_sell_count"]) == (
+        "UNKNOWN",
+        0,
+    )
+    assert mixed_candidate["mode_match_method"] == "UNKNOWN_NOT_ASSIGNED"
 
 
 def test_normalized_sheets_fail_closed_when_raw_fill_query_failed() -> None:

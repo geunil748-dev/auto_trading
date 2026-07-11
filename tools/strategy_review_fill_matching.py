@@ -45,11 +45,7 @@ def match_exit_reasons(
             if candidate["trade_date"] == date_text(row.get("trade_date"))
             and candidate["ticker"] == ticker_text(row.get("ticker"))
             and candidate["side"] == "SELL"
-            and (
-                is_mock is None
-                or candidate["is_mock"] is None
-                or candidate["is_mock"] == is_mock
-            )
+            and candidate["is_mock"] == is_mock
         ]
         order_no = text_value(row.get("order_no"))
         order_matches = [candidate for candidate in base if order_no and candidate["order_no"] == order_no]
