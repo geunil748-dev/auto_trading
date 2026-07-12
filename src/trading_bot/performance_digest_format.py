@@ -28,6 +28,7 @@ from trading_bot.performance_digest_packet import format_auto_trading_data_packe
 from trading_bot.performance_digest_observation_format import (
     observation_headline_lines,
     observation_sections,
+    overall_section,
 )
 
 
@@ -67,9 +68,15 @@ def format_strategy_review_digest(
         "",
         *observation_sections(stats, money=_money, pct=_pct),
         "",
-        *_overall_section("daily_overall", daily, include_note=True),
+        *overall_section(
+            "daily_overall", daily, money=_money, pct=_pct, ratio=_ratio,
+            join_notes=_join_notes, include_note=True,
+        ),
         "",
-        *_overall_section("cumulative_overall", cumulative),
+        *overall_section(
+            "cumulative_overall", cumulative, money=_money, pct=_pct,
+            ratio=_ratio, join_notes=_join_notes,
+        ),
         "",
         *matching_quality_section("daily_matching_quality", daily, pct=_pct),
         "",
@@ -213,51 +220,6 @@ def _bucket_lines(
     return lines or ["- no_matched_rows: sell_count=0, pnl=0.00, win_rate=0.00%"]
 
 
-def _overall_section(
-    title: str,
-    stats: dict[str, Any],
-    *,
-    include_note: bool = False,
-) -> list[str]:
-    performance = stats["performance"]
-    overall = performance["overall"]
-    reconciliation = performance["reconciliation"]
-    lines = [
-        f"{title}:",
-        f"- buy_count: {overall['buy_count']}",
-        f"- sell_count: {overall['sell_count']}",
-        f"- fill_history_buy_rows: {overall['fill_history_buy_rows']}",
-        f"- fill_history_sell_rows: {overall['fill_history_sell_rows']}",
-        f"- realized_pnl: {_money(overall['realized_pnl'])}",
-        f"- realized_pnl_from_fill_history: {_money(overall['realized_pnl_from_fill_history'])}",
-        f"- realized_pnl_from_daily_summary: {_money(overall['realized_pnl_from_daily_summary'])}",
-        f"- realized_pnl_from_raw_sell_fills: {_money(overall['realized_pnl_from_raw_sell_fills'])}",
-        f"- realized_pnl_from_matched_trades_only: {_money(overall['realized_pnl_from_matched_trades_only'])}",
-        f"- realized_pnl_from_daily_ops_summary: {_money(overall['realized_pnl_from_daily_ops_summary'])}",
-        f"- realized_pnl_from_strategy_review_sheet: {_money(overall['realized_pnl_from_strategy_review_sheet'])}",
-        f"- realized_pnl_from_exit_reason_sum: {_money(overall['realized_pnl_from_exit_reason_sum'])}",
-        f"- realized_return: {_pct(overall['realized_return'])}",
-        f"- win_rate: {_pct(overall['win_rate'])}",
-        f"- avg_win: {_money(overall['avg_win'])}",
-        f"- avg_loss: {_money(overall['avg_loss'])}",
-        f"- profit_factor: {_ratio(overall['profit_factor'])}",
-        f"- realized_exit_count: {overall['realized_exit_count']}",
-        f"- matched_trade_count: {overall['matched_trade_count']}",
-        f"- unmatched_trade_count: {overall['unmatched_trade_count']}",
-        f"- matched_ratio: {_pct(overall['matched_ratio'])} {overall['matched_ratio_status']}",
-        f"- reconciliation_gap: {_money(reconciliation['reconciliation_gap'])}",
-        f"- reconciliation_gap_abs: {_money(reconciliation['reconciliation_gap_abs'])}",
-        f"- reconciliation_gap_pct: {_pct(reconciliation['reconciliation_gap_pct'])}",
-        f"- reconciliation_status: {reconciliation['status']}",
-        f"- {_audit_label(stats, 'count_consistency_status')}: {stats['count_consistency_status']}",
-        f"- {_audit_label(stats, 'data_status')}: {stats['data_status']}",
-        f"- {_audit_label(stats, 'data_status_reason')}: {_join_notes(stats['data_status_reason'])}",
-    ]
-    if include_note and overall["sell_count"] == 0:
-        lines.append("- note: no trades for report_date")
-    return lines
-
-
 def _review_focus(daily: dict[str, Any], cumulative: dict[str, Any]) -> str:
     daily_focus = daily["interpretation"]["recommended_review_focus"]
     cumulative_focus = cumulative["interpretation"]["recommended_review_focus"]
@@ -276,10 +238,6 @@ def _score_source_guardrails(stats: dict[str, Any]) -> list[str]:
     if stats["performance_basis"] == "TRUSTED_NORMALIZED":
         return ["- signal_usage: observation_only_no_automatic_strategy_change"]
     return score_source_guardrail_lines(stats)
-
-
-def _audit_label(stats: dict[str, Any], label: str) -> str:
-    return f"raw_audit_{label}" if stats["performance_basis"] == "TRUSTED_NORMALIZED" else label
 
 
 def _date_text(value: date | str) -> str:

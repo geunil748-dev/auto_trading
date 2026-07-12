@@ -31,6 +31,12 @@ def test_trusted_normalized_is_headline_and_raw_is_audit_only(tmp_path) -> None:
     assert "trusted_profit_usd: 5.00" in digest
     assert "best_effort_profit_usd: 8.00" in digest
     assert "raw_profit_usd: 17.00" in digest
+    assert "malformed_condition_json_count: 0" in digest
+    assert "missing_condition_json_count: 0" in digest
+    assert "max_drawdown: unknown" in digest
+    assert "intraday_data_quality_observation:\ndaily:" in digest
+    assert "loss_control_observation:\ndaily:" in digest
+    assert digest.count("cumulative:\n- basis: TRUSTED_NORMALIZED_MOCK") == 1
     assert "cumulative_overall:\n- buy_count: 0\n- sell_count: 2" in digest
     assert "- realized_pnl: 5.00" in digest
 
@@ -78,6 +84,8 @@ def test_real_mode_is_excluded_and_blocks_observation() -> None:
     stats = collect_strategy_review_digest_stats(results, report_date="2026-07-11")
 
     assert stats["mode_contamination_count"] == 1
+    assert stats["real_mode_row_count"] == 1
+    assert "MODE_CONTAMINATION" in stats["observation_warnings"]
     assert stats["observation_status"] == "BLOCKED"
     assert stats["cumulative"]["performance_audit"]["trusted_profit_usd"] == 5
 
@@ -91,6 +99,18 @@ def test_aggregate_real_mode_contamination_is_not_summed() -> None:
     assert stats["mode_contamination_count"] >= 1
     assert stats["observation_status"] == "BLOCKED"
     assert stats["cumulative"]["performance"]["overall"]["realized_pnl"] != 999
+
+
+def test_unknown_mode_is_excluded_with_separate_warning() -> None:
+    results = _results()
+    ledger = next(row for row in results if row.name == "fill_history_normalized")
+    ledger.rows.append(_normalized_sell("UNKNOWN", "U1", 99, "HIGH"))
+    stats = collect_strategy_review_digest_stats(results, report_date="2026-07-11")
+
+    assert stats["unknown_mode_row_count"] == 1
+    assert "UNKNOWN_MODE_ROWS" in stats["observation_warnings"]
+    assert stats["observation_status"] == "BLOCKED"
+    assert stats["cumulative"]["performance_audit"]["trusted_profit_usd"] == 5
 
 
 def test_raw_sells_with_zero_normalized_sells_emit_warning() -> None:
@@ -131,12 +151,25 @@ def test_no_data_false_failure_checks_all_reason_fields() -> None:
         {"id": 2, "condition_result_json": "{broken"},
     ])
 
-    assert result["candidate_evaluation_count"] == 1
+    assert result["candidate_evaluation_count"] == 2
     assert result["required_data_incomplete_count"] == 1
     assert result["policy_log_only_count"] == 1
     assert result["feature_missing_counts"]["VOLUME_INCREASE_DATA_MISSING"] == 1
     assert result["false_failure_count"] == 1
     assert result["malformed_json_count"] == 1
+    assert result["malformed_condition_json_count"] == 1
+
+
+def test_missing_and_malformed_condition_json_are_separate_and_rate_is_unknown() -> None:
+    result = collect_intraday_observation([
+        {"id": 1, "is_mock": True, "condition_result_json": None},
+        {"id": 2, "is_mock": True, "condition_result_json": "{broken"},
+    ])
+
+    assert result["candidate_evaluation_count"] == 2
+    assert result["missing_condition_json_count"] == 1
+    assert result["malformed_condition_json_count"] == 1
+    assert result["required_data_incomplete_rate"] == "unknown"
 
 
 def test_intraday_counts_multiple_missing_disabled_state_and_block_policy() -> None:
@@ -163,6 +196,26 @@ def test_intraday_counts_multiple_missing_disabled_state_and_block_policy() -> N
     assert result["feature_missing_counts"]["REQUIRED_INTRADAY_DATA_MISSING"] == 1
     assert result["condition_state_counts"]["BREAKOUT_HOLD"]["DISABLED"] == 1
     assert result["false_failure_count"] == 0
+
+
+def test_disabled_conditions_do_not_count_as_required_incomplete() -> None:
+    details = {
+        "mock_trading": True, "required_data_quality_status": "COMPLETE",
+        "data_quality_status": "INCOMPLETE", "intraday_missing_data_policy": "LOG_ONLY",
+        "missing_data_reasons": [],
+        "condition_states": {
+            "BREAKOUT_CLOSE": "DISABLED", "BREAKOUT_HOLD": "DISABLED",
+            "VOLUME_INCREASE": "DISABLED", "VWAP_MA20": "DISABLED",
+            "PULLBACK_REBREAK": "DISABLED",
+        },
+    }
+    result = collect_intraday_observation([
+        {"condition_result_json": json.dumps(details), "is_mock": True}
+    ])
+
+    assert result["required_data_complete_count"] == 1
+    assert result["required_data_incomplete_count"] == 0
+    assert result["required_data_incomplete_rate"] == 0
 
 
 def test_intraday_daily_and_cumulative_counts_are_separate() -> None:
@@ -192,6 +245,23 @@ def test_strategy_change_gate_has_exact_trade_thresholds(sell_count: int, eligib
     assert stats["strategy_change_eligibility"] == eligibility
 
 
+def test_false_failure_blocks_observation_and_holds_data_quality() -> None:
+    results = _results(sell_count=30)
+    candidate = next(row for row in results if row.name == "candidate_evaluations").rows[0]
+    details = json.loads(str(candidate["condition_result_json"]))
+    details.update(
+        missing_data_reasons=["VOLUME_INCREASE_DATA_MISSING"],
+        failed_hard_reasons=["VOLUME_INCREASE_FAILED"],
+        required_data_quality_status="INCOMPLETE",
+    )
+    candidate["condition_result_json"] = json.dumps(details)
+    stats = collect_strategy_review_digest_stats(results, report_date="2026-07-11")
+
+    assert stats["cumulative"]["intraday_observation"]["false_failure_count"] == 1
+    assert stats["observation_status"] == "BLOCKED"
+    assert stats["strategy_change_eligibility"] == "HOLD_DATA_QUALITY"
+
+
 def test_zero_loss_denominators_are_safe() -> None:
     results = _results(sell_count=1)
     ledger = next(row for row in results if row.name == "fill_history_normalized")
@@ -202,6 +272,7 @@ def test_zero_loss_denominators_are_safe() -> None:
     assert loss["gross_loss"] == 0
     assert loss["profit_factor"] == float("inf")
     assert loss["stop_loss_share_of_gross_loss"] == 0
+    assert loss["max_drawdown"] == "unknown"
 
 
 def test_ambiguous_exit_is_not_assigned_to_stop_or_other_exit() -> None:
@@ -215,6 +286,8 @@ def test_ambiguous_exit_is_not_assigned_to_stop_or_other_exit() -> None:
     assert loss["ambiguous_exit_count"] == 1
     assert loss["stop_loss_count"] == 0
     assert loss["other_exit_reasons"] == []
+    assert loss["exit_reason_metrics"]["AMBIGUOUS"]["count"] == 1
+    assert loss["exit_reason_metrics"]["STOP_LOSS"]["count"] == 0
 
 
 def _results(sell_count: int = 2) -> list[Result]:

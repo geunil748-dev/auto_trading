@@ -91,6 +91,8 @@ def collect_strategy_review_digest_stats(
         scope["observation_status"] = observation["observation_status"]
         scope["strategy_change_eligibility"] = observation["strategy_change_eligibility"]
         scope["observation_warnings"] = observation["warnings"]
+        scope["real_mode_row_count"] = observation["real_mode_row_count"]
+        scope["unknown_mode_row_count"] = observation["unknown_mode_row_count"]
     return {
         "daily": daily,
         "cumulative": cumulative,
@@ -101,6 +103,9 @@ def collect_strategy_review_digest_stats(
         "normalized_missing_sheets": observation["normalized_missing_sheets"],
         "normalized_errors": observation["normalized_errors"],
         "mode_contamination_count": observation["mode_contamination_count"],
+        "real_mode_row_count": observation["real_mode_row_count"],
+        "unknown_mode_row_count": observation["unknown_mode_row_count"],
+        "trusted_exclusion_reason_counts": observation["trusted_exclusion_reason_counts"],
         "trusted_lineage_error_count": observation["trusted_lineage_error_count"],
         "daily_range_status": "report_date_only",
         "score_source_basis": (

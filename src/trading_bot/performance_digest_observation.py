@@ -7,7 +7,7 @@ from typing import Any
 from trading_bot.performance_digest_aggregates import bucket_stats, overall_metrics
 from trading_bot.performance_digest_buckets import (
     EXIT_REASON_BUCKETS, SCORE_BUCKETS, SOURCE_BUCKETS, exit_reason_bucket,
-    is_buy, is_sell, num, score_bucket, source_bucket,
+    is_buy, is_sell, num, score_bucket, source_bucket, UNKNOWN,
 )
 from trading_bot.performance_digest_intraday_observation import collect_intraday_observation
 from trading_bot.performance_digest_loss_observation import (
@@ -45,10 +45,14 @@ def build_observation_stats(
     })
     warnings.extend(f"NORMALIZATION_WARNING:{code}" for code in normalization_warning_codes)
     normalized = _rows(by_name, "fill_history_normalized")
-    non_mock_sells = [row for row in normalized if _side(row) == "SELL" and _mode(row) != "MOCK"]
-    aggregate_contamination = sum(
-        1 for name in REQUIRED_NORMALIZED_SHEETS[1:6]
-        for row in _rows(by_name, name) if _mode(row) != "MOCK"
+    normalized_sells = [row for row in normalized if _side(row) == "SELL"]
+    aggregate_rows = [
+        row for name in REQUIRED_NORMALIZED_SHEETS[1:6]
+        for row in _rows(by_name, name)
+    ]
+    real_mode_rows = sum(_mode(row) == "REAL" for row in normalized_sells + aggregate_rows)
+    unknown_mode_rows = sum(
+        _mode(row) not in {"MOCK", "REAL"} for row in normalized_sells + aggregate_rows
     )
     mock_rows = [row for row in normalized if _mode(row) == "MOCK"]
     trusted = [row for row in mock_rows if _trusted(row)]
@@ -59,16 +63,25 @@ def build_observation_stats(
         for row in trusted_sells
         if row.get("normalized_profit_usd") is None or not str(row.get("source_id_list") or "").strip()
     ]
-    if non_mock_sells or aggregate_contamination:
-        warnings.append("NORMALIZED_MODE_CONTAMINATION_EXCLUDED")
+    excluded_reasons: dict[str, int] = {}
+    for row in normalized_sells:
+        if _mode(row) == "MOCK" and not _trusted(row):
+            reason = str(row.get("trusted_exclusion_reason") or row.get("normalization_method") or "NOT_TRUSTED")
+            excluded_reasons[reason] = excluded_reasons.get(reason, 0) + 1
+    if real_mode_rows:
+        warnings.append("MODE_CONTAMINATION")
+    if unknown_mode_rows:
+        warnings.append("UNKNOWN_MODE_ROWS")
     if lineage_errors:
         warnings.append("TRUSTED_NORMALIZED_LINEAGE_OR_PROFIT_MISSING")
     candidate_rows = _rows(by_name, "candidate_evaluations")
     daily_candidates = filter_rows_by_date(candidate_rows, report_date)
     intraday_cumulative = collect_intraday_observation(candidate_rows)
     intraday_daily = collect_intraday_observation(daily_candidates)
-    if intraday_cumulative["malformed_json_count"]:
+    if intraday_cumulative["malformed_condition_json_count"]:
         warnings.append("MALFORMED_CONDITION_RESULT_JSON")
+    if intraday_cumulative["missing_condition_json_count"]:
+        warnings.append("MISSING_CONDITION_RESULT_JSON")
     if intraday_cumulative["false_failure_count"]:
         warnings.append("NO_DATA_FALSE_FAILURE_DETECTED")
     cumulative = _scope(
@@ -83,11 +96,14 @@ def build_observation_stats(
         report_date=report_date,
     )
     raw_sell_count = int(num(raw_cumulative["overall"].get("sell_count")))
-    if basis == TRUSTED_NORMALIZED and raw_sell_count > 0 and not trusted_sells:
+    zero_trusted_with_raw = basis == TRUSTED_NORMALIZED and raw_sell_count > 0 and not trusted_sells
+    if zero_trusted_with_raw:
         warnings.append("NORMALIZED_ZERO_WITH_RAW_SELL_ROWS")
     ambiguous_count = cumulative["audit"]["ambiguous_sell_order_count"]
-    malformed_count = intraday_cumulative["malformed_json_count"]
-    high_incomplete = intraday_cumulative["required_data_incomplete_rate"] > 0.5
+    malformed_count = intraday_cumulative["malformed_condition_json_count"]
+    missing_json_count = intraday_cumulative["missing_condition_json_count"]
+    incomplete_rate = intraday_cumulative["required_data_incomplete_rate"]
+    high_incomplete = incomplete_rate != UNKNOWN and float(incomplete_rate) > 0.5
     raw_available = any(
         name in by_name and not _error(by_name[name])
         for name in ("fill_history", "pnl_by_day")
@@ -99,20 +115,21 @@ def build_observation_stats(
     if basis == RAW_FALLBACK and not raw_available:
         warnings.append("RAW_PNL_UNAVAILABLE")
     critical = bool(
-        errors or lineage_errors or non_mock_sells or aggregate_contamination
+        errors or lineage_errors or real_mode_rows or unknown_mode_rows
         or intraday_cumulative["false_failure_count"]
         or (basis == RAW_FALLBACK and not raw_available)
     )
     if critical:
         status = "BLOCKED"
-    elif basis == RAW_FALLBACK or normalization_warning_codes or ambiguous_count or malformed_count or high_incomplete or len(trusted_sells) < 30:
+    elif basis == RAW_FALLBACK or normalization_warning_codes or ambiguous_count or malformed_count or missing_json_count or high_incomplete or len(trusted_sells) < 30:
         status = "WARN"
     else:
         status = "READY_FOR_MOCK_OBSERVATION"
     trusted_count = cumulative["performance"]["overall"]["sell_count"]
     quality_issue = (
         status == "BLOCKED" or basis == RAW_FALLBACK or ambiguous_count > 0
-        or malformed_count > 0 or high_incomplete or bool(normalization_warning_codes)
+        or malformed_count > 0 or missing_json_count > 0 or high_incomplete
+        or zero_trusted_with_raw or bool(normalization_warning_codes)
     )
     if quality_issue:
         eligibility = "HOLD_DATA_QUALITY"
@@ -129,7 +146,10 @@ def build_observation_stats(
         "warnings": sorted(set(warnings)),
         "normalized_missing_sheets": missing,
         "normalized_errors": errors,
-        "mode_contamination_count": len(non_mock_sells) + aggregate_contamination,
+        "mode_contamination_count": real_mode_rows + unknown_mode_rows,
+        "real_mode_row_count": real_mode_rows,
+        "unknown_mode_row_count": unknown_mode_rows,
+        "trusted_exclusion_reason_counts": excluded_reasons,
         "trusted_lineage_error_count": len(lineage_errors),
         "daily": {**daily, "intraday": intraday_daily},
         "cumulative": {**cumulative, "intraday": intraday_cumulative},

@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from trading_bot.performance_digest_buckets import is_buy, num
+from trading_bot.performance_digest_packet_observation import (
+    codex_hint_lines,
+    packet_observation_lines,
+)
 
 PACKET_CHUNK_SIZE = 8000
 SELL_COLUMNS = (
@@ -85,9 +89,6 @@ def write_execution_ledger_compact_csv(path: Path | str, stats: dict[str, Any]) 
 
 def _packet_body(cumulative: dict[str, Any], report_date: Any, date_from: Any, date_to: Any, source_xlsx: Path | str) -> list[str]:
     overall = cumulative["performance"]["overall"]
-    audit = cumulative["performance_audit"]
-    loss = cumulative["loss_observation"]
-    intraday = cumulative["intraday_observation"]
     quality = cumulative["candidate_matching_quality"]
     ledgers = cumulative["execution_ledger_compact"]
     return [
@@ -98,9 +99,7 @@ def _packet_body(cumulative: dict[str, Any], report_date: Any, date_from: Any, d
         f"data_status: {cumulative['data_status']}",
         "",
         "summary:",
-        f"- performance_basis: {cumulative['performance_basis']}",
-        f"- observation_status: {cumulative['observation_status']}",
-        f"- strategy_change_eligibility: {cumulative['strategy_change_eligibility']}",
+        *packet_observation_lines(cumulative, money=_money, pct=_pct, clean=_clean),
         f"- buy_count: {_clean(overall['buy_count'])}",
         f"- sell_count: {_clean(overall['sell_count'])}",
         f"- realized_pnl: {_money(overall['realized_pnl'])}",
@@ -113,16 +112,6 @@ def _packet_body(cumulative: dict[str, Any], report_date: Any, date_from: Any, d
         f"- duplicate_suspects_count: {cumulative['duplicate_count']}",
         f"- partial_fill_candidate_count: {cumulative['duplicate_suspects'].get('partial_fill_candidate_count', 0)}",
         f"- still_ambiguous_count: {quality['still_ambiguous_count']}",
-        f"- trusted_sell_count: {audit['trusted_sell_order_count']}",
-        f"- trusted_profit_usd: {_money(audit['trusted_profit_usd'])}",
-        f"- best_effort_profit_usd: {_money(audit['best_effort_profit_usd'])}",
-        f"- raw_profit_usd: {_money(audit['raw_profit_usd'])}",
-        f"- raw_vs_trusted_profit_difference: {_money(audit['raw_vs_trusted_profit_difference'])}",
-        f"- false_failure_count: {intraday['false_failure_count']}",
-        f"- required_data_incomplete_rate: {_pct(intraday['required_data_incomplete_rate'])}",
-        f"- stop_loss_count: {loss['stop_loss_count']}",
-        f"- stop_loss_total_profit_usd: {_money(loss['stop_loss_total_profit_usd'])}",
-        f"- stop_loss_share_of_gross_loss: {_pct(loss['stop_loss_share_of_gross_loss'])}",
         "",
         "data_quality_reasons:",
         *[f"- {reason}" for reason in cumulative["data_status_reason"]],
@@ -138,7 +127,7 @@ def _packet_body(cumulative: dict[str, Any], report_date: Any, date_from: Any, d
         "",
         *(_problem_case_lines(cumulative, ledgers["sell_rows"])),
         "",
-        *(_codex_hint_lines(cumulative)),
+        *(codex_hint_lines(cumulative, money=_money, pct=_pct)),
     ]
 
 
@@ -185,22 +174,6 @@ def _problem_case_lines(cumulative: dict[str, Any], sell_rows: Sequence[Mapping[
         *_unmatched_case_lines(cumulative),
         "suspicious_or_needs_review:",
         *_case_lines(suspicious),
-    ]
-
-
-def _codex_hint_lines(cumulative: dict[str, Any]) -> list[str]:
-    quality = cumulative["candidate_matching_quality"]
-    reconciliation = cumulative["reconciliation_detail"]
-    return [
-        "[CODEX_FIX_INPUT_HINTS]",
-        "- observed_issue: score/source analysis remains low confidence while execution ledger has enough trade rows for exit-reason review",
-        f"- affected_rows: unmatched={cumulative['overall']['unmatched_trade_count']}; still_ambiguous={quality['still_ambiguous_count']}; duplicate_suspects={cumulative['duplicate_count']}",
-        f"- evidence: matched_ratio={_pct(cumulative['overall']['matched_ratio'])}; raw_vs_daily_summary={_money(reconciliation['raw_sell_fills_vs_daily_summary'])}",
-        "- likely_code_area: exit reason logging, fill aggregation, daily summary reconciliation, report packet generation",
-        "- should_change_strategy_parameter: false",
-        "- should_fix_data_or_logging_first: true",
-        "- required_source_files_to_inspect: src/trading_bot/performance_digest*.py, tools/export_strategy_review.py, exit/summary logging modules",
-        "- notes_for_chatgpt: use row-level execution ledger evidence before asking Codex for code changes; do not use score/source buckets as strategy signal while data_status is not OK",
     ]
 
 

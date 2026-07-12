@@ -22,6 +22,11 @@ def test_slack_preview_contains_auto_trading_data_packet_and_execution_ledger(tm
     assert "[EXECUTION_LEDGER_COMPACT]" in digest
     assert "[PROBLEM_CASES_FOR_CODEX]" in digest
     assert "[CODEX_FIX_INPUT_HINTS]" in digest
+    assert "- performance_basis: RAW_FALLBACK" in digest
+    assert "- malformed_condition_json_count: 0" in digest
+    assert "- missing_condition_json_count: 0" in digest
+    assert "- required_data_incomplete_rate: unknown" in digest
+    assert "- max_drawdown: unknown" in digest
 
 
 def test_packet_includes_all_sell_and_buy_rows_or_clear_reason(tmp_path) -> None:
