@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from trading_bot.performance_digest_buckets import is_buy, num
+from trading_bot.performance_digest_packet_observation import (
+    codex_hint_lines,
+    packet_observation_lines,
+)
 
 PACKET_CHUNK_SIZE = 8000
 SELL_COLUMNS = (
@@ -84,7 +88,7 @@ def write_execution_ledger_compact_csv(path: Path | str, stats: dict[str, Any]) 
 
 
 def _packet_body(cumulative: dict[str, Any], report_date: Any, date_from: Any, date_to: Any, source_xlsx: Path | str) -> list[str]:
-    overall = cumulative["overall"]
+    overall = cumulative["performance"]["overall"]
     quality = cumulative["candidate_matching_quality"]
     ledgers = cumulative["execution_ledger_compact"]
     return [
@@ -95,6 +99,7 @@ def _packet_body(cumulative: dict[str, Any], report_date: Any, date_from: Any, d
         f"data_status: {cumulative['data_status']}",
         "",
         "summary:",
+        *packet_observation_lines(cumulative, money=_money, pct=_pct, clean=_clean),
         f"- buy_count: {_clean(overall['buy_count'])}",
         f"- sell_count: {_clean(overall['sell_count'])}",
         f"- realized_pnl: {_money(overall['realized_pnl'])}",
@@ -112,8 +117,8 @@ def _packet_body(cumulative: dict[str, Any], report_date: Any, date_from: Any, d
         *[f"- {reason}" for reason in cumulative["data_status_reason"]],
         "",
         "decision_for_chatgpt:",
-        f"- strategy_change_allowed: {str(cumulative['data_status'] == 'OK').lower()}",
-        f"- reason: data_status={cumulative['data_status']}; matched_ratio={_pct(overall['matched_ratio'])}; reconciliation_gap_abs={_money(cumulative['reconciliation']['reconciliation_gap_abs'])}",
+        "- strategy_change_allowed: false",
+        f"- reason: observation_status={cumulative['observation_status']}; eligibility={cumulative['strategy_change_eligibility']}; automatic changes are disabled",
         f"- score_source_analysis_allowed: {str(num(overall['matched_ratio']) >= 0.5 and quality['still_ambiguous_count'] == 0).lower()}",
         "- reason: score/source buckets are disabled when matched_ratio is below 50% or candidate ambiguity remains",
         f"- next_analysis_focus: {cumulative['matching_recommendation']['next_data_quality_fix']}",
@@ -122,13 +127,14 @@ def _packet_body(cumulative: dict[str, Any], report_date: Any, date_from: Any, d
         "",
         *(_problem_case_lines(cumulative, ledgers["sell_rows"])),
         "",
-        *(_codex_hint_lines(cumulative)),
+        *(codex_hint_lines(cumulative, money=_money, pct=_pct)),
     ]
 
 
 def _execution_ledger_lines(ledgers: Mapping[str, Sequence[Mapping[str, Any]]]) -> list[str]:
     return [
         "[EXECUTION_LEDGER_COMPACT]",
+        "basis: RAW_AUDIT",
         "sell_exit_ledger_csv:",
         _csv_line(SELL_COLUMNS),
         *[_csv_line([row.get(col) for col in SELL_COLUMNS]) for row in ledgers["sell_rows"]],
@@ -153,6 +159,7 @@ def _problem_case_lines(cumulative: dict[str, Any], sell_rows: Sequence[Mapping[
     ][:20]
     return [
         "[PROBLEM_CASES_FOR_CODEX]",
+        "basis: RAW_AUDIT",
         "top_loss_trades:",
         *_case_lines(losses),
         "top_profit_trades:",
@@ -167,22 +174,6 @@ def _problem_case_lines(cumulative: dict[str, Any], sell_rows: Sequence[Mapping[
         *_unmatched_case_lines(cumulative),
         "suspicious_or_needs_review:",
         *_case_lines(suspicious),
-    ]
-
-
-def _codex_hint_lines(cumulative: dict[str, Any]) -> list[str]:
-    quality = cumulative["candidate_matching_quality"]
-    reconciliation = cumulative["reconciliation_detail"]
-    return [
-        "[CODEX_FIX_INPUT_HINTS]",
-        "- observed_issue: score/source analysis remains low confidence while execution ledger has enough trade rows for exit-reason review",
-        f"- affected_rows: unmatched={cumulative['overall']['unmatched_trade_count']}; still_ambiguous={quality['still_ambiguous_count']}; duplicate_suspects={cumulative['duplicate_count']}",
-        f"- evidence: matched_ratio={_pct(cumulative['overall']['matched_ratio'])}; raw_vs_daily_summary={_money(reconciliation['raw_sell_fills_vs_daily_summary'])}",
-        "- likely_code_area: exit reason logging, fill aggregation, daily summary reconciliation, report packet generation",
-        "- should_change_strategy_parameter: false",
-        "- should_fix_data_or_logging_first: true",
-        "- required_source_files_to_inspect: src/trading_bot/performance_digest*.py, tools/export_strategy_review.py, exit/summary logging modules",
-        "- notes_for_chatgpt: use row-level execution ledger evidence before asking Codex for code changes; do not use score/source buckets as strategy signal while data_status is not OK",
     ]
 
 

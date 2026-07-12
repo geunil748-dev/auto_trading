@@ -25,6 +25,11 @@ from trading_bot.performance_digest_format_sections import (
     unmatched_breakdown_section,
 )
 from trading_bot.performance_digest_packet import format_auto_trading_data_packet
+from trading_bot.performance_digest_observation_format import (
+    observation_headline_lines,
+    observation_sections,
+    overall_section,
+)
 
 
 def format_strategy_review_digest(
@@ -46,6 +51,7 @@ def format_strategy_review_digest(
         "[Daily Strategy Review]",
         f"Status: {status}",
         f"Report date: {_date_text(report_date)}",
+        *observation_headline_lines(stats, money=_money, pct=_pct),
         "Data quality:",
         *quality_overview_lines(cumulative, money=_money, pct=_pct),
         "",
@@ -60,9 +66,17 @@ def format_strategy_review_digest(
         f"daily_data_status: {daily['data_status']}",
         f"cumulative_data_status: {cumulative['data_status']}",
         "",
-        *_overall_section("daily_overall", daily, include_note=True),
+        *observation_sections(stats, money=_money, pct=_pct),
         "",
-        *_overall_section("cumulative_overall", cumulative),
+        *overall_section(
+            "daily_overall", daily, money=_money, pct=_pct, ratio=_ratio,
+            join_notes=_join_notes, include_note=True,
+        ),
+        "",
+        *overall_section(
+            "cumulative_overall", cumulative, money=_money, pct=_pct,
+            ratio=_ratio, join_notes=_join_notes,
+        ),
         "",
         *matching_quality_section("daily_matching_quality", daily, pct=_pct),
         "",
@@ -90,41 +104,43 @@ def format_strategy_review_digest(
         "",
         "daily_pnl_by_exit_reason:",
         f"- basis: {stats['exit_reason_basis']}",
-        *_bucket_lines(daily["exit_stats"], EXIT_REASON_BUCKETS),
+        *_bucket_lines(daily["performance"]["exit_stats"], EXIT_REASON_BUCKETS),
         "",
         "cumulative_pnl_by_exit_reason:",
         f"- basis: {stats['exit_reason_basis']}",
-        *_bucket_lines(cumulative["exit_stats"], EXIT_REASON_BUCKETS),
+        *_bucket_lines(cumulative["performance"]["exit_stats"], EXIT_REASON_BUCKETS),
         "",
         "daily_pnl_by_score_bucket:",
         f"- basis: {stats['score_source_basis']}",
-        f"- matched_sell_count: {daily['overall']['matched_trade_count']}",
-        f"- confidence: {daily['interpretation']['score_source_confidence']}",
-        *score_source_guardrail_lines(daily),
-        *_bucket_lines(daily["score_stats"], SCORE_BUCKETS, include_zero=False),
+        f"- matched_sell_count: {daily['performance']['overall']['matched_trade_count']}",
+        f"- confidence: {_score_source_confidence(daily)}",
+        *_score_source_guardrails(daily),
+        *_bucket_lines(daily["performance"]["score_stats"], SCORE_BUCKETS, include_zero=False),
         "",
         "cumulative_pnl_by_score_bucket:",
         f"- basis: {stats['score_source_basis']}",
-        f"- matched_sell_count: {cumulative['overall']['matched_trade_count']}",
-        f"- confidence: {cumulative['interpretation']['score_source_confidence']}",
-        *score_source_guardrail_lines(cumulative),
-        *_bucket_lines(cumulative["score_stats"], SCORE_BUCKETS, include_zero=False),
+        f"- matched_sell_count: {cumulative['performance']['overall']['matched_trade_count']}",
+        f"- confidence: {_score_source_confidence(cumulative)}",
+        *_score_source_guardrails(cumulative),
+        *_bucket_lines(cumulative["performance"]["score_stats"], SCORE_BUCKETS, include_zero=False),
         "",
         "daily_pnl_by_source:",
         f"- basis: {stats['score_source_basis']}",
-        f"- matched_sell_count: {daily['overall']['matched_trade_count']}",
-        f"- confidence: {daily['interpretation']['score_source_confidence']}",
-        *score_source_guardrail_lines(daily),
-        *_bucket_lines(daily["source_stats"], SOURCE_BUCKETS, include_zero=False),
+        f"- matched_sell_count: {daily['performance']['overall']['matched_trade_count']}",
+        f"- confidence: {_score_source_confidence(daily)}",
+        *_score_source_guardrails(daily),
+        *_bucket_lines(daily["performance"]["source_stats"], SOURCE_BUCKETS, include_zero=False),
         "",
         "cumulative_pnl_by_source:",
         f"- basis: {stats['score_source_basis']}",
-        f"- matched_sell_count: {cumulative['overall']['matched_trade_count']}",
-        f"- confidence: {cumulative['interpretation']['score_source_confidence']}",
-        *score_source_guardrail_lines(cumulative),
-        *_bucket_lines(cumulative["source_stats"], SOURCE_BUCKETS, include_zero=False),
+        f"- matched_sell_count: {cumulative['performance']['overall']['matched_trade_count']}",
+        f"- confidence: {_score_source_confidence(cumulative)}",
+        *_score_source_guardrails(cumulative),
+        *_bucket_lines(cumulative["performance"]["source_stats"], SOURCE_BUCKETS, include_zero=False),
         "",
         "data_quality:",
+        f"- performance_basis: {stats['performance_basis']}",
+        "- legacy_matching_and_reconciliation_basis: RAW_AUDIT",
         f"- daily_data_status: {daily['data_status']}",
         f"- cumulative_data_status: {cumulative['data_status']}",
         "- count_basis: daily_and_cumulative_separated",
@@ -204,55 +220,24 @@ def _bucket_lines(
     return lines or ["- no_matched_rows: sell_count=0, pnl=0.00, win_rate=0.00%"]
 
 
-def _overall_section(
-    title: str,
-    stats: dict[str, Any],
-    *,
-    include_note: bool = False,
-) -> list[str]:
-    overall = stats["overall"]
-    lines = [
-        f"{title}:",
-        f"- buy_count: {overall['buy_count']}",
-        f"- sell_count: {overall['sell_count']}",
-        f"- fill_history_buy_rows: {overall['fill_history_buy_rows']}",
-        f"- fill_history_sell_rows: {overall['fill_history_sell_rows']}",
-        f"- realized_pnl: {_money(overall['realized_pnl'])}",
-        f"- realized_pnl_from_fill_history: {_money(overall['realized_pnl_from_fill_history'])}",
-        f"- realized_pnl_from_daily_summary: {_money(overall['realized_pnl_from_daily_summary'])}",
-        f"- realized_pnl_from_raw_sell_fills: {_money(overall['realized_pnl_from_raw_sell_fills'])}",
-        f"- realized_pnl_from_matched_trades_only: {_money(overall['realized_pnl_from_matched_trades_only'])}",
-        f"- realized_pnl_from_daily_ops_summary: {_money(overall['realized_pnl_from_daily_ops_summary'])}",
-        f"- realized_pnl_from_strategy_review_sheet: {_money(overall['realized_pnl_from_strategy_review_sheet'])}",
-        f"- realized_pnl_from_exit_reason_sum: {_money(overall['realized_pnl_from_exit_reason_sum'])}",
-        f"- realized_return: {_pct(overall['realized_return'])}",
-        f"- win_rate: {_pct(overall['win_rate'])}",
-        f"- avg_win: {_money(overall['avg_win'])}",
-        f"- avg_loss: {_money(overall['avg_loss'])}",
-        f"- profit_factor: {_ratio(overall['profit_factor'])}",
-        f"- realized_exit_count: {overall['realized_exit_count']}",
-        f"- matched_trade_count: {overall['matched_trade_count']}",
-        f"- unmatched_trade_count: {overall['unmatched_trade_count']}",
-        f"- matched_ratio: {_pct(overall['matched_ratio'])} {overall['matched_ratio_status']}",
-        f"- reconciliation_gap: {_money(stats['reconciliation']['reconciliation_gap'])}",
-        f"- reconciliation_gap_abs: {_money(stats['reconciliation']['reconciliation_gap_abs'])}",
-        f"- reconciliation_gap_pct: {_pct(stats['reconciliation']['reconciliation_gap_pct'])}",
-        f"- reconciliation_status: {stats['reconciliation']['status']}",
-        f"- count_consistency_status: {stats['count_consistency_status']}",
-        f"- data_status: {stats['data_status']}",
-        f"- data_status_reason: {_join_notes(stats['data_status_reason'])}",
-    ]
-    if include_note and overall["sell_count"] == 0:
-        lines.append("- note: no trades for report_date")
-    return lines
-
-
 def _review_focus(daily: dict[str, Any], cumulative: dict[str, Any]) -> str:
     daily_focus = daily["interpretation"]["recommended_review_focus"]
     cumulative_focus = cumulative["interpretation"]["recommended_review_focus"]
     if daily_focus == cumulative_focus:
         return daily_focus
     return f"daily={daily_focus}; cumulative={cumulative_focus}"
+
+
+def _score_source_confidence(stats: dict[str, Any]) -> str:
+    if stats["performance_basis"] == "TRUSTED_NORMALIZED":
+        return "TRUSTED_NORMALIZED_AGGREGATE"
+    return stats["interpretation"]["score_source_confidence"]
+
+
+def _score_source_guardrails(stats: dict[str, Any]) -> list[str]:
+    if stats["performance_basis"] == "TRUSTED_NORMALIZED":
+        return ["- signal_usage: observation_only_no_automatic_strategy_change"]
+    return score_source_guardrail_lines(stats)
 
 
 def _date_text(value: date | str) -> str:
