@@ -84,7 +84,10 @@ def write_execution_ledger_compact_csv(path: Path | str, stats: dict[str, Any]) 
 
 
 def _packet_body(cumulative: dict[str, Any], report_date: Any, date_from: Any, date_to: Any, source_xlsx: Path | str) -> list[str]:
-    overall = cumulative["overall"]
+    overall = cumulative["performance"]["overall"]
+    audit = cumulative["performance_audit"]
+    loss = cumulative["loss_observation"]
+    intraday = cumulative["intraday_observation"]
     quality = cumulative["candidate_matching_quality"]
     ledgers = cumulative["execution_ledger_compact"]
     return [
@@ -95,6 +98,9 @@ def _packet_body(cumulative: dict[str, Any], report_date: Any, date_from: Any, d
         f"data_status: {cumulative['data_status']}",
         "",
         "summary:",
+        f"- performance_basis: {cumulative['performance_basis']}",
+        f"- observation_status: {cumulative['observation_status']}",
+        f"- strategy_change_eligibility: {cumulative['strategy_change_eligibility']}",
         f"- buy_count: {_clean(overall['buy_count'])}",
         f"- sell_count: {_clean(overall['sell_count'])}",
         f"- realized_pnl: {_money(overall['realized_pnl'])}",
@@ -107,13 +113,23 @@ def _packet_body(cumulative: dict[str, Any], report_date: Any, date_from: Any, d
         f"- duplicate_suspects_count: {cumulative['duplicate_count']}",
         f"- partial_fill_candidate_count: {cumulative['duplicate_suspects'].get('partial_fill_candidate_count', 0)}",
         f"- still_ambiguous_count: {quality['still_ambiguous_count']}",
+        f"- trusted_sell_count: {audit['trusted_sell_order_count']}",
+        f"- trusted_profit_usd: {_money(audit['trusted_profit_usd'])}",
+        f"- best_effort_profit_usd: {_money(audit['best_effort_profit_usd'])}",
+        f"- raw_profit_usd: {_money(audit['raw_profit_usd'])}",
+        f"- raw_vs_trusted_profit_difference: {_money(audit['raw_vs_trusted_profit_difference'])}",
+        f"- false_failure_count: {intraday['false_failure_count']}",
+        f"- required_data_incomplete_rate: {_pct(intraday['required_data_incomplete_rate'])}",
+        f"- stop_loss_count: {loss['stop_loss_count']}",
+        f"- stop_loss_total_profit_usd: {_money(loss['stop_loss_total_profit_usd'])}",
+        f"- stop_loss_share_of_gross_loss: {_pct(loss['stop_loss_share_of_gross_loss'])}",
         "",
         "data_quality_reasons:",
         *[f"- {reason}" for reason in cumulative["data_status_reason"]],
         "",
         "decision_for_chatgpt:",
-        f"- strategy_change_allowed: {str(cumulative['data_status'] == 'OK').lower()}",
-        f"- reason: data_status={cumulative['data_status']}; matched_ratio={_pct(overall['matched_ratio'])}; reconciliation_gap_abs={_money(cumulative['reconciliation']['reconciliation_gap_abs'])}",
+        "- strategy_change_allowed: false",
+        f"- reason: observation_status={cumulative['observation_status']}; eligibility={cumulative['strategy_change_eligibility']}; automatic changes are disabled",
         f"- score_source_analysis_allowed: {str(num(overall['matched_ratio']) >= 0.5 and quality['still_ambiguous_count'] == 0).lower()}",
         "- reason: score/source buckets are disabled when matched_ratio is below 50% or candidate ambiguity remains",
         f"- next_analysis_focus: {cumulative['matching_recommendation']['next_data_quality_fix']}",
@@ -129,6 +145,7 @@ def _packet_body(cumulative: dict[str, Any], report_date: Any, date_from: Any, d
 def _execution_ledger_lines(ledgers: Mapping[str, Sequence[Mapping[str, Any]]]) -> list[str]:
     return [
         "[EXECUTION_LEDGER_COMPACT]",
+        "basis: RAW_AUDIT",
         "sell_exit_ledger_csv:",
         _csv_line(SELL_COLUMNS),
         *[_csv_line([row.get(col) for col in SELL_COLUMNS]) for row in ledgers["sell_rows"]],
@@ -153,6 +170,7 @@ def _problem_case_lines(cumulative: dict[str, Any], sell_rows: Sequence[Mapping[
     ][:20]
     return [
         "[PROBLEM_CASES_FOR_CODEX]",
+        "basis: RAW_AUDIT",
         "top_loss_trades:",
         *_case_lines(losses),
         "top_profit_trades:",
