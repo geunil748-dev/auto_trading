@@ -6,6 +6,7 @@ import pytest
 
 from trading_bot.adapters.kis_http import (
     AccessToken,
+    KisApiDisabledError,
     KisHttpResponseError,
     KisJsonClient,
     _default_token_cache,
@@ -58,7 +59,28 @@ class MemoryTokenStore:
 @pytest.fixture(autouse=True)
 def default_file_token_store(monkeypatch) -> None:
     monkeypatch.setenv("KIS_TOKEN_STORE", "file")
+    monkeypatch.setenv("KIS_API_ENABLED", "true")
     monkeypatch.delenv("KIS_ALLOW_TOKEN_REFRESH", raising=False)
+
+
+def test_kis_json_client_blocks_all_requests_by_default(monkeypatch) -> None:
+    requests: list[str] = []
+    monkeypatch.delenv("KIS_API_ENABLED", raising=False)
+
+    client = KisJsonClient(
+        KisSettings("app", "secret", "account", "01", "https://kis.test"),
+        request_json=lambda *args: requests.append("request") or {},
+        retry_policy=RetryPolicy(attempts=1, retry_delay_seconds=0),
+    )
+
+    with pytest.raises(KisApiDisabledError, match="KIS_API_DISABLED"):
+        client.get("/quote", "TR1", {"SYMB": "AAA"})
+    with pytest.raises(KisApiDisabledError, match="KIS_API_DISABLED"):
+        client.post("/order", "TTTT1002U", {"SYMB": "AAA"})
+    with pytest.raises(KisApiDisabledError, match="KIS_API_DISABLED"):
+        client.access_token()
+
+    assert requests == []
 
 
 def test_kis_json_client_reuses_access_token_and_builds_query_headers() -> None:

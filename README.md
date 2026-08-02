@@ -59,6 +59,18 @@ For DB preflight/init/repair command boundaries, see
 
 ## Telegram Alerts
 
+외부 발송과 KIS 호출은 현재 안전을 위해 기본 차단됩니다.
+
+```dotenv
+ALERT_TELEGRAM_ENABLED=false
+KIS_API_ENABLED=false
+```
+
+`ALERT_TELEGRAM_ENABLED=false`이면 토큰이 설정되어 있어도 Telegram HTTP 요청을
+보내지 않습니다. `KIS_API_ENABLED=false`이면 모의/실투자 구분 없이 KIS 토큰,
+시세, 계좌, 주문 HTTP 요청을 `KIS_API_DISABLED`로 즉시 차단합니다. 다시 운영할
+때는 사람 검토 후 필요한 값을 `true`로 변경하고 scheduler를 재시작하세요.
+
 운영 텔레그램 알림은 `ALERT_TELEGRAM_BOT_TOKEN`과
 `ALERT_TELEGRAM_CHAT_ID`를 우선 사용합니다. 장마감 완료 안내와 장마감
 체결/보유 요약 리포트는 같은 `ALERT_TELEGRAM_*` 설정을 사용합니다.
