@@ -1,5 +1,7 @@
 from datetime import date
 
+import pytest
+
 import trading_bot.notifications as notifications_module
 from trading_bot.config import NotificationSettings
 from trading_bot.models import FillRecord
@@ -17,6 +19,46 @@ from trading_bot.trade_fill_notifications import (
     send_fill_notifications,
     send_market_close_report_from_records,
 )
+
+
+@pytest.fixture(autouse=True)
+def enable_telegram_for_mocked_transport_tests(monkeypatch) -> None:
+    monkeypatch.setenv("ALERT_TELEGRAM_ENABLED", "true")
+
+
+def test_send_telegram_message_is_blocked_by_default(monkeypatch, caplog) -> None:
+    calls: list[str] = []
+
+    class FakeRequests:
+        @staticmethod
+        def post(*args, **kwargs):
+            calls.append("post")
+            raise AssertionError("Telegram API must not be called while disabled")
+
+    monkeypatch.delenv("ALERT_TELEGRAM_ENABLED", raising=False)
+    monkeypatch.setenv("ALERT_TELEGRAM_BOT_TOKEN", "secret-token")
+    monkeypatch.setenv("ALERT_TELEGRAM_CHAT_ID", "secret-chat")
+    monkeypatch.setattr(notifications_module, "requests", FakeRequests)
+
+    assert send_telegram_message("차단 확인") is False
+    assert calls == []
+    log_text = "\n".join(item.message for item in caplog.records)
+    assert "TELEGRAM_SEND_DISABLED" in log_text
+    assert "secret-token" not in log_text
+    assert "secret-chat" not in log_text
+
+
+def test_send_market_close_done_does_not_call_injected_sender_when_disabled(monkeypatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setenv("ALERT_TELEGRAM_ENABLED", "false")
+
+    sent = send_market_close_done(
+        NotificationSettings(telegram_bot_token="token", telegram_chat_id="chat"),
+        lambda settings, message: calls.append(message) or True,
+    )
+
+    assert sent is False
+    assert calls == []
 
 
 def test_send_market_close_done_skips_without_telegram_settings(monkeypatch) -> None:

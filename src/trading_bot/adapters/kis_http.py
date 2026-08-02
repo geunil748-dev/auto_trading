@@ -21,6 +21,7 @@ JsonObject = dict[str, Any]
 JsonRequest = Callable[[str, str, Mapping[str, str], JsonObject | None], JsonObject]
 DEFAULT_TOKEN_CACHE = Path(".kis-token.json")
 HTTP_ERROR_BODY_PREVIEW_LIMIT = 800
+KIS_API_ENABLED_ENV = "KIS_API_ENABLED"
 SENSITIVE_BODY_KEY_PATTERN = re.compile(
     r'(?i)("?(?:authorization|appkey|appsecret|access_token|token|secret|'
     r'cano|acnt_prdt_cd|account_no|account|password)"?\s*[:=]\s*)("[^"]*"|[^,\s}]+)'
@@ -58,6 +59,10 @@ class KisHttpResponseError(RuntimeError):
         if self.body_preview:
             parts.append(f"body={_redact_sensitive_text(self.body_preview)}")
         return " ".join(parts)
+
+
+class KisApiDisabledError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -116,6 +121,7 @@ class KisJsonClient:
         self._token: AccessToken | None = None
 
     def get(self, path: str, tr_id: str, params: Mapping[str, str]) -> JsonObject:
+        _ensure_kis_api_enabled()
         headers = self._headers(tr_id)
         url = f"{self.settings.base_url}{path}?{urlencode(params)}"
         return call_with_retry(
@@ -124,6 +130,7 @@ class KisJsonClient:
         )
 
     def post(self, path: str, tr_id: str, body: JsonObject) -> JsonObject:
+        _ensure_kis_api_enabled()
         return call_with_retry(
             lambda: self.request_json(
                 "POST",
@@ -135,6 +142,7 @@ class KisJsonClient:
         )
 
     def access_token(self) -> str:
+        _ensure_kis_api_enabled()
         now = self.now()
         refresh_margin_seconds = _token_refresh_margin_seconds()
         if self._token is not None and self._token.is_valid(now, refresh_margin_seconds):
@@ -288,6 +296,20 @@ def _allow_token_refresh() -> bool:
     }
 
 
+def _ensure_kis_api_enabled() -> None:
+    enabled = os.getenv(KIS_API_ENABLED_ENV, "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+    }
+    if not enabled:
+        raise KisApiDisabledError(
+            "KIS_API_DISABLED: KIS API 호출이 임시 비활성화되어 있습니다. "
+            f"{KIS_API_ENABLED_ENV}=true로 설정하면 다시 활성화됩니다."
+        )
+
+
 def _db_token_store_from_env() -> TokenStore | None:
     if os.getenv("KIS_TOKEN_STORE", "file").strip().lower() != "db":
         return None
@@ -305,6 +327,7 @@ def _urllib_json_request(
     headers: Mapping[str, str],
     body: JsonObject | None,
 ) -> JsonObject:
+    _ensure_kis_api_enabled()
     payload = None if body is None else json.dumps(body).encode("utf-8")
     request = Request(url, data=payload, headers=dict(headers), method=method)
     try:

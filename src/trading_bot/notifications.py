@@ -22,6 +22,7 @@ except ImportError:  # pragma: no cover - dependency absence is handled at runti
 
 MARKET_CLOSE_DONE_MESSAGE = "[자동매매]\n장마감 처리가 정상 완료되었습니다.\n운용 결과는 모니터에서 확인하세요."
 TELEGRAM_TIMEOUT_SECONDS = 10
+TELEGRAM_ENABLED_ENV = "ALERT_TELEGRAM_ENABLED"
 logger = logging.getLogger(__name__)
 
 
@@ -55,6 +56,9 @@ def send_market_close_done(
     settings: NotificationSettings,
     sender: Sender | None = None,
 ) -> bool:
+    if not _telegram_enabled():
+        _log_telegram_disabled()
+        return False
     credentials = resolve_alert_telegram_credentials(settings)
     if not credentials.complete:
         _log_missing_credentials(credentials)
@@ -108,6 +112,9 @@ def resolve_alert_telegram_credentials(
 
 
 def _post_telegram_message(credentials: TelegramCredentials, message: str) -> bool:
+    if not _telegram_enabled():
+        _log_telegram_disabled()
+        return False
     if not credentials.complete:
         _log_missing_credentials(credentials)
         return False
@@ -150,6 +157,23 @@ def _post_telegram_message(credentials: TelegramCredentials, message: str) -> bo
             credentials.source,
         )
     return ok
+
+
+def _telegram_enabled() -> bool:
+    return os.getenv(TELEGRAM_ENABLED_ENV, "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+    }
+
+
+def _log_telegram_disabled() -> None:
+    logger.warning(
+        "telegram alert send skipped: reason_code=TELEGRAM_SEND_DISABLED "
+        "enable_with=%s=true",
+        TELEGRAM_ENABLED_ENV,
+    )
 
 
 def _log_missing_credentials(credentials: TelegramCredentials) -> None:
